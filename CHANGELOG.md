@@ -117,3 +117,12 @@ This release is a deployable source package, not a live deployment. Production c
 - **Save handling:** when online, `product.save` first attempts to drain queued changes and refuses to report success while any queued mutation remains; it then waits for the RPC, refreshes the authoritative snapshot, and surfaces the actual Supabase error in the open form.
 - **Regression coverage added:** local create-without-overrides and update-of-expiry/price cases.
 - **Verification limitation:** this environment has no installed Vitest dependencies; dependency installation timed out. JavaScript syntax checks and release-copy checks were run, but the automated suite and a live Supabase save were not run here. The SQL migration must be applied to the existing Supabase project for the server-side fix to take effect.
+
+
+## Product save hardening — 2026-10-14
+
+- **Reproduction status:** The user's live Supabase environment is not accessible from this workspace, so the exact live network/SQL rejection could not be reproduced here. The packaged project did contain a false-failure path: `product.save` treated a successful `apply_command` RPC as failed if the subsequent `business_snapshot` refresh failed. That could leave a committed product while the dialog reported an error, making retries confusing and stale.
+- **Fix:** After Supabase confirms `product.save`, the client now applies the returned saved product and tier rows to its local base state before refreshing. A refresh failure is reported as a refresh warning and does not misrepresent the committed product write as rejected. RPC rejection still keeps the dialog open and shows the server message.
+- **Validation:** Added explicit client-side checks for non-negative integer-paisa cost/retail/wholesale values and valid tier rates/minimums.
+- **Database fix:** `product.save` now validates required fields server-side and returns clear errors for an ID already in use, including an ID held by a soft-deleted product. Product and tier writes remain within the same `apply_command` transaction. Updated both the full schema and the existing-installation migration.
+- **Build validation:** JavaScript syntax checks and local product create/update smoke checks are run for this build. Full Vitest/PostgreSQL/live-Supabase validation is not claimed unless those environments are available and the tests actually run.

@@ -244,6 +244,16 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
  when 'master.save' then result:=private.save_master(data->>'table',data->'record',(data->>'expected_version')::integer);
  when 'product.save' then
   if not public.is_admin() then raise exception 'Admin required'; end if;
+  if jsonb_typeof(data->'record')<>'object' then raise exception 'Product details are missing'; end if;
+  if nullif(trim(data#>>'{record,id}'),'') is null or length(data#>>'{record,id}')>180 then raise exception 'Product ID must be 1–180 characters'; end if;
+  if nullif(trim(data#>>'{record,name}'),'') is null then raise exception 'Product name is required'; end if;
+  if coalesce(nullif(data#>>'{record,boxes_per_carton}','')::integer,0)<1 then raise exception 'Boxes per carton must be at least 1'; end if;
+  if coalesce(nullif(data#>>'{record,cost_paisa}','')::bigint,-1)<0 or coalesce(nullif(data#>>'{record,retail_paisa}','')::bigint,-1)<0 or coalesce(nullif(data#>>'{record,wholesale_paisa}','')::bigint,-1)<0 then raise exception 'Cost, retail and wholesale prices must be valid non-negative amounts'; end if;
+  select to_jsonb(p) into old from public.products p where p.id=data#>>'{record,id}' for update;
+  if old is not null and nullif(data->>'expected_version','') is null then
+   if old->>'deleted_at' is not null then raise exception 'This Product ID belongs to a deleted product. Restore it or choose a different ID.';
+   else raise exception 'This Product ID is already in use. Choose a unique ID.'; end if;
+  end if;
   result:=private.save_master('products',data->'record',nullif(data->>'expected_version','')::integer);
   params:=coalesce(data->'tiers','[]'::jsonb);
   if jsonb_typeof(params)<>'array' then raise exception 'Product tiers must be an array'; end if;

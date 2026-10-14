@@ -526,8 +526,28 @@ export class Store extends EventTarget {
           data,
         });
         if (error) throw error;
-        await this.refresh();
+        // apply_command returns the committed product and tiers. Apply that
+        // authoritative response locally before attempting a full snapshot so
+        // a snapshot/RLS/cache failure cannot make a committed save look failed.
+        if (!res?.product?.id || res.product.id !== data?.record?.id) {
+          throw Error("Supabase returned no saved product. The database function may be out of date; apply supabase/fix_product_save.sql and reload the schema.");
+        }
+        const saved = res.product;
+        const pi = this.base.products.findIndex((p) => p.id === saved.id);
+        if (pi < 0) this.base.products.push(saved);
+        else this.base.products[pi] = saved;
+        this.base.price_tiers = this.base.price_tiers.filter((t) => t.product_id !== saved.id);
+        this.base.price_tiers.push(...(Array.isArray(res.tiers) ? res.tiers : []));
+        this.persist();
+        this.error = "";
+        this.replay();
         this.lastResult = res;
+        try {
+          await this.refresh();
+        } catch (refreshError) {
+          this.error = "Product saved successfully, but the full data refresh failed: " + (refreshError?.message || String(refreshError));
+          this.emit();
+        }
         return res;
       } catch (error) {
         // Preserve the real PostgREST message for the form's inline alert.

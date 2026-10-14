@@ -1,14 +1,14 @@
-Blesscon Candy Manager — product save follow-up validation
+Blesscon Candy Manager — product save hardening validation
 
-PASS: node --check js/store.js
-PASS: node --check js/app.js
-PASS: node --check tests/offline.test.js
-PASS: node scripts/release.mjs
+PASS: node --check for js/*.js, tests/*.js, web/js/*.js
+PASS: local product create/update smoke test (name, expiry date, wholesale price; no duplicate row)
 PASS: root js/app.js matches web/js/app.js
 PASS: root js/store.js matches web/js/store.js
-PASS: syntax checks for all js/*.js, tests/*.js, and web/js/*.js (see packaging validation)
-BLOCKED: npm test -- --reporter=dot — Vitest is not installed (sh: vitest: not found).
-BLOCKED: dependency install — npm ci attempt timed out in this environment.
-NOT RUN: live Supabase save/permission/schema test.
+PASS: root js/documents.js matches web/js/documents.js
+PASS: schema.sql and fix_product_save.sql apply_command function bodies match
+PASS: node scripts/release.mjs
+BLOCKED: npm test -- --reporter=dot — vitest: not found
+BLOCKED: npm run check — TypeScript dependency unavailable
+NOT RUN: live Supabase product save / RLS / deployed-schema test
 
-Do not interpret this as a passing full regression suite. The added regression tests are committed but have not executed here.
+The full regression suite has NOT passed because it could not be executed in this environment.

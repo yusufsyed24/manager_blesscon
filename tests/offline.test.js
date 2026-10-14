@@ -123,6 +123,24 @@ it("product.save surfaces a rejected Supabase write and does not queue a false s
   expect(s.refresh).not.toHaveBeenCalled();
 });
 
+it("product.save remains successful if Supabase committed but snapshot refresh fails", async () => {
+  localStorage.clear();
+  Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+  const committed = { product: { id: "P2", name: "Saved Candy", active: true, boxes_per_carton: 24, cost_paisa: 0, retail_paisa: 0, wholesale_paisa: 0, version: 1 }, tiers: [] };
+  const client = {
+    supabaseUrl: "https://product-refresh-error.supabase.co",
+    auth: { getSession: async () => ({ data: { session: { user: { id: "admin" } } } }) },
+    rpc: vi.fn(async () => ({ data: committed, error: null })),
+  };
+  const s = new Store(client, { id: "admin", role: "admin" });
+  s.refresh = vi.fn(async () => { throw Error("business_snapshot unavailable"); });
+  const result = await s.run("product.save", { record: committed.product, tiers: [] });
+  expect(result.product.id).toBe("P2");
+  expect(s.state.products).toContainEqual(expect.objectContaining({ id: "P2", name: "Saved Candy" }));
+  expect(s.error).toContain("Product saved successfully");
+  expect(s.queue).toHaveLength(0);
+});
+
 it("product.save refreshes authoritative data before returning success", async () => {
   localStorage.clear();
   Object.defineProperty(navigator, "onLine", { value: true, configurable: true });

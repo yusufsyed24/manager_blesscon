@@ -1177,13 +1177,16 @@ async function saveMaster(form) {
     if (idCollision) throw Error(idCollision.deleted_at ? "This ID belongs to a deleted product. Restore that product or use a different ID." : "This Product ID is already in use. Choose a unique ID.");
     if (!r.name.trim()) throw Error("Product name is required");
     if (!Number.isInteger(r.boxes_per_carton) || r.boxes_per_carton < 1) throw Error("Boxes per carton must be at least 1");
+    for (const [label, value] of [["Cost", r.cost_paisa], ["Retail price", r.retail_paisa], ["Wholesale price", r.wholesale_paisa]]) {
+      if (!Number.isSafeInteger(value) || value < 0) throw Error(`${label} must be a valid non-negative amount`);
+    }
     const tierIndexes = Object.keys(f).filter(k => /^pt_min_\d+$/.test(k)).map(k => Number(k.slice(7))).sort((a,b)=>a-b);
     const overrides = tierIndexes.map(i => ({
       id: r.id + ":" + num(f["pt_min_" + i]), product_id: r.id,
       min_cartons: num(f["pt_min_" + i]), label: (f["pt_label_" + i] || "").trim(),
       rate_paisa: paisa(f["tier_" + i]),
     }));
-    if (f.product_override === "on" && (Math.min(...overrides.map(t=>t.min_cartons)) !== 0 || new Set(overrides.map(t=>t.min_cartons)).size !== overrides.length || overrides.some(t=>!t.label || t.rate_paisa < 0))) throw Error("Product tiers need unique minimums starting at 0 and valid labels/rates");
+    if (f.product_override === "on" && (!overrides.length || overrides.some(t => !Number.isFinite(t.min_cartons) || t.min_cartons < 0 || !Number.isSafeInteger(t.rate_paisa) || t.rate_paisa < 0) || Math.min(...overrides.map(t=>t.min_cartons)) !== 0 || new Set(overrides.map(t=>t.min_cartons)).size !== overrides.length || overrides.some(t=>!t.label))) throw Error("Product tiers need unique non-negative minimums starting at 0 and valid labels/rates");
     await store.run("product.save", { record:r, expected_version:old?.version, tiers:f.product_override === "on" ? overrides : [] });
   } else {
     await store.run("master.save", { table: tableName, record: r, expected_version: old?.version });
