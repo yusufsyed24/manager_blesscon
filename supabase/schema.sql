@@ -254,7 +254,7 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
    values(coalesce(nullif(r->>'id',''),(data#>>'{record,id}')||':'||(r->>'min_cartons')),data#>>'{record,id}',(r->>'min_cartons')::numeric,r->>'label',(r->>'rate_paisa')::bigint,auth.uid(),auth.uid(),null)
    on conflict(product_id,min_cartons) do update set label=excluded.label,rate_paisa=excluded.rate_paisa,deleted_at=null,version=public.price_tiers.version+1,updated_by=auth.uid(),updated_at=now();
   end loop;
-  result:=jsonb_build_object('product',(select to_jsonb(p) from public.products p where p.id=data#>>'{record,id}'),'tiers',(select coalesce(jsonb_agg(to_jsonb(t)),'[]'::jsonb) from public.price_tiers t where t.product_id=data#>>'{record,id}' and t.deleted_at is null));
+  result:=jsonb_build_object('product',(select to_jsonb(p) from public.products p where p.id=data#>>'{record,id}'),'tiers',(select coalesce(jsonb_agg(to_jsonb(pt)),'[]'::jsonb) from public.price_tiers pt where pt.product_id=data#>>'{record,id}' and pt.deleted_at is null));
  when 'master.delete' then
   if not public.is_admin() then raise exception 'Admin required for deletion'; end if;
   t:=data->>'table';if t not in ('products','customers','salesmen','expenses','price_tiers') then raise exception 'Invalid table'; end if;
