@@ -1188,6 +1188,13 @@ async function saveMaster(form) {
       rate_paisa: paisa(f["tier_" + i]),
     }));
     if (f.product_override === "on" && (!overrides.length || overrides.some(t => !Number.isFinite(t.min_cartons) || t.min_cartons < 0 || !Number.isSafeInteger(t.rate_paisa) || t.rate_paisa < 0) || Math.min(...overrides.map(t=>t.min_cartons)) !== 0 || new Set(overrides.map(t=>t.min_cartons)).size !== overrides.length || overrides.some(t=>!t.label))) throw Error("Product tiers need unique non-negative minimums starting at 0 and valid labels/rates");
+    // Persist the generated ID into the still-open form before awaiting the
+    // network. If the server partially accepts an older-schema fallback and a
+    // later tier write fails, retrying edits the same ID instead of generating
+    // a second product.
+    const idInput = form.querySelector('[name="id"]');
+    if (idInput) idInput.value = r.id;
+    form.dataset.id = r.id;
     await store.run("product.save", { record:r, expected_version:old?.version, tiers:f.product_override === "on" ? overrides : [] });
   } else {
     await store.run("master.save", { table: tableName, record: r, expected_version: old?.version });

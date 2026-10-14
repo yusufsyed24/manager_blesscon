@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v2-20261014";
+const CACHE = "blesscon-static-v3-product-save-20261014-2";
 const ASSETS = [
   "./",
   "./index.html",

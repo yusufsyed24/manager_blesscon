@@ -520,17 +520,68 @@ export class Store extends EventTarget {
       this.emit();
       try {
         await this.verifyUser();
-        const { data: res, error } = await this.client.rpc("apply_command", {
+        let { data: res, error } = await this.client.rpc("apply_command", {
           op_id: op.id,
           kind,
           data,
         });
-        if (error) throw error;
+        // Some deployed databases still have an older apply_command that does
+        // not know product.save. In that specific case, use the existing
+        // master.save/master.delete commands rather than making the Save button
+        // unusable until the database migration is deployed. Keep the legacy
+        // path explicit and sequential; errors remain visible to the form.
+        if (error && /unknown command/i.test(error.message || "")) {
+          const legacyRun = async (legacyKind, legacyData) => {
+            const { data: value, error: legacyError } = await this.client.rpc("apply_command", {
+              op_id: uid(), kind: legacyKind, data: legacyData,
+            });
+            if (legacyError) throw legacyError;
+            return value;
+          };
+          const savedProduct = await legacyRun("master.save", {
+            table: "products", record: data.record,
+            expected_version: data.expected_version ?? null,
+          });
+          if (!savedProduct?.id) throw Error("The database accepted no product record. Check the products table schema and admin permissions.");
+          // Retain the confirmed product immediately. If a later legacy tier
+          // write fails, the form stays open and a retry can update this same
+          // product instead of colliding with (or duplicating) the new ID.
+          const productIndex = this.base.products.findIndex(p => p.id === savedProduct.id);
+          if (productIndex < 0) this.base.products.push(savedProduct); else this.base.products[productIndex] = savedProduct;
+          this.persist();
+          this.replay();
+          const priorTiers = this.base.price_tiers.filter(t => t.product_id === savedProduct.id);
+          const requestedTiers = Array.isArray(data.tiers) ? data.tiers : [];
+          for (const tier of requestedTiers) {
+            const oldTier = priorTiers.find(t => Number(t.min_cartons) === Number(tier.min_cartons));
+            const savedTier = await legacyRun("master.save", {
+              table: "price_tiers",
+              record: { ...tier, id: oldTier?.id || tier.id || `${savedProduct.id}:${tier.min_cartons}`, product_id: savedProduct.id },
+              expected_version: oldTier?.version ?? null,
+            });
+            const ti = this.base.price_tiers.findIndex(t => t.id === savedTier.id);
+            if (ti < 0) this.base.price_tiers.push(savedTier); else this.base.price_tiers[ti] = savedTier;
+          }
+          for (const oldTier of priorTiers.filter(t => !t.deleted_at && !requestedTiers.some(n => Number(n.min_cartons) === Number(t.min_cartons)))) {
+            await legacyRun("master.delete", { table: "price_tiers", id: oldTier.id, version: oldTier.version });
+            const ti = this.base.price_tiers.findIndex(t => t.id === oldTier.id);
+            if (ti >= 0) this.base.price_tiers[ti] = { ...this.base.price_tiers[ti], deleted_at: new Date().toISOString(), version: (oldTier.version || 0) + 1 };
+          }
+          res = { product: savedProduct, tiers: this.base.price_tiers.filter(t => t.product_id === savedProduct.id && !t.deleted_at) };
+          error = null;
+        }
+        if (error) {
+          const msg = error.message || String(error);
+          if (/schema cache|could not find the function|function .* does not exist/i.test(msg)) {
+            throw Error("Supabase database migration is missing or not refreshed. In SQL Editor, run supabase/fix_product_save.sql, then run: NOTIFY pgrst, 'reload schema'; Original error: " + msg);
+          }
+          throw error;
+        }
         // apply_command returns the committed product and tiers. Apply that
         // authoritative response locally before attempting a full snapshot so
         // a snapshot/RLS/cache failure cannot make a committed save look failed.
         if (!res?.product?.id || res.product.id !== data?.record?.id) {
-          throw Error("Supabase returned no saved product. The database function may be out of date; apply supabase/fix_product_save.sql and reload the schema.");
+          throw Error("Supabase returned no saved product. Check the deployed database migration and product table schema.");
         }
         const saved = res.product;
         const pi = this.base.products.findIndex((p) => p.id === saved.id);

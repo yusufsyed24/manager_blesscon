@@ -133,3 +133,12 @@ This release is a deployable source package, not a live deployment. Production c
 - **Fix:** product/master form now uses `novalidate` and an explicit submit button so every attempt reaches the app's validation path. Required product fields and tier rules are checked in JavaScript; errors are displayed inline while preserving the dialog and entered values. Missing cost/retail/wholesale values now produce a clear message rather than being silently treated as zero. The inline error clears as the user edits fields.
 - **Regression coverage:** added a UI test asserting the product form bypasses silent browser-native blocking and successfully creates a product in the offline practice workspace.
 - **Limit:** this reproduces and fixes the frontend's silent-submit failure mode. A live Supabase write still depends on the deployed `product.save` SQL migration and admin permissions; those cannot be verified without access to the user's project.
+
+## 2026-10-14 — Product Save compatibility hardening
+
+- **Reported symptom:** the owner reports that Save in Products & Pricing still appears not to create or update products. This symptom could not be reproduced against the owner's live Supabase project because no live database credentials/session are available.
+- **Likely deployment root cause addressed:** a frontend using `product.save` against a previously deployed `apply_command` function that predates that command returns `Unknown command`. Earlier builds surfaced that database rejection but still left the user blocked until SQL was migrated.
+- **Fix:** when (and only when) Supabase returns `Unknown command` for `product.save`, the client falls back to the existing `master.save` and `master.delete` commands for the product and tier rows. Other errors are not swallowed. Missing RPC/schema-cache errors now explain that the SQL migration and PostgREST schema reload are required.
+- **Cache:** bumped the service-worker cache namespace so the next deployment installs the current static files rather than retaining the previous build's cached asset set.
+- **Regression test:** added `tests/product-save-fallback.test.js` to simulate the old server command and verify a product is saved and refreshed in the client state.
+- **Limitations:** the compatibility path is sequential rather than atomic; the recommended permanent fix remains applying `supabase/fix_product_save.sql` so `product.save` runs transactionally. This build has not been tested against the owner's live Supabase instance.
