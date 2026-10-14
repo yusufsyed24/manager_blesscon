@@ -300,6 +300,7 @@ function renderDocs(quote) {
         "Date",
         "Salesman",
         "Amount",
+        "Payment",
         "Status",
         "Actions",
       ],
@@ -309,6 +310,7 @@ function renderDocs(quote) {
         esc(d.date),
         esc(salesmanName(d.salesman_id)),
         money(d.total_paisa),
+        quote ? "—" : (() => { const invoice = s.invoices.find(i => i.order_id === d.id); const pay = invoice ? invoiceState(invoice, s.payments) : {status:"UNPAID"}; return badge(d.status === "cancelled" ? "CANCELLED" : pay.status); })(),
         badge(d.status),
         `<div class="actions">${btn("View", quote ? "view-quote" : "view-order", d.id)}${(!quote && d.status === "confirmed") || (quote && ["Draft", "Sent"].includes(d.status)) ? btn("Edit", quote ? "edit-quote" : "edit-order", d.id) : ""}${quote && !["Converted", "Expired", "Rejected"].includes(d.status) ? btn("Convert", "convert", d.id) : ""}${quote && ["Draft", "Sent"].includes(d.status) ? btn("Status", "quote-status", d.id) : ""}${admin() ? btn(quote ? "Delete" : "Cancel", quote ? "delete-quote" : "cancel-order", d.id, "", "danger") : ""}</div>`,
       ]),
@@ -458,6 +460,7 @@ function renderProducts() {
         "Cost / box",
         "Retail / box",
         "Wholesale tiers",
+        "Expiry date",
         "Status",
         "Actions",
       ],
@@ -470,6 +473,7 @@ function renderProducts() {
           .filter((t) => t.product_id === p.id && !t.deleted_at)
           .map((t) => esc(t.label) + ": " + money(t.rate_paisa))
           .join("<br>") || money(p.wholesale_paisa),
+        p.expiry_date ? esc(p.expiry_date) + "<small>" + esc(expiryStatus(p.expiry_date)) + "</small>" : "Not set",
         badge(p.active ? "Active" : "Inactive"),
         admin() ? btn("Edit", "edit-product", p.id) + btn(p.active ? "Deactivate" : "Activate", "toggle-product", p.id) : "—",
       ]),
@@ -1040,37 +1044,7 @@ function masterForm(kind, id) {
         ["false", "Inactive"],
       ],
       r.active === false ? "false" : "true",
-    )}</div><hr><div class="checkbox"><input id="product-override" name="product_override" type="checkbox" ${s.price_tiers.some((t) => t.product_id === id && !t.deleted_at) ? "checked" : ""}><label for="product-override">Use product-specific wholesale tier overrides (Rani products)</label></div><div class="grid" style="margin-top:16px">${s.settings.tiers
-      .map((t, i) => {
-        const pt = s.price_tiers.find(
-          (pt) =>
-            pt.product_id === id &&
-            num(pt.min_cartons) === num(t.min) &&
-            !pt.deleted_at,
-        );
-        return (
-          field(
-            "Tier " + (i + 1) + " minimum cartons",
-            "pt_min_" + i,
-            pt?.min_cartons ?? t.min,
-            "number",
-            'min="0" step="0.01"',
-          ) +
-          field(
-            "Tier " + (i + 1) + " label",
-            "pt_label_" + i,
-            pt?.label ?? t.label,
-          ) +
-          field(
-            "Tier " + (i + 1) + " rate (Rs.)",
-            "tier_" + i,
-            (pt?.rate_paisa ?? t.rate_paisa) / 100,
-            "number",
-            'min="0" step="0.01"',
-          )
-        );
-      })
-      .join("")}</div>`;
+    )}</div><hr><div class="checkbox"><input id="product-override" name="product_override" type="checkbox" ${s.price_tiers.some((t) => t.product_id === id && !t.deleted_at) ? "checked" : ""}><label for="product-override">Use product-specific wholesale tier overrides (Rani products)</label></div><div class="grid" style="margin-top:16px">${(() => { const saved = s.price_tiers.filter(pt => pt.product_id === id && !pt.deleted_at).sort((a,b) => num(a.min_cartons)-num(b.min_cartons)); const rows = saved.length ? saved : s.settings.tiers; return rows.map((t, i) => field("Tier " + (i + 1) + " minimum cartons", "pt_min_" + i, t.min_cartons ?? t.min, "number", 'min="0" step="0.01" required') + field("Tier " + (i + 1) + " label", "pt_label_" + i, t.label, "text", "required") + field("Tier " + (i + 1) + " rate (Rs.)", "tier_" + i, (t.rate_paisa ?? 0) / 100, "number", 'min="0" step="0.01" required')).join(""); })()}</div><p class="muted">Tier minimums can be edited directly. Use unique minimums, including a first tier at 0 cartons.</p>`;
   }
   if (kind === "staff")
     html = `<div class="grid">${field("Name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Joining date", "joining_date", r.joining_date || today(), "date", 'min="2000-01-01" required')}${field("Base salary (Rs.)", "base_salary", num(r.base_salary_paisa ?? s.settings.base_salary_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Monthly target (cartons)", "monthly_target", r.monthly_target || s.settings.monthly_target, "number", 'min="1" step="0.01" required')}${select(
@@ -1183,7 +1157,8 @@ async function saveMaster(form) {
   if (kind === "product") {
     if (!r.name.trim()) throw Error("Product name is required");
     if (!Number.isInteger(r.boxes_per_carton) || r.boxes_per_carton < 1) throw Error("Boxes per carton must be at least 1");
-    const overrides = S().settings.tiers.map((t, i) => ({
+    const tierIndexes = Object.keys(f).filter(k => /^pt_min_\d+$/.test(k)).map(k => Number(k.slice(7))).sort((a,b)=>a-b);
+    const overrides = tierIndexes.map(i => ({
       id: r.id + ":" + num(f["pt_min_" + i]), product_id: r.id,
       min_cartons: num(f["pt_min_" + i]), label: (f["pt_label_" + i] || "").trim(),
       rate_paisa: paisa(f["tier_" + i]),

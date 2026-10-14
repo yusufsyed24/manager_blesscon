@@ -225,6 +225,8 @@ function readKeyValueSheet(wb, name, XLSX, warnings) {
     const value = rows[i]?.[1] ?? "";
     if (!label || /^settings?$/i.test(label)) continue;
     const key = norm(label);
+    // Legacy workbook explanatory text, not an application setting.
+    if (key === "salaryrule") continue;
     // Ignore title/help rows; settings are a two-column key/value list.
     const known = /^(companyname|monthlytargetcartons|monthlytarget|boxespercarton|costperbox|salepriceperbox|basesalary|salarypertargetcarton|extrasalarypercartonabovetarget|below60incentive|6074incentive|7589incentive|9099incentive|100incentive|phone|email|address|ntn|bankdetails|incentiveslabs|tier.*|.*threshold.*)$/.test(key);
     if (known) {

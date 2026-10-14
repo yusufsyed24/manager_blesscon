@@ -80,3 +80,11 @@ This release is a deployable source package, not a live deployment. Production c
 ### Verification note
 - Added regression tests for local order payment states/validation, product save and tier restoration, database order payment retry/rollback and template rendering.
 - `node --check` passed for changed JavaScript files. `scripts/check.mjs` and Vitest could not run because dependencies (including `typescript` and `vitest`) are not installed; `npm ci --ignore-scripts` did not complete in the available environment. SQL was not executed against a live Supabase project or PostgreSQL test database. Do not treat this archive as fully acceptance-tested.
+
+## Follow-up fixes — webhook/import, product pricing, and visible payment status
+
+- The legacy workbook's `Salary Rule` row is informational text, not an application setting. The importer now skips it instead of reporting it as an unrecognised key. This addresses the specific Settings warning; if the webhook itself returns a separate HTTP/server error, its response body is still needed to diagnose that distinct issue.
+- Product & pricing now shows each product's expiry date in the main list.
+- Product-specific wholesale tiers are loaded from that product's saved overrides, rather than only matching the global tier minimums. Tier minimums, labels, and rates can be edited together, including custom minimum-carton thresholds; saving still validates unique minimums and a zero-carton starting tier.
+- Sales orders now show a Payment column (PAID / PART PAID / UNPAID) directly in the list, computed from the linked invoice and payment ledger. Recording a collection adds a payment transaction against the existing invoice and should not create another sale/order.
+- Added a regression test for the legacy `Salary Rule` workbook row. Full test suite and live Supabase/webhook verification remain unconfirmed in this environment; run tests and verify on a staging deployment before production.

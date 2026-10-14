@@ -94,3 +94,15 @@ it("processes the supplied business workbook and ignores informational sheets", 
   for (const name of ["START HERE", "Order Entry Guide", "Addon Summary", "Dashboard", "Stock Summary"])
     expect(r.warnings.some(w => w.startsWith(name + ":"))).toBe(false);
 });
+
+it("ignores the legacy informational Salary Rule row in Settings instead of warning", () => {
+  const w = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(w, XLSX.utils.aoa_to_sheet([
+    ["Company Name", "Blesscon Candy"],
+    ["Monthly Target (Cartons)", 130],
+    ["Salary Rule", "Total Salary = Base Salary + Incentive based on Target Achievement %"],
+  ]), "Settings");
+  const r = importWorkbook(w, XLSX);
+  expect(r.warnings.some(w => /unrecognised key Salary Rule/i.test(w))).toBe(false);
+  expect(r.data.settings.value.company_name).toBe("Blesscon Candy");
+});
