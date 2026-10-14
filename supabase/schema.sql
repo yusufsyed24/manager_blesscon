@@ -412,3 +412,4 @@ create or replace function public.business_snapshot() returns jsonb language sql
 'stock',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.stock_balances() x))$$;
 revoke all on function public.business_snapshot() from public,anon;
 grant execute on function public.business_snapshot() to authenticated;
+\n\ngrant usage on schema public to authenticated;\nnotify pgrst, 'reload schema';\n

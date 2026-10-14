@@ -145,3 +145,10 @@ npm run release
 Tests use PostgreSQL through PGlite, Vitest and jsdom. They do not substitute for a live Supabase, mobile-browser, Storage or Lighthouse test. See the exact result matrix in `TESTING.md`.
 
 Primary references used: [Supabase database functions](https://supabase.com/docs/guides/database/functions), [Supabase RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [SheetJS cell objects](https://docs.sheetjs.com/docs/csf/cell/) and [SheetJS parsing options](https://docs.sheetjs.com/docs/api/parse-options/).
+
+
+## Troubleshooting
+
+- If `business_snapshot` is missing from the schema cache, run `supabase/schema.sql` in the project's SQL Editor, then run `notify pgrst, 'reload schema';` and hard-refresh the site.
+- Run `supabase/verify.sql` in the SQL Editor to list required tables/functions and existing policies and identify missing schema objects.
+- Confirm `app_config.js` uses the same Supabase project where the SQL was executed. Then run `supabase/first_admin.sql` to configure the first administrator.

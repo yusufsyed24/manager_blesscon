@@ -1,0 +1,10 @@
+Blesscon Candy Business Manager v3 validation log
+Date: 2026-10-14
+
+PASS: node --check on all 22 JavaScript files in js/ and tests/.
+PASS: root js/app.js, js/importer.js, js/store.js match web/js counterparts.
+BLOCKED: npm test -- --reporter=dot could not execute because Vitest is missing from the incomplete node_modules install (sh: vitest: not found).
+BLOCKED: node scripts/check.mjs could not execute because the TypeScript dependency entry point is incomplete (ERR_MODULE_NOT_FOUND).
+BLOCKED: npm ci --ignore-scripts timed out in this environment; full regression suite and PostgreSQL idempotency execution have NOT been verified.
+
+Important: this is not a claim that all acceptance criteria passed. Run npm ci, npm test, and npm run check in a working Node environment before deploying.

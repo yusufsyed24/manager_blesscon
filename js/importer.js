@@ -228,6 +228,7 @@ export function importWorkbook(wb, XLSX, current = {}) {
       address: "address",
       ntn: "ntn",
       bankdetails: "bank_details",
+      incentiveslabs: "incentive_slabs",
     };
     if (mapping[key])
       setting[mapping[key]] =

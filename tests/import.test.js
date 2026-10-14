@@ -83,3 +83,14 @@ it("re-import stable IDs creates zero new records; empty formula rows are skippe
   expect(b.data.products).toHaveLength(37);
 });
 export { fixture };
+
+it("processes the supplied business workbook and ignores informational sheets", async () => {
+  const fs = await import("node:fs/promises");
+  const path = process.cwd().includes("Blesscon_Candy_Manager") ? "/mnt/data/Blesscon_Candy_Connected_Workbook.xlsx" : "../Blesscon_Candy_Connected_Workbook.xlsx";
+  const wb = XLSX.read(await fs.readFile(path), { type: "buffer", cellFormula: true });
+  const r = importWorkbook(wb, XLSX);
+  expect(r.data.products.length).toBe(37);
+  expect(r.data.price_tiers.length).toBeGreaterThanOrEqual(148);
+  for (const name of ["START HERE", "Order Entry Guide", "Addon Summary", "Dashboard", "Stock Summary"])
+    expect(r.warnings.some(w => w.startsWith(name + ":"))).toBe(false);
+});

@@ -47,3 +47,10 @@ This release is a deployable source package, not a live deployment. Production c
 20. **Expense storage.** Receipts use a private Supabase bucket, max 5 MB, PNG/JPEG/WebP. Live Storage policy verification is still required after deployment.
 21. **Test environment.** SQL tests use PostgreSQL in PGlite with Supabase-like auth identities and roles. UI tests use jsdom plus axe (no colour-contrast rendering). These do not establish a Lighthouse score, true browser layout at 375 px, real Auth/Edge integration or actual workbook compatibility.
 22. **Deployment delivery.** The requested output is a downloadable project with Supabase/Netlify instructions. It has not been published to an unrelated hosting service or connected to an invented account.
+
+
+## v3 bug fixes
+
+- **Snapshot/schema cache:** added PostgREST schema reload notification, schema usage grant, and fallback table loading when `business_snapshot` is unavailable. Added `supabase/verify.sql` and setup troubleshooting instructions.
+- **Workbook warnings:** added sheet classification so instruction/report tabs are skipped and Settings is parsed as key/value rows rather than header-based data.
+- **Order/quotation product picker:** replaced free-text product ID entry with an accessible select, searchable by name/ID, showing product name, ID and rate; empty and missing-product states are explicit.
