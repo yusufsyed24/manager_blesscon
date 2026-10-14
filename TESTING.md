@@ -1,40 +1,14 @@
-# Testing and validation status
+# Testing and deployment status
 
-Date: 14 October 2026
+## Follow-up product-save fix
 
-## Current work-in-progress build
+- `node --check` was run for every JavaScript file in `js/`, `tests/`, and the generated `web/js/` tree.
+- Root and `web/` copies of `app.js` and `store.js` were compared and match.
+- `scripts/release.mjs` completed and generated the static deployment tree.
+- Added two Vitest regression tests covering synchronous Supabase product-save rejection and refresh-after-success.
+- **Vitest suite not run:** the project dependencies are not installed in this environment; `npm test -- --reporter=dot` reports `vitest: not found`. An attempt to install dependencies timed out. Do not treat this build as fully test-verified.
+- No live Supabase credentials/project were available, so actual database permissions and deployed schema could not be tested here.
 
-The new regression tests have been added, but the full suite has **not** been executed. The environment has no usable `node_modules/typescript` or Vitest installation, and `npm ci --ignore-scripts` did not complete.
+## If a product save still fails
 
-Executed checks:
-
-- `node --check` passed for JavaScript files under `js/` and `tests/`.
-- `node scripts/release.mjs` completed and copied the root source tree into `web/`.
-- Root and `web/` copies of the edited `app.js`, `store.js`, and `documents.js` are synchronized.
-
-Blocked / not run:
-
-- `node scripts/check.mjs` — blocked by missing TypeScript dependency.
-- `npm test` — blocked by missing Vitest dependency.
-- SQL tests in PGlite/PostgreSQL and live Supabase Auth/PostgREST tests — not run.
-- Browser/mobile UI and PDF visual acceptance tests — not run.
-
-Regression coverage added (not yet executed):
-
-- Order payment statuses, invalid partial amounts, and offline/local atomic state behavior.
-- SQL order-payment retry idempotency and rollback on invalid partial payment.
-- Product fields and restoration of a soft-deleted tier via `product.save`.
-- Initial payment during quotation conversion.
-- Registered document template rendering and delivery-challan price suppression.
-
-## Required local verification
-
-Use Node.js 22 or newer, then run:
-
-```sh
-npm ci
-npm run check
-npm test
-```
-
-Do not deploy this work-in-progress build to production until those commands pass and the remaining gaps in `CHANGELOG.md` have been reviewed. Syntax checks alone do not prove database transaction correctness.
+The product form now stays open and displays the Supabase error instead of showing a false success. Read the exact error in the form. If the sync banner reports an older pending change, open **Review pending changes** and resolve/discard the failed pending operation before submitting another product write.

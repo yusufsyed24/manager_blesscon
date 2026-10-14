@@ -107,3 +107,34 @@ it("never sends one account’s pending writes using a different signed-in accou
   expect(s.queue).toHaveLength(1);
   expect(s.error).toContain("account that created");
 });
+
+it("product.save surfaces a rejected Supabase write and does not queue a false success", async () => {
+  localStorage.clear();
+  Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+  const client = {
+    supabaseUrl: "https://product-error.supabase.co",
+    auth: { getSession: async () => ({ data: { session: { user: { id: "admin" } } } }) },
+    rpc: vi.fn(async () => ({ data: null, error: { message: "Admin required", code: "P0001" } })),
+  };
+  const s = new Store(client, { id: "admin", role: "admin" });
+  s.refresh = vi.fn();
+  await expect(s.run("product.save", { record: { id: "BC-GEN-0001", name: "Candy", boxes_per_carton: 24, cost_paisa: 0, retail_paisa: 0, wholesale_paisa: 0 }, tiers: [] })).rejects.toThrow("Admin required");
+  expect(s.queue).toHaveLength(0);
+  expect(s.refresh).not.toHaveBeenCalled();
+});
+
+it("product.save refreshes authoritative data before returning success", async () => {
+  localStorage.clear();
+  Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+  const client = {
+    supabaseUrl: "https://product-success.supabase.co",
+    auth: { getSession: async () => ({ data: { session: { user: { id: "admin" } } } }) },
+    rpc: vi.fn(async () => ({ data: { product: { id: "P1", name: "Candy" }, tiers: [] }, error: null })),
+  };
+  const s = new Store(client, { id: "admin", role: "admin" });
+  s.refresh = vi.fn(async () => {});
+  const result = await s.run("product.save", { record: { id: "P1", name: "Candy", boxes_per_carton: 24, cost_paisa: 0, retail_paisa: 0, wholesale_paisa: 0 }, tiers: [] });
+  expect(result.product.id).toBe("P1");
+  expect(s.refresh).toHaveBeenCalledOnce();
+  expect(s.queue).toHaveLength(0);
+});

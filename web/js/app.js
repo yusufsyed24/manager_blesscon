@@ -1178,7 +1178,7 @@ async function saveMaster(form) {
   }
   close();
   render();
-  toast("Saved");
+  toast(kind === "product" ? (old ? "Product updated" : "Product created") : "Saved");
 }
 function showDocument(id, quote = false) {
   activeDoc = documentData(S(), id, quote ? "quote" : "invoice");

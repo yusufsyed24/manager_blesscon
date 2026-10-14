@@ -502,6 +502,30 @@ export class Store extends EventTarget {
       this.replay();
       return n.result;
     }
+    // Product writes must not be reported as successful while merely queued.
+    // In the old path, an RPC rejection was swallowed by sync(), the optimistic
+    // product stayed visible locally, and saveMaster closed the dialog anyway.
+    // When online and there are no older queued mutations, execute the command
+    // synchronously so a database/permission/schema error reaches the form.
+    if (kind === "product.save" && this.client && navigator.onLine && !this.queue.length) {
+      this.busy = true;
+      this.emit();
+      try {
+        await this.verifyUser();
+        const { data: res, error } = await this.client.rpc("apply_command", {
+          op_id: op.id,
+          kind,
+          data,
+        });
+        if (error) throw error;
+        await this.refresh();
+        this.lastResult = res;
+        return res;
+      } finally {
+        this.busy = false;
+        this.emit();
+      }
+    }
     if (
       ["import.batch", "share.create", "share.revoke", "user.update"].includes(
         kind,
