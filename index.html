@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#12233f" />
+    <meta
+      name="description"
+      content="Blesscon Candy sales, stock, payments and team management"
+    />
+    <title>Blesscon Candy | Business Manager</title>
+    <link rel="icon" href="assets/logo-square.png" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="manifest" href="manifest.json" />
+    <script src="app_config.js"></script>
+    <script src="vendor/supabase.js" defer></script>
+    <script src="vendor/xlsx.full.min.js" defer></script>
+    <script src="vendor/jspdf.umd.min.js" defer></script>
+    <script src="vendor/chart.umd.js" defer></script>
+    <script type="module" src="js/app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <div id="app">
+      <main class="loading">
+        <img src="assets/logo.jpeg" alt="Blesscon Candy logo" />
+        <p>Opening your business manager…</p>
+      </main>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <dialog id="modal" aria-labelledby="modal-title">
+      <header>
+        <h2 id="modal-title"></h2>
+        <button id="close-modal" class="icon-button" aria-label="Close dialog">
+          ×
+        </button>
+      </header>
+      <div id="modal-body"></div>
+    </dialog>
+    <div id="print-area"></div>
+  </body>
+</html>
