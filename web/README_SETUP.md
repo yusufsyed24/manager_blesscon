@@ -160,3 +160,7 @@ Primary references used: [Supabase database functions](https://supabase.com/docs
 - Product changes use the `product.save` command to save product fields and tier overrides together. A conflict should not be bypassed by repeatedly saving; reload the latest product values first.
 - Document template selection is stored in browser local storage per signed-in user and document type/document. Browser storage is device-specific and does not synchronize between devices.
 - Validation status for this work-in-progress build is recorded in `CHANGELOG.md`; run `npm ci`, `npm run check`, and `npm test` before production deployment.
+
+## Repair product create/update on an existing Supabase deployment
+
+If the deployed database was created before the product-save fix, run `supabase/fix_product_save.sql` in the Supabase SQL Editor. This replaces `public.apply_command` with the current function while preserving the other command branches, then asks PostgREST to reload its schema cache. Do not run an older copy of this migration from a previous ZIP. Afterward redeploy `web/` and hard-refresh the browser (Ctrl+Shift+R). Preserve the real project URL and publishable/anon key in the deployed `app_config.js`; the repository template intentionally has empty values and cannot connect until configured.

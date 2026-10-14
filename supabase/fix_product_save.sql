@@ -1,7 +1,9 @@
--- Fix: product create/update failed with 'column reference "t" is ambiguous'.
--- Run this once in Supabase > SQL Editor. Safe to re-run.
+-- Product create/update migration for existing installations.
+-- Apply this whole file in Supabase SQL Editor, then hard-refresh the app.
+-- It intentionally replaces apply_command with the exact current function from schema.sql
+-- so payment, stock, quote and admin command branches are not lost.
 create or replace function public.apply_command(op_id uuid,kind text,data jsonb) returns jsonb language plpgsql security definer set search_path='' as $$
-declare cached private.commands; result jsonb; o public.orders; q public.quotations; r jsonb; t text; v integer; old jsonb; inv public.invoices; params jsonb; rid text; a bigint; n bigint; begin
+declare cached private.commands; result jsonb; o public.orders; q public.quotations; r jsonb; v_table_name text; v integer; old jsonb; inv public.invoices; params jsonb; rid text; a bigint; n bigint; begin
  if auth.uid() is null or not exists(select 1 from public.profiles where id=auth.uid() and active) then raise exception 'Active login required'; end if;
  -- Serialises stock, numbering, payments and conversions, including retries from offline devices.
  lock table private.commands in exclusive mode;
@@ -24,8 +26,8 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   result:=jsonb_build_object('product',(select to_jsonb(p) from public.products p where p.id=data#>>'{record,id}'),'tiers',(select coalesce(jsonb_agg(to_jsonb(pt)),'[]'::jsonb) from public.price_tiers pt where pt.product_id=data#>>'{record,id}' and pt.deleted_at is null));
  when 'master.delete' then
   if not public.is_admin() then raise exception 'Admin required for deletion'; end if;
-  t:=data->>'table';if t not in ('products','customers','salesmen','expenses','price_tiers') then raise exception 'Invalid table'; end if;
-  execute format('update public.%I set deleted_at=now(),version=version+1,updated_by=$1 where id=$2 and version=$3 returning to_jsonb(%I.*)',t,t) into result using auth.uid(),data->>'id',(data->>'version')::integer;
+  v_table_name:=data->>'table';if v_table_name not in ('products','customers','salesmen','expenses','price_tiers') then raise exception 'Invalid table'; end if;
+  execute format('update public.%I set deleted_at=now(),version=version+1,updated_by=$1 where id=$2 and version=$3 returning to_jsonb(%I.*)',v_table_name,v_table_name) into result using auth.uid(),data->>'id',(data->>'version')::integer;
   if result is null then raise exception 'CONFLICT: Record changed'; end if;
  when 'order.save' then
   result:=private.save_document(data,false);
@@ -101,9 +103,9 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   if not public.is_admin() then raise exception 'Admin required'; end if;
   select coalesce(max(id),0) into a from public.audit_log;
   if a is distinct from (data->>'audit_cursor')::bigint then raise exception 'CONFLICT: Business data changed since preview; import again'; end if;
-  foreach t in array array['settings','products','price_tiers','salesmen','customers'] loop
-   for r in select value from jsonb_array_elements(case when t='settings' then jsonb_build_array(data->'settings') else coalesce(data->t,'[]') end) loop
-    execute format('select version from public.%I where id=$1',t) into v using r->>'id';perform private.save_master(t,r,v);
+  foreach v_table_name in array array['settings','products','price_tiers','salesmen','customers'] loop
+   for r in select value from jsonb_array_elements(case when v_table_name='settings' then jsonb_build_array(data->'settings') else coalesce(data->v_table_name,'[]') end) loop
+    execute format('select version from public.%I where id=$1',v_table_name) into v using r->>'id';perform private.save_master(v_table_name,r,v);
    end loop;
   end loop;
   for r in select value from jsonb_array_elements(coalesce(data->'stock_movements','[]')) loop perform private.stock_entry(r,true);end loop;
@@ -145,5 +147,19 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
  if kind in ('order.save','order.cancel','quote.convert','import.batch','master.save') then perform public.recalculate_targets(private.business_today()+7);end if;
  insert into private.commands(id,user_id,kind,result) values(op_id,auth.uid(),kind,coalesce(result,'{}'));
  return coalesce(result,'{}');end $$;
+-- Public document access is by unguessable, expiring, revocable token only.
+create or replace function public.shared_document(token uuid) returns jsonb language plpgsql security definer set search_path='' as $$declare i public.invoices;q public.quotations;o public.orders;doc jsonb;cfg jsonb;begin
+ select jsonb_build_object('company_name',value->'company_name','address',value->'address','phone',value->'phone','email',value->'email','website',value->'website','ntn',value->'ntn','bank_details',value->'bank_details','terms',value->'terms','signature_name',value->'signature_name') into cfg from public.settings where id='business';
+ select * into i from public.invoices where share_token=token and share_expires_at>now();
+ if found then select * into strict o from public.orders where id=i.order_id and status='confirmed' and deleted_at is null;
+  select jsonb_build_object('type','invoice','settings',cfg,'document',to_jsonb(o)-'created_by'-'updated_by','invoice',to_jsonb(i)-'share_token','customer',(select to_jsonb(c)-'created_by'-'updated_by' from public.customers c where id=o.customer_id),'salesman',(select name from public.salesmen where id=o.salesman_id),'items',(select jsonb_agg(to_jsonb(l)-'cost_paisa'-'override_reason') from public.order_items l where order_id=o.id),'payments',(select coalesce(jsonb_agg(jsonb_build_object('date',p.date,'amount_paisa',p.amount_paisa,'method',p.method)),'[]') from public.payments p where invoice_id=i.id and voided_at is null)) into doc;return doc;
+ end if;
+ select * into q from public.quotations where share_token=token and share_expires_at>now() and deleted_at is null;
+ if not found then raise exception 'Link expired or unavailable';end if;
+ return jsonb_build_object('type','quote','settings',cfg,'document',to_jsonb(q)-'share_token'-'created_by'-'updated_by','customer',(select to_jsonb(c)-'created_by'-'updated_by' from public.customers c where id=q.customer_id),'salesman',(select name from public.salesmen where id=q.salesman_id),'items',(select jsonb_agg(to_jsonb(l)-'cost_paisa'-'override_reason') from public.quotation_items l where quotation_id=q.id),'payments','[]'::jsonb);
+end $$;
+revoke all on all functions in schema private from public,anon,authenticated;
+
 revoke all on function public.apply_command(uuid,text,jsonb),public.recalculate_targets(date),public.app_settings(),public.stock_balances(),public.shared_document(uuid),public.is_admin(),public.has_permission(text,text),public.owns_salesman(text),public.can_document(text,text,text) from public,anon;
 grant execute on function public.apply_command(uuid,text,jsonb),public.recalculate_targets(date),public.app_settings(),public.stock_balances(),public.is_admin(),public.has_permission(text,text),public.owns_salesman(text),public.can_document(text,text,text) to authenticated;
+notify pgrst, 'reload schema';

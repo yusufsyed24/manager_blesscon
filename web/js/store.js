@@ -507,7 +507,15 @@ export class Store extends EventTarget {
     // product stayed visible locally, and saveMaster closed the dialog anyway.
     // When online and there are no older queued mutations, execute the command
     // synchronously so a database/permission/schema error reaches the form.
-    if (kind === "product.save" && this.client && navigator.onLine && !this.queue.length) {
+    if (kind === "product.save" && this.client && navigator.onLine) {
+      // Never optimistically close the product editor while an earlier mutation
+      // is still queued or while the database has not accepted this save.
+      if (this.queue.length) {
+        await this.sync();
+        if (this.queue.length || this.error) {
+          throw Error("A previous change is still pending. Resolve the sync error before saving product changes: " + (this.error || "pending changes remain"));
+        }
+      }
       this.busy = true;
       this.emit();
       try {
@@ -521,6 +529,9 @@ export class Store extends EventTarget {
         await this.refresh();
         this.lastResult = res;
         return res;
+      } catch (error) {
+        // Preserve the real PostgREST message for the form's inline alert.
+        throw Error(error?.message || "Product save failed. Check database permissions and schema migration.");
       } finally {
         this.busy = false;
         this.emit();

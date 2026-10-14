@@ -54,3 +54,15 @@ it("keeps the existing order id, invoice number and payments when an order is ed
   expect(out.orders[0].version).toBe(order.version+1);
   expect(out.payments).toHaveLength(payCount);
 });
+
+it("product.save creates a product without tier overrides and persists expiry dates",()=>{
+  const s=empty(),user={id:uid(),role:"admin",practice:true};
+  const id="BC-GEN-0001";
+  const create={id:uid(),kind:"product.save",data:{record:{id,name:"New Candy",category:"Candy",boxes_per_carton:24,cost_paisa:100,retail_paisa:250,wholesale_paisa:230,expiry_date:"2027-12-31",active:true},tiers:[]}};
+  const created=localApply(s,create,user).state;
+  expect(created.products).toHaveLength(1);
+  expect(created.products[0]).toMatchObject({id,name:"New Candy",expiry_date:"2027-12-31",active:true});
+  const update={id:uid(),kind:"product.save",data:{record:{...created.products[0],name:"Updated Candy",expiry_date:"2028-01-31",wholesale_paisa:22500},expected_version:created.products[0].version,tiers:[]}};
+  const updated=localApply(created,update,user).state;
+  expect(updated.products[0]).toMatchObject({name:"Updated Candy",expiry_date:"2028-01-31",wholesale_paisa:22500,version:2});
+});

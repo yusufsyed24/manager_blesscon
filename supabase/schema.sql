@@ -234,7 +234,7 @@ declare s public.salesmen; cfg jsonb; d date; carry numeric; effective numeric; 
  update public.quotations set status='Expired',version=version+1 where valid_until<private.business_today() and status in ('Draft','Sent') and deleted_at is null and (public.is_admin() or public.owns_salesman(salesman_id));
  return n; end $$;
 create or replace function public.apply_command(op_id uuid,kind text,data jsonb) returns jsonb language plpgsql security definer set search_path='' as $$
-declare cached private.commands; result jsonb; o public.orders; q public.quotations; r jsonb; t text; v integer; old jsonb; inv public.invoices; params jsonb; rid text; a bigint; n bigint; begin
+declare cached private.commands; result jsonb; o public.orders; q public.quotations; r jsonb; v_table_name text; v integer; old jsonb; inv public.invoices; params jsonb; rid text; a bigint; n bigint; begin
  if auth.uid() is null or not exists(select 1 from public.profiles where id=auth.uid() and active) then raise exception 'Active login required'; end if;
  -- Serialises stock, numbering, payments and conversions, including retries from offline devices.
  lock table private.commands in exclusive mode;
@@ -257,8 +257,8 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   result:=jsonb_build_object('product',(select to_jsonb(p) from public.products p where p.id=data#>>'{record,id}'),'tiers',(select coalesce(jsonb_agg(to_jsonb(pt)),'[]'::jsonb) from public.price_tiers pt where pt.product_id=data#>>'{record,id}' and pt.deleted_at is null));
  when 'master.delete' then
   if not public.is_admin() then raise exception 'Admin required for deletion'; end if;
-  t:=data->>'table';if t not in ('products','customers','salesmen','expenses','price_tiers') then raise exception 'Invalid table'; end if;
-  execute format('update public.%I set deleted_at=now(),version=version+1,updated_by=$1 where id=$2 and version=$3 returning to_jsonb(%I.*)',t,t) into result using auth.uid(),data->>'id',(data->>'version')::integer;
+  v_table_name:=data->>'table';if v_table_name not in ('products','customers','salesmen','expenses','price_tiers') then raise exception 'Invalid table'; end if;
+  execute format('update public.%I set deleted_at=now(),version=version+1,updated_by=$1 where id=$2 and version=$3 returning to_jsonb(%I.*)',v_table_name,v_table_name) into result using auth.uid(),data->>'id',(data->>'version')::integer;
   if result is null then raise exception 'CONFLICT: Record changed'; end if;
  when 'order.save' then
   result:=private.save_document(data,false);
@@ -334,9 +334,9 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   if not public.is_admin() then raise exception 'Admin required'; end if;
   select coalesce(max(id),0) into a from public.audit_log;
   if a is distinct from (data->>'audit_cursor')::bigint then raise exception 'CONFLICT: Business data changed since preview; import again'; end if;
-  foreach t in array array['settings','products','price_tiers','salesmen','customers'] loop
-   for r in select value from jsonb_array_elements(case when t='settings' then jsonb_build_array(data->'settings') else coalesce(data->t,'[]') end) loop
-    execute format('select version from public.%I where id=$1',t) into v using r->>'id';perform private.save_master(t,r,v);
+  foreach v_table_name in array array['settings','products','price_tiers','salesmen','customers'] loop
+   for r in select value from jsonb_array_elements(case when v_table_name='settings' then jsonb_build_array(data->'settings') else coalesce(data->v_table_name,'[]') end) loop
+    execute format('select version from public.%I where id=$1',v_table_name) into v using r->>'id';perform private.save_master(v_table_name,r,v);
    end loop;
   end loop;
   for r in select value from jsonb_array_elements(coalesce(data->'stock_movements','[]')) loop perform private.stock_entry(r,true);end loop;

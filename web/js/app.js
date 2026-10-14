@@ -1064,6 +1064,18 @@ function masterForm(kind, id) {
     (existing ? "Edit " : "New ") + kind,
     `<form id="master-form" data-kind="${kind}" data-id="${esc(id || "")}">${html}<div id="master-form-error" role="alert" class="notice danger" style="display:none"></div><div class="actions" style="margin-top:22px"><button class="gold">Save ${kind}</button></div></form>`,
   );
+  if (kind === "product") {
+    const form = $("master-form"), toggle = form?.querySelector('[name="product_override"]');
+    const setTierFields = () => {
+      const enabled = !!toggle?.checked;
+      for (const el of form.querySelectorAll('[name^="pt_min_"],[name^="pt_label_"],[name^="tier_"]')) {
+        el.disabled = !enabled;
+        el.required = enabled;
+      }
+    };
+    toggle?.addEventListener("change", setTierFields);
+    setTierFields();
+  }
 }
 const dates = (text) => {
   const a = text
