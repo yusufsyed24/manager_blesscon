@@ -13,7 +13,7 @@ export const norm = (s) =>
     .replace(/[^a-z0-9]/g, "");
 const aliases = {
   product_id: ["Product ID", "Product Code", "SKU", "Code"],
-  name: ["Product Name", "Product", "Name", "Item"],
+  name: ["Product Name", "Product", "Name", "Item", "Product / flavour", "Product Name (auto)", "Product name (auto)"],
   price_code: ["Price Code", "Rate Code"],
   boxes_per_carton: [
     "Boxes/Carton",
@@ -191,13 +191,67 @@ export function readSheet(wb, name, XLSX, warnings) {
     },
   };
 }
+
+const SHEET_REGISTRY = {
+  data: [
+    "Price Codes", "Products", "Salesmen", "Order Entry Form",
+    "Receipts", "Expenses", "Daily Sales", "Addon Stock",
+  ],
+  keyValue: ["Settings"],
+  ignore: [
+    "START HERE", "Order Entry Guide", "Addon Summary", "Dashboard",
+    "Stock Summary", "Invoice", "Salary Calculator", "Expiry Tracker",
+    "Retail Addon", "Stock Transactions",
+  ],
+};
+function sheetKind(name) {
+  const n = norm(name);
+  const match = (items) => items.some((label) => {
+    const k = norm(label);
+    return n === k || n.includes(k) || k.includes(n);
+  });
+  if (match(SHEET_REGISTRY.ignore)) return "ignore";
+  if (match(SHEET_REGISTRY.keyValue)) return "keyValue";
+  if (match(SHEET_REGISTRY.data)) return "data";
+  return "ignore";
+}
+function readKeyValueSheet(wb, name, XLSX, warnings) {
+  const sheet = wb.Sheets[name];
+  const rows = XLSX.utils.sheet_to_json(sheet, {header:1, raw:false, defval:"", blankrows:false});
+  const out = [];
+  let started = false;
+  for (let i=0; i<rows.length; i++) {
+    const label = String(rows[i]?.[0] ?? "").trim();
+    const value = rows[i]?.[1] ?? "";
+    if (!label || /^settings?$/i.test(label)) continue;
+    const key = norm(label);
+    // Ignore title/help rows; settings are a two-column key/value list.
+    const known = /^(companyname|monthlytargetcartons|monthlytarget|boxespercarton|costperbox|salepriceperbox|basesalary|salarypertargetcarton|extrasalarypercartonabovetarget|below60incentive|6074incentive|7589incentive|9099incentive|100incentive|phone|email|address|ntn|bankdetails|incentiveslabs|tier.*|.*threshold.*)$/.test(key);
+    if (known) {
+      started = true;
+      out.push({_row:i+1,_sheet:name,setting:label,value});
+    } else if (started && value !== "") {
+      warnings.push("Settings row " + (i+1) + " column A: unrecognised key " + label);
+    }
+  }
+  return {rows:out, layout:{headers:["Setting","Value"],headerRow:0,preamble:[]}};
+}
+
 export function importWorkbook(wb, XLSX, current = {}) {
   const warnings = [],
     errors = [],
     layout = {},
     sheets = {};
   for (const name of wb.SheetNames) {
-    const parsed = readSheet(wb, name, XLSX, warnings);
+    const kind = sheetKind(name);
+    if (kind === "ignore") {
+      sheets[norm(name)] = [];
+      layout[name] = { headers: [], headerRow: 0, preamble: [] };
+      continue;
+    }
+    const parsed = kind === "keyValue"
+      ? readKeyValueSheet(wb, name, XLSX, warnings)
+      : readSheet(wb, name, XLSX, warnings);
     sheets[norm(name)] = parsed.rows;
     layout[name] = parsed.layout;
   }
@@ -247,8 +301,8 @@ export function importWorkbook(wb, XLSX, current = {}) {
       } catch {
         setting[str(r.setting)] = str(val);
       }
-    } else if (str(r.setting))
-      warnings.push("Settings: unmapped setting " + str(r.setting));
+    } else if (str(r.setting) && !/^(costperbox|salepriceperbox|salarypertargetcarton|extrasalarypercartonabovetarget|below60incentive|6074incentive|7589incentive|9099incentive|100incentive|tier.*|.*threshold.*)$/.test(key))
+      warnings.push("Settings row " + r._row + " column A: unrecognised key " + str(r.setting));
   }
   data.settings = {
     id: "business",
