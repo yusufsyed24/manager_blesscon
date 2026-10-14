@@ -2003,6 +2003,34 @@ document.addEventListener("change", async (e) => {
     toast(err.message);
   }
 });
+// Explicit click path for the Products & Pricing Save button. Some embedded
+// deployments/browser shells fail to dispatch the delegated submit event for
+// dynamically-created dialog forms; intercept the actual button click in capture
+// phase so saving does not depend on native form submission.
+document.addEventListener("click", async (e) => {
+  const button = e.target.closest?.('#master-form button[type="submit"]');
+  if (!button) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const form = button.closest("form#master-form");
+  if (!form || form.dataset.saving) return;
+  form.dataset.saving = "true";
+  const buttons = [...form.querySelectorAll("button")];
+  buttons.forEach((b) => (b.disabled = true));
+  const error = form.querySelector("#master-form-error");
+  if (error) { error.textContent = "Saving…"; error.style.display = "block"; error.classList.remove("danger"); }
+  try {
+    await saveMaster(form);
+  } catch (err) {
+    const message = err?.message || String(err);
+    toast(message);
+    if (error) { error.textContent = message; error.style.display = "block"; error.classList.add("danger"); error.setAttribute("tabindex", "-1"); error.focus({ preventScroll: true }); }
+  } finally {
+    delete form.dataset.saving;
+    buttons.forEach((b) => (b.disabled = false));
+  }
+}, true);
+
 document.addEventListener("submit", async (e) => {
   const form = e.target;
   if (!(form instanceof HTMLFormElement)) return;

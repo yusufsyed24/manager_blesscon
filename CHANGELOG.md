@@ -142,3 +142,10 @@ This release is a deployable source package, not a live deployment. Production c
 - **Cache:** bumped the service-worker cache namespace so the next deployment installs the current static files rather than retaining the previous build's cached asset set.
 - **Regression test:** added `tests/product-save-fallback.test.js` to simulate the old server command and verify a product is saved and refreshed in the client state.
 - **Limitations:** the compatibility path is sequential rather than atomic; the recommended permanent fix remains applying `supabase/fix_product_save.sql` so `product.save` runs transactionally. This build has not been tested against the owner's live Supabase instance.
+
+## 2026-10-14 — Explicit Products & Pricing Save click path
+
+- **Reported symptom:** clicking Save in Products & Pricing produced no visible action and no useful error.
+- **Root cause addressed:** the product form was relying exclusively on delegated native `submit` handling for a dynamically-created modal form. In deployments where that submit event does not fire as expected, the save routine is never invoked.
+- **Fix:** added a capture-phase click handler specifically for `#master-form button[type=submit]`; it prevents duplicate native submission, calls `saveMaster()` directly, disables the button while saving, and displays “Saving…” plus any error in the form. The existing submit path remains for keyboard/form submission.
+- **Validation:** `node --check js/app.js` and `node --check web/js/app.js` pass; `scripts/release.mjs` regenerated `web/` and `cmp` confirmed the copies match. This is not a live Supabase integration test; deploy and verify in the target environment.
