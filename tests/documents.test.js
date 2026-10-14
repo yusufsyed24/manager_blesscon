@@ -121,3 +121,16 @@ it("generates real multipage PDF bytes with embedded logo and quotation acceptan
     Buffer.from(long.output("arraybuffer")),
   );
 });
+it("all registered invoice and quotation templates render without leaking internal cost or margin", async () => {
+  const { DOCUMENT_TEMPLATES } = await import("../js/documents.js");
+  for (const [type, templates] of Object.entries(DOCUMENT_TEMPLATES)) {
+    const p = type === "quote" ? { ...payload, type:"quote", document:{...payload.document,number:"TEST-QT",valid_until:"2026-10-21",revision:1,status:"Draft"}, payments:[] } : payload;
+    for (const t of templates) {
+      const html=documentHTML(p,false,t.id);
+      expect(html).toContain(p.document.number);
+      expect(html).not.toContain("cost_paisa");
+      expect(html).not.toContain("margin_paisa");
+      if (t.id === "challan") { expect(html).toContain("DELIVERY CHALLAN"); expect(html).not.toContain("Rate / box"); }
+    }
+  }
+});

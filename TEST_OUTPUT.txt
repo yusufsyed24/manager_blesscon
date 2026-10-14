@@ -1,10 +1,17 @@
-Blesscon Candy Business Manager v3 validation log
+Blesscon Candy Business Manager v3 — validation log
 Date: 2026-10-14
 
-PASS: node --check on all 22 JavaScript files in js/ and tests/.
-PASS: root js/app.js, js/importer.js, js/store.js match web/js counterparts.
-BLOCKED: npm test -- --reporter=dot could not execute because Vitest is missing from the incomplete node_modules install (sh: vitest: not found).
-BLOCKED: node scripts/check.mjs could not execute because the TypeScript dependency entry point is incomplete (ERR_MODULE_NOT_FOUND).
-BLOCKED: npm ci --ignore-scripts timed out in this environment; full regression suite and PostgreSQL idempotency execution have NOT been verified.
+PASS: node --check on all JavaScript files in root js/ and tests/ (including new regression test files).
+PASS: node scripts/release.mjs copied root sources to web/.
+PASS: root and web copies of js/app.js, js/store.js, js/documents.js are synchronized after release.
+BLOCKED: node scripts/check.mjs could not execute because node_modules/typescript is missing (ERR_MODULE_NOT_FOUND).
+BLOCKED: npm test could not execute because Vitest is missing from node_modules.
+BLOCKED: npm ci --ignore-scripts did not complete in the available environment.
+NOT RUN: PostgreSQL/PGlite SQL regression tests, live Supabase transaction tests, and full UI test suite.
 
-Important: this is not a claim that all acceptance criteria passed. Run npm ci, npm test, and npm run check in a working Node environment before deploying.
+Regression tests added but NOT EXECUTED:
+- tests/payment-on-order.test.js: local order payment statuses/validation and product.save tier restoration.
+- tests/transactions.test.js: order payment idempotency/rollback, product.save SQL tier restoration, quote conversion payment atomicity.
+- tests/documents.test.js: all registered templates render and delivery challan hides prices.
+
+Do not interpret syntax checks as a passing test suite. Run `npm ci`, `npm run check`, and `npm test` in a working Node.js 22+ environment before production use. The requested full acceptance criteria are not all implemented/verified; see CHANGELOG.md for known gaps.

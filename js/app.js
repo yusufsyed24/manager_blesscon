@@ -20,6 +20,7 @@ import { LOGO, ICON } from "./brand.js";
 import {
   documentData,
   documentHTML,
+  DOCUMENT_TEMPLATES,
   makePDF,
   shareText,
   whatsappURL,
@@ -35,6 +36,7 @@ let store,
   draft,
   preview,
   activeDoc,
+  activeTemplate = "classic",
   charts = [],
   filter = { from: monthStart(today()), to: today(), category: "", search: "" };
 const NAV = [
@@ -469,7 +471,7 @@ function renderProducts() {
           .map((t) => esc(t.label) + ": " + money(t.rate_paisa))
           .join("<br>") || money(p.wholesale_paisa),
         badge(p.active ? "Active" : "Inactive"),
-        admin() ? btn("Edit", "edit-product", p.id) : "—",
+        admin() ? btn("Edit", "edit-product", p.id) + btn(p.active ? "Deactivate" : "Activate", "toggle-product", p.id) : "—",
       ]),
     )}</section>`
   );
@@ -878,7 +880,7 @@ function openEditor(quote, id) {
       .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`)
       .join(
         "",
-      )}</datalist><div id="editor-lines"></div><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div><div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
+      )}</datalist><div id="editor-lines"></div><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div>${!quote && !old ? `<section class="panel" aria-labelledby="payment-section-title"><h2 id="payment-section-title">Payment</h2><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section>` : ""}<div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
   );
   renderLines();
   calcEditor();
@@ -934,12 +936,37 @@ function calcEditor() {
         cost_paisa: l.cost_paisa,
       };
     });
+    const total = subtotal - draft.discount_paisa;
     $("editor-total").innerHTML =
-      `Subtotal ${money(subtotal)}<br>Discount ${money(draft.discount_paisa)}<br><strong>Total ${money(subtotal - draft.discount_paisa)}</strong>`;
+      `Subtotal ${money(subtotal)}<br>Discount ${money(draft.discount_paisa)}<br><strong>Total ${money(total)}</strong>`;
+    const payStatus = $("f-payment_status");
+    if (payStatus && !draft.quote) {
+      const amount = $("f-payment_amount"), due = $("f-payment_due_date");
+      if (payStatus.value === "paid") { amount.value = (total / 100).toFixed(2); amount.readOnly = true; }
+      else if (payStatus.value === "unpaid") { amount.value = "0.00"; amount.readOnly = true; }
+      else { amount.readOnly = false; if (amount.value === "0.00" && total > 0) amount.value = ""; }
+      due.closest(".field").style.display = payStatus.value === "unpaid" ? "block" : "none";
+      const paid = payStatus.value === "paid" ? total : payStatus.value === "partial" ? (Number(String(amount.value).replace(/,/g,"")) || 0) * 100 : 0;
+      $("payment-summary").innerHTML = `Total: <b>${money(total)}</b> · Paid now: <b>${money(paid)}</b> · Balance: <b>${money(total-paid)}</b> · ${badge(payStatus.value === "paid" ? "PAID" : payStatus.value === "partial" ? "PART PAID" : "UNPAID")}`;
+    }
     $("editor-error").textContent = "";
   } catch (e) {
     $("editor-error").textContent = e.message;
   }
+}
+function refreshConvertPayment(form) {
+  const q = S().quotations.find(x=>x.id===form.dataset.id); if (!q) return;
+  let total = Number(q.total_paisa);
+  if (form.elements.reprice?.checked) {
+    const lines=S().quotation_items.filter(l=>l.quotation_id===q.id);
+    try { total=priceLines(lines,S().products,q.channel,S().settings,S().price_tiers,admin()).reduce((a,l)=>a+l.amount_paisa,0)-Number(q.discount_paisa||0); } catch {}
+  }
+  const status=form.elements.payment_status?.value || "unpaid", amount=form.elements.payment_amount;
+  if (status==="paid") { amount.value=(total/100).toFixed(2); amount.readOnly=true; }
+  else if (status==="unpaid") { amount.value="0.00"; amount.readOnly=true; }
+  else amount.readOnly=false;
+  const paid=status==="paid"?total:status==="partial"?(Number(String(amount.value).replace(/,/g,""))||0)*100:0;
+  const box=$("convert-payment-summary"); if(box) box.innerHTML=`Total: <b>${money(total)}</b> · Paid now: <b>${money(paid)}</b> · Balance: <b>${money(total-paid)}</b>`;
 }
 async function saveEditor(form) {
   const f = Object.fromEntries(new FormData(form)),
@@ -976,6 +1003,12 @@ async function saveEditor(form) {
       override_reason: l.override_reason || "",
     })),
   };
+  if (!quote && !draft.version) {
+    const status = f.payment_status || "unpaid";
+    const amount = status === "paid" ? null : status === "unpaid" ? 0 : paisa(f.payment_amount);
+    if (status === "partial" && (!Number.isFinite(amount) || amount <= 0)) throw Error("Part payment must be greater than zero");
+    payload.payment = { status, amount_paisa: amount, transaction_id: "PAY-ORDER-" + draft.id, date: f.payment_date || today(), method: f.payment_method || "Cash", reference: f.payment_reference || "", received_by: f.payment_received_by || user.name || user.email || "Owner", due_date: f.payment_due_date || addDays(today(),7) };
+  }
   delete payload.quote;
   await store.run(quote ? "quote.save" : "order.save", payload);
   close();
@@ -1055,7 +1088,7 @@ function masterForm(kind, id) {
     html = `<div class="grid">${field("Date", "date", r.date || today(), "date", "required")}${field("Category", "category", r.category || "Misc", "text", 'list="expense-categories" required')}<datalist id="expense-categories">${["Rent", "Salaries", "Transport", "Utilities", "Packaging", "Marketing", "Misc"].map((x) => "<option>" + x + "</option>").join("")}</datalist>${field("Amount (Rs.)", "amount", num(r.amount_paisa) / 100, "number", 'min="0.01" step="0.01" required')}${select("Payment method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"], r.method || "Cash")}${select("Salesman (optional)", "salesman_id", [["", "Not linked"], ...visible(s.salesmen).map((x) => [x.id, x.name])], r.salesman_id || "")}${area("Description", "description", r.description || "")}<div class="field"><label for="receipt-file">Receipt image (optional, up to 5 MB)</label><input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp"></div></div>`;
   modal(
     (existing ? "Edit " : "New ") + kind,
-    `<form id="master-form" data-kind="${kind}" data-id="${esc(id || "")}">${html}<div class="actions" style="margin-top:22px"><button class="gold">Save ${kind}</button></div></form>`,
+    `<form id="master-form" data-kind="${kind}" data-id="${esc(id || "")}">${html}<div id="master-form-error" role="alert" class="notice danger" style="display:none"></div><div class="actions" style="margin-top:22px"><button class="gold">Save ${kind}</button></div></form>`,
   );
 }
 const dates = (text) => {
@@ -1147,52 +1180,18 @@ async function saveMaster(form) {
       r.attachment_path = path;
     }
   }
-  await store.run("master.save", {
-    table: tableName,
-    record: r,
-    expected_version: old?.version,
-  });
   if (kind === "product") {
+    if (!r.name.trim()) throw Error("Product name is required");
+    if (!Number.isInteger(r.boxes_per_carton) || r.boxes_per_carton < 1) throw Error("Boxes per carton must be at least 1");
     const overrides = S().settings.tiers.map((t, i) => ({
-      min: num(f["pt_min_" + i]),
-      label: f["pt_label_" + i],
+      id: r.id + ":" + num(f["pt_min_" + i]), product_id: r.id,
+      min_cartons: num(f["pt_min_" + i]), label: (f["pt_label_" + i] || "").trim(),
       rate_paisa: paisa(f["tier_" + i]),
     }));
-    if (
-      f.product_override === "on" &&
-      (Math.min(...overrides.map((t) => t.min)) !== 0 ||
-        new Set(overrides.map((t) => t.min)).size !== overrides.length)
-    )
-      throw Error("Product tiers must have unique minimums starting at 0");
-    for (const existing of S().price_tiers.filter(
-      (t) => t.product_id === r.id && !t.deleted_at,
-    ))
-      if (
-        f.product_override !== "on" ||
-        !overrides.some((t) => t.min === num(existing.min_cartons))
-      )
-        await store.run("master.delete", {
-          table: "price_tiers",
-          id: existing.id,
-          version: existing.version,
-        });
-    if (f.product_override === "on")
-      for (const t of overrides) {
-        const existing = S().price_tiers.find(
-          (x) => x.product_id === r.id && num(x.min_cartons) === t.min,
-        );
-        await store.run("master.save", {
-          table: "price_tiers",
-          record: {
-            id: existing?.id || r.id + ":" + t.min,
-            product_id: r.id,
-            min_cartons: t.min,
-            label: t.label,
-            rate_paisa: t.rate_paisa,
-          },
-          expected_version: existing?.version,
-        });
-      }
+    if (f.product_override === "on" && (Math.min(...overrides.map(t=>t.min_cartons)) !== 0 || new Set(overrides.map(t=>t.min_cartons)).size !== overrides.length || overrides.some(t=>!t.label || t.rate_paisa < 0))) throw Error("Product tiers need unique minimums starting at 0 and valid labels/rates");
+    await store.run("product.save", { record:r, expected_version:old?.version, tiers:f.product_override === "on" ? overrides : [] });
+  } else {
+    await store.run("master.save", { table: tableName, record: r, expected_version: old?.version });
   }
   close();
   render();
@@ -1201,10 +1200,11 @@ async function saveMaster(form) {
 function showDocument(id, quote = false) {
   activeDoc = documentData(S(), id, quote ? "quote" : "invoice");
   const pending = store.queue.length > 0;
-  modal(
-    (quote ? "Quotation " : "Invoice ") + activeDoc.document.number,
-    `<div class="actions doc-tools">${btn("Print", "doc-print")}${btn("Download PDF", "doc-pdf")}${btn("Share PDF", "doc-share")}${btn("WhatsApp", "doc-whatsapp")}${btn("Email", "doc-email")}${btn("Copy public link", "doc-link")}${btn("Revoke public link", "doc-revoke")}</div>${documentHTML(activeDoc, pending)}`,
-  );
+  const key = "blesscon:template:" + user.id + ":" + activeDoc.type;
+  const documentKey = key + ":" + activeDoc.document.id;
+  activeTemplate = localStorage.getItem(documentKey) || localStorage.getItem(key) || "classic";
+  const renderView = () => `<div class="actions doc-tools"><div class="field"><label for="document-template">Template</label><select id="document-template">${(DOCUMENT_TEMPLATES[activeDoc.type] || DOCUMENT_TEMPLATES.invoice).map(t=>`<option value="${t.id}" ${t.id===activeTemplate?"selected":""}>${esc(t.label)}</option>`).join("")}</select></div>${btn("Print", "doc-print")}${btn("Download PDF", "doc-pdf")}${btn("Share PDF", "doc-share")}${btn("WhatsApp", "doc-whatsapp")}${btn("Email", "doc-email")}${btn("Copy public link", "doc-link")}${btn("Revoke public link", "doc-revoke")}</div><div id="document-preview">${documentHTML(activeDoc, pending, activeTemplate)}</div>`;
+  modal((quote ? "Quotation " : "Invoice ") + activeDoc.document.number, renderView());
 }
 function paymentModal(id) {
   const i = S().invoices.find((x) => x.id === id),
@@ -1432,6 +1432,7 @@ async function docAction(act) {
     $("print-area").innerHTML = documentHTML(
       activeDoc,
       (store?.queue.length || 0) > 0,
+      activeTemplate,
     );
     window.print();
     return;
@@ -1439,11 +1440,11 @@ async function docAction(act) {
   if (store?.queue.length)
     throw Error("Sync changes before downloading or sharing a final document");
   if (act === "doc-pdf") {
-    makePDF(activeDoc).save(activeDoc.document.number + ".pdf");
+    makePDF(activeDoc, globalThis.jspdf?.jsPDF, activeTemplate).save(activeDoc.document.number + ".pdf");
     return;
   }
   if (act === "doc-share") {
-    const blob = makePDF(activeDoc).output("blob"),
+    const blob = makePDF(activeDoc, globalThis.jspdf?.jsPDF, activeTemplate).output("blob"),
       file = new File([blob], activeDoc.document.number + ".pdf", {
         type: "application/pdf",
       });
@@ -1551,6 +1552,13 @@ async function action(act, id, element) {
     case "edit-product":
       masterForm("product", id);
       break;
+    case "toggle-product": {
+      if (!admin()) throw Error("Admin required");
+      const p = S().products.find(x=>x.id===id);
+      if (!p) throw Error("Product not found");
+      await store.run("product.save", { record:{...p,active:!p.active}, expected_version:p.version, tiers:S().price_tiers.filter(t=>t.product_id===id&&!t.deleted_at) });
+      render(); toast(p.active ? "Product deactivated" : "Product activated"); break;
+    }
     case "add-staff":
       masterForm("staff");
       break;
@@ -1622,7 +1630,7 @@ async function action(act, id, element) {
       const q = S().quotations.find((x) => x.id === id);
       modal(
         "Convert " + q.number,
-        `<p>Stock will be checked and deducted once. The original quotation will link to the new order.</p><form id="convert-form" data-id="${id}"><div class="checkbox"><input id="reprice" name="reprice" type="checkbox"><label for="reprice">Re-price at today's rates</label></div><button class="gold" style="margin-top:20px">Convert to order</button></form>`,
+        `<p>Stock will be checked and deducted once. The original quotation will link to the new order.</p><div class="notice">${S().quotation_items.filter(l=>l.quotation_id===id).map(l=>{const available=balance(l.product_id);return `${esc(l.product_name)}: ${available} available / ${l.boxes} required ${available>=l.boxes?"✓":"⚠ Insufficient"}`;}).join("<br>")}</div><form id="convert-form" data-id="${id}"><p>Quotation total: <b>${money(q.total_paisa)}</b></p><div class="checkbox"><input id="reprice" name="reprice" type="checkbox"><label for="reprice">Re-price at today's rates</label></div><section class="panel"><h3>Payment</h3><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="convert-payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section><button class="gold" style="margin-top:20px">Convert to order</button></form>`,
       );
       break;
     }
@@ -1954,6 +1962,7 @@ document.addEventListener("input", (e) => {
     }
     calcEditor();
   }
+  if (input.closest("#convert-form")) refreshConvertPayment(input.closest("#convert-form"));
 });
 document.addEventListener("change", async (e) => {
   try {
@@ -1962,6 +1971,15 @@ document.addEventListener("change", async (e) => {
       $("new-customer-fields").style.display =
         e.target.value === "__new__" ? "grid" : "none";
     if (e.target.closest("#document-form")) calcEditor();
+    if (e.target.closest("#convert-form")) refreshConvertPayment(e.target.closest("#convert-form"));
+    if (e.target.id === "document-template" && activeDoc) {
+      activeTemplate = e.target.value;
+      const templateKey = "blesscon:template:" + user.id + ":" + activeDoc.type;
+      localStorage.setItem(templateKey, activeTemplate);
+      localStorage.setItem(templateKey + ":" + activeDoc.document.id, activeTemplate);
+      const preview = $("document-preview");
+      if (preview) preview.innerHTML = documentHTML(activeDoc, store.queue.length > 0, activeTemplate);
+    }
   } catch (err) {
     toast(err.message);
   }
@@ -2027,6 +2045,7 @@ document.addEventListener("submit", async (e) => {
           version: q.version,
           order_id: uid(),
           reprice: f.reprice === "on",
+          payment: { status: f.payment_status || "unpaid", amount_paisa: f.payment_status === "paid" ? null : f.payment_status === "unpaid" ? 0 : paisa(f.payment_amount), transaction_id: "PAY-CONVERT-" + q.id, date: f.payment_date || today(), method: f.payment_method || "Cash", reference: f.payment_reference || "", received_by: f.payment_received_by || user.name || user.email || "Owner", due_date: f.payment_due_date || addDays(today(),7) },
         });
         close();
         render();
@@ -2101,7 +2120,7 @@ document.addEventListener("submit", async (e) => {
   } catch (err) {
     toast(err.message || String(err));
     const el = form.querySelector("[role=alert]");
-    if (el) el.textContent = err.message;
+    if (el) { el.textContent = err.message; el.style.display = "block"; }
   } finally {
     delete form.dataset.saving;
     buttons.forEach((b) => (b.disabled = false));

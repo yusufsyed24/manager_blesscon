@@ -152,3 +152,11 @@ Primary references used: [Supabase database functions](https://supabase.com/docs
 - If `business_snapshot` is missing from the schema cache, run `supabase/schema.sql` in the project's SQL Editor, then run `notify pgrst, 'reload schema';` and hard-refresh the site.
 - Run `supabase/verify.sql` in the SQL Editor to list required tables/functions and existing policies and identify missing schema objects.
 - Confirm `app_config.js` uses the same Supabase project where the SQL was executed. Then run `supabase/first_admin.sql` to configure the first administrator.
+
+## Troubleshooting: payments, product edits, and document templates
+
+- For an existing Supabase project, back up data, deploy the updated files, run `supabase/schema.sql` in SQL Editor, then run `notify pgrst, 'reload schema';` and hard-refresh the site. Do not paste the filename itself into SQL Editor; paste the file contents.
+- Initial sale payments and quotation-conversion payments are intended to be recorded inside the same `apply_command` transaction as the order/invoice and stock deduction. If a payment fails, the command should fail rather than leave a partial server-side order.
+- Product changes use the `product.save` command to save product fields and tier overrides together. A conflict should not be bypassed by repeatedly saving; reload the latest product values first.
+- Document template selection is stored in browser local storage per signed-in user and document type/document. Browser storage is device-specific and does not synchronize between devices.
+- Validation status for this work-in-progress build is recorded in `CHANGELOG.md`; run `npm ci`, `npm run check`, and `npm test` before production deployment.

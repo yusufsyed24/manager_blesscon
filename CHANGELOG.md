@@ -55,9 +55,28 @@ This release is a deployable source package, not a live deployment. Production c
 - **Workbook warnings:** added sheet classification so instruction/report tabs are skipped and Settings is parsed as key/value rows rather than header-based data.
 - **Order/quotation product picker:** replaced free-text product ID entry with an accessible select, searchable by name/ID, showing product name, ID and rate; empty and missing-product states are explicit.
 
-## Import follow-up: allow products with missing wholesale prices
+## 3.1.0 work-in-progress — order payments, atomic product save, templates
 
-- Root cause: the workbook intentionally leaves wholesale tiers blank for 27 products, but the importer treated a missing base wholesale price as a fatal row error. Those products were omitted, causing cascading unknown-product errors in Addon Stock.
-- Fix: import products with missing base prices using zero placeholders and mark them inactive until an admin completes pricing in Products & pricing. Missing-price rows are reported as actionable warnings rather than errors. This avoids allowing orders against zero-priced products.
-- Settings: recognize `Salary Rule` as a supported settings key so it is not reported as an unknown key.
-- Validation: JavaScript syntax checks passed. The automated test suite could not be executed because the local dependency installation is incomplete (`vitest` and a usable `typescript` package are missing).
+### Bug A — payment at sale time
+- Root cause: `order.save` had no payment payload and the editor exposed only a later invoice payment form.
+- Changes: added sale-time Unpaid / Part paid / Paid in full controls, amount/date/method/reference/receiver fields and a live total/paid/balance summary. Initial payment is included in the same `order.save` command; SQL `apply_command` inserts it in the same transaction as the order and invoice. Offline/local apply uses a single cloned-state operation and a stable payment transaction ID. Partial amounts must be positive and less than the final total; paid-in-full derives the amount from the final total.
+- Assumptions: existing `allow_customer_credit` controls overpayment; unpaid sales create no payment row; editing an existing order does not create a new initial payment. Existing later instalment workflow remains.
+
+### Bug B — payment on quotation conversion
+- Root cause: `quote.convert` had no payment fields and conversion created no initial payment.
+- Changes: conversion dialog accepts payment details, recalculates paid-in-full against repriced total, shows stock availability, and sends payment data with `quote.convert`. SQL creates the order/invoice/stock movement, marks the quote converted, and records any initial payment within the same transaction; failed payment raises and rolls back the conversion. Local apply follows the same all-or-nothing cloned-state path.
+- Assumptions/limitations: expired/rejected admin extension flow and automatically opening the new invoice are not fully implemented in this work-in-progress build; the current error remains explicit.
+
+### Bug C — product edit persistence
+- Root cause: product fields and tier overrides were saved as multiple independent `master.save` / `master.delete` commands, permitting partial saves and stale tier conflicts.
+- Changes: added a single `product.save` command for product fields and all tier overrides; SQL performs the operations in the `apply_command` transaction, validates tier minimums, restores soft-deleted tiers by `(product_id,min_cartons)`, and returns fresh product/tier data. Local apply mirrors validation. Added visible inline master-form errors and activate/deactivate action. Money remains integer paisa.
+- Assumptions/limitations: duplicate-product action and a dedicated conflict “Reload latest” button are not fully implemented yet; existing product form continues to use configured settings tier slots.
+
+### Feature D — document templates
+- Root cause: document HTML and PDF used one fixed layout.
+- Changes: added a template registry and invoice/quotation template selector with instant HTML preview; last choice is stored per user/type and per document. HTML/PDF receive the selected template; added branded, minimal, thermal, wholesale, bilingual, challan, proforma and price-list rendering variants. Delivery challan suppresses customer-facing prices and totals.
+- Assumptions/limitations: Statement of Account is currently a document-style view rather than a multi-invoice ledger; per-template settings defaults, watermark/paper/theme toggles, Urdu font proofing, and persisting template choice in shared-link payloads remain incomplete.
+
+### Verification note
+- Added regression tests for local order payment states/validation, product save and tier restoration, database order payment retry/rollback and template rendering.
+- `node --check` passed for changed JavaScript files. `scripts/check.mjs` and Vitest could not run because dependencies (including `typescript` and `vitest`) are not installed; `npm ci --ignore-scripts` did not complete in the available environment. SQL was not executed against a live Supabase project or PostgreSQL test database. Do not treat this archive as fully acceptance-tested.

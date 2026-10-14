@@ -261,3 +261,36 @@ it("share tokens read only a redacted document and revocation invalidates access
     db.query("select public.shared_document($1)", [share.token]),
   ).rejects.toThrow("expired");
 });
+it("order.save records an initial payment atomically and retries do not duplicate it", async () => {
+  const orderId=randomUUID(), opId=randomUUID();
+  const d=doc({id:orderId,items:[{product_id:"P1",cartons:0,loose_boxes:1}],payment:{status:"paid",transaction_id:"PAY-ORDER-"+orderId,date:day,method:"Cash",reference:"initial",received_by:"QA"}});
+  const first=await cmd("order.save",d,opId);
+  await cmd("order.save",d,opId);
+  const rows=(await db.query("select p.amount_paisa from public.payments p join public.invoices i on i.id=p.invoice_id where i.order_id=$1",[orderId])).rows;
+  expect(rows).toHaveLength(1); expect(rows[0].amount_paisa).toBe(first.total_paisa);
+});
+it("partial payment must be less than total and payment failure rolls order back", async () => {
+  const orderId=randomUUID();
+  const d=doc({id:orderId,items:[{product_id:"P1",cartons:0,loose_boxes:1}],payment:{status:"partial",amount_paisa:23000,transaction_id:"PAY-BAD-"+orderId,date:day,method:"Cash",received_by:"QA"}});
+  await expect(cmd("order.save",d)).rejects.toThrow(/Part payment/);
+  expect((await db.query("select id from public.orders where id=$1",[orderId])).rows).toHaveLength(0);
+  const unpaid=doc({id:orderId,items:[{product_id:"P1",cartons:0,loose_boxes:1}]});
+  const o=await cmd("order.save",unpaid);
+  await cmd("payment.add",{invoice_id:o.id,transaction_id:"PAY-LATER-"+orderId,date:day,amount_paisa:o.total_paisa,method:"Cash",received_by:"QA"});
+  expect((await db.query("select count(*)::int n from public.payments p join public.invoices i on i.id=p.invoice_id where i.order_id=$1 and p.voided_at is null",[orderId])).rows[0].n).toBe(1);
+});
+it("product.save updates product and restores a removed tier atomically", async () => {
+  const prod={id:"PRODUCT-SAVE-TEST",name:"Save test",boxes_per_carton:24,cost_paisa:100,retail_paisa:300,wholesale_paisa:200,active:true};
+  await cmd("product.save",{record:prod,tiers:[{id:"PRODUCT-SAVE-TEST:0",min_cartons:0,label:"Base",rate_paisa:200}]});
+  const current=(await db.query("select * from public.products where id=$1",[prod.id])).rows[0];
+  await db.query("update public.price_tiers set deleted_at=now() where product_id=$1",[prod.id]);
+  await cmd("product.save",{record:{...prod,name:"Saved name",active:false,boxes_per_carton:12},expected_version:current.version,tiers:[{id:"PRODUCT-SAVE-TEST:0",min_cartons:0,label:"Base",rate_paisa:150}]});
+  expect((await db.query("select name,active,boxes_per_carton from public.products where id=$1",[prod.id])).rows[0]).toMatchObject({name:"Saved name",active:false,boxes_per_carton:12});
+  expect((await db.query("select rate_paisa,deleted_at from public.price_tiers where product_id=$1",[prod.id])).rows[0]).toMatchObject({rate_paisa:150,deleted_at:null});
+});
+it("quotation conversion creates its initial payment in the same transaction", async () => {
+  const q=await cmd("quote.save",doc({items:[{product_id:"P1",cartons:0,loose_boxes:1}]}));
+  const order=await cmd("quote.convert",{id:q.id,version:q.version,order_id:randomUUID(),payment:{status:"paid",transaction_id:"PAY-CONVERT-"+q.id,date:day,method:"Bank",received_by:"QA"}});
+  const rows=(await db.query("select p.amount_paisa,i.total_paisa from public.payments p join public.invoices i on i.id=p.invoice_id where i.order_id=$1",[order.id])).rows;
+  expect(rows).toHaveLength(1); expect(rows[0].amount_paisa).toBe(rows[0].total_paisa);
+});

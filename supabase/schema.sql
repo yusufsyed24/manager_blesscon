@@ -234,7 +234,7 @@ declare s public.salesmen; cfg jsonb; d date; carry numeric; effective numeric; 
  update public.quotations set status='Expired',version=version+1 where valid_until<private.business_today() and status in ('Draft','Sent') and deleted_at is null and (public.is_admin() or public.owns_salesman(salesman_id));
  return n; end $$;
 create or replace function public.apply_command(op_id uuid,kind text,data jsonb) returns jsonb language plpgsql security definer set search_path='' as $$
-declare cached private.commands; result jsonb; o public.orders; q public.quotations; r jsonb; t text; v integer; old jsonb; inv public.invoices; params jsonb; rid text; a bigint; begin
+declare cached private.commands; result jsonb; o public.orders; q public.quotations; r jsonb; t text; v integer; old jsonb; inv public.invoices; params jsonb; rid text; a bigint; n bigint; begin
  if auth.uid() is null or not exists(select 1 from public.profiles where id=auth.uid() and active) then raise exception 'Active login required'; end if;
  -- Serialises stock, numbering, payments and conversions, including retries from offline devices.
  lock table private.commands in exclusive mode;
@@ -242,12 +242,32 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
  if cached.id is not null then if cached.user_id<>auth.uid() or cached.kind<>kind then raise exception 'Operation ID belongs to another request'; end if; return cached.result; end if;
  case kind
  when 'master.save' then result:=private.save_master(data->>'table',data->'record',(data->>'expected_version')::integer);
+ when 'product.save' then
+  if not public.is_admin() then raise exception 'Admin required'; end if;
+  result:=private.save_master('products',data->'record',nullif(data->>'expected_version','')::integer);
+  params:=coalesce(data->'tiers','[]'::jsonb);
+  if jsonb_typeof(params)<>'array' then raise exception 'Product tiers must be an array'; end if;
+  if jsonb_array_length(params)>0 and (not exists(select 1 from jsonb_array_elements(params) x where (x->>'min_cartons')::numeric=0) or exists(select 1 from (select (x->>'min_cartons')::numeric n,count(*) c from jsonb_array_elements(params) x group by 1 having count(*)>1) z) or exists(select 1 from jsonb_array_elements(params) x where (x->>'min_cartons')::numeric<0 or (x->>'rate_paisa')::bigint<0 or length(trim(coalesce(x->>'label','')))=0)) then raise exception 'Product tiers need unique minimums starting at 0 and valid labels/rates'; end if;
+  update public.price_tiers set deleted_at=now(),version=version+1,updated_by=auth.uid(),updated_at=now() where product_id=data#>>'{record,id}' and deleted_at is null and not exists(select 1 from jsonb_array_elements(params) x where (x->>'min_cartons')::numeric=price_tiers.min_cartons);
+  for r in select value from jsonb_array_elements(params) loop
+   insert into public.price_tiers(id,product_id,min_cartons,label,rate_paisa,created_by,updated_by,deleted_at)
+   values(coalesce(nullif(r->>'id',''),(data#>>'{record,id}')||':'||(r->>'min_cartons')),data#>>'{record,id}',(r->>'min_cartons')::numeric,r->>'label',(r->>'rate_paisa')::bigint,auth.uid(),auth.uid(),null)
+   on conflict(product_id,min_cartons) do update set label=excluded.label,rate_paisa=excluded.rate_paisa,deleted_at=null,version=public.price_tiers.version+1,updated_by=auth.uid(),updated_at=now();
+  end loop;
+  result:=jsonb_build_object('product',(select to_jsonb(p) from public.products p where p.id=data#>>'{record,id}'),'tiers',(select coalesce(jsonb_agg(to_jsonb(t)),'[]'::jsonb) from public.price_tiers t where t.product_id=data#>>'{record,id}' and t.deleted_at is null));
  when 'master.delete' then
   if not public.is_admin() then raise exception 'Admin required for deletion'; end if;
   t:=data->>'table';if t not in ('products','customers','salesmen','expenses','price_tiers') then raise exception 'Invalid table'; end if;
   execute format('update public.%I set deleted_at=now(),version=version+1,updated_by=$1 where id=$2 and version=$3 returning to_jsonb(%I.*)',t,t) into result using auth.uid(),data->>'id',(data->>'version')::integer;
   if result is null then raise exception 'CONFLICT: Record changed'; end if;
- when 'order.save' then result:=private.save_document(data,false);
+ when 'order.save' then
+  result:=private.save_document(data,false);
+  if coalesce(data#>>'{payment,status}','unpaid')<>'unpaid' then
+   select total_paisa into n from public.orders where id=(result->>'id')::uuid;
+   params:=data->'payment';
+   if coalesce(params->>'status','')='partial' and (nullif(params->>'amount_paisa','') is null or (params->>'amount_paisa')::bigint<=0 or (params->>'amount_paisa')::bigint>=n) then raise exception 'Part payment must be greater than zero and less than the order total'; end if;
+   result:=result||jsonb_build_object('payment_result',private.add_payment(jsonb_build_object('invoice_id',(result->>'id'),'transaction_id',params->>'transaction_id','date',coalesce(params->>'date',private.business_today()::text),'amount_paisa',case when params->>'status'='paid' then n else (params->>'amount_paisa')::bigint end,'method',coalesce(params->>'method','Cash'),'reference',coalesce(params->>'reference',''),'received_by',coalesce(nullif(params->>'received_by',''),'Owner'))));
+  end if;
  when 'order.cancel' then
   if not public.is_admin() then raise exception 'Admin required for cancellation'; end if;
   select * into strict o from public.orders where id=(data->>'id')::uuid for update;
@@ -284,6 +304,12 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   result:=private.save_document(params,false,false,case when coalesce((data->>'reprice')::boolean,false) then null else q.id end);
   update public.orders set quotation_id=q.id where id=(result->>'id')::uuid;
   update public.quotations set status='Converted',order_id=(result->>'id')::uuid,version=version+1,updated_by=auth.uid() where id=q.id;
+  if coalesce(data#>>'{payment,status}','unpaid')<>'unpaid' then
+   select total_paisa into n from public.orders where id=(result->>'id')::uuid;
+   params:=data->'payment';
+   if coalesce(params->>'status','')='partial' and (nullif(params->>'amount_paisa','') is null or (params->>'amount_paisa')::bigint<=0 or (params->>'amount_paisa')::bigint>=n) then raise exception 'Part payment must be greater than zero and less than the order total'; end if;
+   perform private.add_payment(jsonb_build_object('invoice_id',(result->>'id'),'transaction_id',params->>'transaction_id','date',coalesce(params->>'date',private.business_today()::text),'amount_paisa',case when params->>'status'='paid' then n else (params->>'amount_paisa')::bigint end,'method',coalesce(params->>'method','Cash'),'reference',coalesce(params->>'reference',''),'received_by',coalesce(nullif(params->>'received_by',''),'Owner')));
+  end if;
  when 'payment.add' then result:=private.add_payment(data);
  when 'payment.void' then
   if not public.is_admin() or length(trim(coalesce(data->>'reason','')))=0 then raise exception 'Admin and reason required'; end if;
@@ -412,4 +438,10 @@ create or replace function public.business_snapshot() returns jsonb language sql
 'stock',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.stock_balances() x))$$;
 revoke all on function public.business_snapshot() from public,anon;
 grant execute on function public.business_snapshot() to authenticated;
-\n\ngrant usage on schema public to authenticated;\nnotify pgrst, 'reload schema';\n
+
+
+GRANT USAGE ON SCHEMA public TO authenticated;
+NOTIFY pgrst, 'reload schema';
+
+GRANT USAGE ON SCHEMA public TO authenticated;
+NOTIFY pgrst, 'reload schema';

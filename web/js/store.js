@@ -153,6 +153,7 @@ export function localApply(base, op, user) {
       updated_at: now,
     };
     delete rec.items;
+    delete rec.payment;
     upsert(s[t], rec);
     s[it] = s[it].filter((l) => l[fk] !== rec.id);
     for (const l of lines) {
@@ -181,6 +182,30 @@ export function localApply(base, op, user) {
     return rec;
   };
   switch (op.kind) {
+    case "product.save": {
+      if (!admin) throw Error("Admin required");
+      const record = d.record, old = find("products", record.id);
+      if (old && old.version !== d.expected_version) throw Error("CONFLICT: Product changed; reload latest before saving");
+      if (!record.name?.trim()) throw Error("Product name is required");
+      if (!Number.isInteger(Number(record.boxes_per_carton)) || Number(record.boxes_per_carton) < 1) throw Error("Boxes per carton must be at least 1");
+      if (Number(record.cost_paisa) < 0 || Number(record.retail_paisa) < 0 || Number(record.wholesale_paisa) < 0) throw Error("Prices cannot be negative");
+      result = { ...old, ...record, active: record.active === true || record.active === "true", version: (old?.version || 0)+1, created_by: old?.created_by || user.id, updated_by:user.id, deleted_at:null, updated_at:now };
+      upsert(s.products,result);
+      const tiers = Array.isArray(d.tiers) ? d.tiers : [];
+      const mins = tiers.map(t=>Number(t.min_cartons));
+      if (tiers.length && (Math.min(...mins)!==0 || new Set(mins).size!==mins.length || mins.some(x=>!Number.isFinite(x)||x<0))) throw Error("Product tiers must have unique minimums starting at 0");
+      for (const oldTier of s.price_tiers.filter(t=>t.product_id===record.id)) {
+        const keep=tiers.find(t=>Number(t.min_cartons)===Number(oldTier.min_cartons));
+        if (!keep) { oldTier.deleted_at=now; oldTier.version=(oldTier.version||0)+1; }
+        else { Object.assign(oldTier,keep,{deleted_at:null,version:(oldTier.version||0)+1,updated_by:user.id}); }
+      }
+      for (const t of tiers) {
+        let existing=s.price_tiers.find(x=>x.product_id===record.id && Number(x.min_cartons)===Number(t.min_cartons));
+        if (!existing) s.price_tiers.push({ ...t, id:t.id || record.id+":"+t.min_cartons, product_id:record.id, version:1, deleted_at:null, created_by:user.id, updated_by:user.id });
+      }
+      result = { product: structuredClone(result), tiers: s.price_tiers.filter(t=>t.product_id===record.id && !t.deleted_at).map(x=>structuredClone(x)) };
+      break;
+    }
     case "master.save": {
       const { table, record, expected_version } = d;
       if (!admin && !["customers", "expenses"].includes(table))
@@ -213,9 +238,22 @@ export function localApply(base, op, user) {
         version: d.version + 1,
       });
       break;
-    case "order.save":
+    case "order.save": {
       result = saveDoc(d, false);
+      const payment = d.payment;
+      if (payment && payment.status !== "unpaid") {
+        const invoice = s.invoices.find((x) => x.order_id === result.id);
+        const amount = payment.status === "paid" ? result.total_paisa : Number(payment.amount_paisa);
+        if (!Number.isSafeInteger(amount) || amount <= 0 || (payment.status === "partial" && amount >= result.total_paisa)) throw Error("Part payment must be greater than zero and less than the order total");
+        const already = s.payments.find((x) => x.transaction_id === payment.transaction_id);
+        if (!already) {
+          const paid = s.payments.filter((x) => x.invoice_id === invoice.id && !x.voided_at).reduce((a,x)=>a+x.amount_paisa,0);
+          if (paid + amount > invoice.total_paisa && !s.settings.allow_customer_credit) throw Error("Payment exceeds invoice total. Enable customer credit or correct the amount.");
+          s.payments.push({ id: uid(), transaction_id: payment.transaction_id, invoice_id: invoice.id, date: payment.date || today(), amount_paisa: amount, method: payment.method || "Cash", reference: payment.reference || "", received_by: payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
+        }
+      }
       break;
+    }
     case "quote.save":
       result = saveDoc(d, true);
       break;
@@ -291,6 +329,13 @@ export function localApply(base, op, user) {
       q.status = "Converted";
       q.order_id = order.id;
       q.version++;
+      if (d.payment && d.payment.status !== "unpaid") {
+        const invoice = s.invoices.find((x) => x.order_id === order.id);
+        const amount = d.payment.status === "paid" ? order.total_paisa : Number(d.payment.amount_paisa);
+        if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Payment amount must be positive");
+        if (amount > invoice.total_paisa && !s.settings.allow_customer_credit) throw Error("Payment exceeds invoice total");
+        if (!s.payments.some((x) => x.transaction_id === d.payment.transaction_id)) s.payments.push({ id: uid(), transaction_id: d.payment.transaction_id, invoice_id: invoice.id, date: d.payment.date || today(), amount_paisa: amount, method: d.payment.method || "Cash", reference: d.payment.reference || "", received_by: d.payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
+      }
       break;
     }
     case "payment.add": {

@@ -1,6 +1,19 @@
 import { LOGO } from "./brand.js";
 import { PDF_FONT } from "./pdf-font.js";
 import { esc, money, paymentState } from "./domain.js";
+export const DOCUMENT_TEMPLATES = {
+  invoice: [
+    { id: "classic", label: "Classic" }, { id: "modern", label: "Modern Branded" },
+    { id: "minimal", label: "Minimal / Black & White" }, { id: "thermal", label: "Compact Thermal Receipt (80 mm)" },
+    { id: "wholesale", label: "Detailed Wholesale" }, { id: "bilingual", label: "Urdu / Bilingual" },
+    { id: "challan", label: "Delivery Challan / Packing Slip" }, { id: "statement", label: "Statement of Account" },
+  ],
+  quote: [
+    { id: "classic", label: "Classic" }, { id: "modern", label: "Modern Branded" },
+    { id: "minimal", label: "Minimal / Black & White" }, { id: "proforma", label: "Proforma Invoice" },
+    { id: "pricelist", label: "Price List / Rate Card" }, { id: "bilingual", label: "Bilingual (English + Urdu)" },
+  ],
+};
 export function documentData(s, id, type = "invoice") {
   const quote = type === "quote";
   const d = s[quote ? "quotations" : "orders"].find((x) => x.id === id);
@@ -44,7 +57,7 @@ export function signatures(state, settings, d) {
     "Customer signature: ____________________",
   ];
 }
-export function documentHTML(payload, pending = false) {
+export function documentHTML(payload, pending = false, template = "classic") {
   const {
     settings: s,
     document: d,
@@ -55,6 +68,10 @@ export function documentHTML(payload, pending = false) {
     type,
   } = payload;
   const quote = type === "quote";
+  const tmpl = String(template || "classic");
+  const noPrices = tmpl === "challan";
+  const thermal = tmpl === "thermal";
+  const bilingual = tmpl === "bilingual";
   const state =
     d.status === "cancelled"
       ? { status: "CANCELLED", paid: 0, balance: 0, credit: 0 }
@@ -73,9 +90,13 @@ export function documentHTML(payload, pending = false) {
             "Name / date: ____________________",
           ]
         : signatures(state, s, d);
-  return `<article class="document" aria-label="${quote ? "Quotation" : "Invoice"} ${esc(d.number)}"><header class="doc-head"><img src="${LOGO}" alt="Blesscon Candy logo"><div><h1>${esc(s.company_name)}</h1><p>${esc(s.address)}<br>${esc(s.phone)} · ${esc(s.email)}<br>${esc(s.website)}${s.ntn ? "<br>NTN: " + esc(s.ntn) : ""}</p></div><div class="doc-title"><h2>${quote ? "QUOTATION" : "INVOICE"}</h2><b>${esc(d.number)}</b><p>Date: ${esc(d.date)}<br>${quote ? "Valid until" : "Due date"}: ${esc(quote ? d.valid_until : d.due_date)}${quote ? "<br>Revision: " + esc(d.revision) : ""}</p></div></header>${pending ? '<p class="notice">PENDING SYNC — provisional document. Await server confirmation before issuing.</p>' : ""}${d.status === "cancelled" ? '<p class="notice danger">CANCELLED — no amount due</p>' : ""}<section class="doc-parties"><div><small>${quote ? "QUOTATION FOR" : "BILL TO"}</small><h3>${esc(c.name)}</h3><p>${esc(c.address)}<br>${esc(c.phone)} ${esc(c.email)}</p></div><div><small>SALESMAN / CHANNEL</small><p>${esc(salesman)}<br>${esc(d.channel)}</p></div></section><table class="doc-lines"><thead><tr><th>Product</th><th>Cartons</th><th>Loose</th><th>Boxes</th><th>Rate / box</th><th>Amount</th></tr></thead><tbody>${items.map((l) => `<tr><td>${esc(l.product_name)}<small>${esc(l.product_id)}</small></td><td>${l.cartons}</td><td>${l.loose_boxes}</td><td>${l.boxes}</td><td>${money(l.rate_paisa)}</td><td>${money(l.amount_paisa)}</td></tr>`).join("")}</tbody></table><p class="doc-note">Pricing: ${[...new Set(items.map((l) => l.tier_label))].map(esc).join(", ")}. Rani wholesale tiers use combined Rani cartons, including loose boxes.</p><section class="doc-summary"><div>${!quote ? `<div class="stamp ${state.status === "PAID" ? "paid" : state.status === "PART PAID" ? "partial" : "unpaid"}">${state.status === "UNPAID" ? "UNPAID / CREDIT SALE" : state.status}</div>${state.status === "PAID" ? "<p>Received with thanks · " + esc(paidDate || d.date) + "</p>" : ""}` : `<p>Status: ${esc(d.status)}</p>`}</div><table><tbody><tr><td>Subtotal</td><td>${money(d.subtotal_paisa)}</td></tr><tr><td>Discount</td><td>${money(d.discount_paisa)}</td></tr><tr class="total"><th>Total</th><th>${money(d.total_paisa)}</th></tr>${!quote ? `<tr><td>Paid</td><td>${money(state.paid)}</td></tr><tr><th>Balance due</th><th>${money(state.balance)}</th></tr>${state.credit ? `<tr><td>Customer credit</td><td>${money(state.credit)}</td></tr>` : ""}` : ""}</tbody></table></section>${!quote && payments.length ? `<section><h3>Payment history</h3><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${payments.map((p) => `<tr><td>${esc(p.date)}</td><td>${esc(p.method)}</td><td>${esc(p.reference || "")}</td><td>${money(p.amount_paisa)}</td></tr>`).join("")}</tbody></table></section>` : ""}<section class="doc-terms"><h3>Terms & payment details</h3><p>${esc(d.terms || s.terms).replace(/\n/g, "<br>")}</p>${s.bank_details ? "<p>" + esc(s.bank_details).replace(/\n/g, "<br>") + "</p>" : ""}${d.notes ? "<p>Notes: " + esc(d.notes) + "</p>" : ""}</section><footer class="doc-sign">${sig.map((x) => "<p>" + esc(x) + "</p>").join("")}${!quote && state.status === "PAID" && /^data:image\/(png|jpeg);base64,/.test(s.signature_data || "") ? `<img src="${s.signature_data}" alt="Authorised company signature" style="max-width:160px;max-height:60px">` : ""}<small>Thank you for choosing ${esc(s.company_name)}.</small></footer></article>`;
+  const templateStyle = tmpl === "modern" ? "border-top:12px solid #c8a44d;background:linear-gradient(90deg,#12233f 0 100%);color:#fff;padding:14px" : tmpl === "minimal" ? "filter:grayscale(1);background:#fff;color:#111" : thermal ? "width:72mm;max-width:72mm;font-size:10px" : "";
+  const documentTitle = tmpl === "proforma" ? "PROFORMA INVOICE" : tmpl === "challan" ? "DELIVERY CHALLAN" : tmpl === "pricelist" ? "PRICE LIST / RATE CARD" : (quote ? "QUOTATION" : "INVOICE");
+  const columns = noPrices ? "<th>Product</th><th>Cartons</th><th>Loose</th><th>Boxes</th>" : "<th>Product</th><th>Cartons</th><th>Loose</th><th>Boxes</th><th>Rate / box</th><th>Amount</th>";
+  const lineRows = items.map((l) => `<tr><td>${esc(l.product_name)}<small>${esc(l.product_id)}</small></td><td>${l.cartons}</td><td>${l.loose_boxes}</td><td>${l.boxes}</td>${noPrices ? "" : `<td>${money(l.rate_paisa)}</td><td>${money(l.amount_paisa)}</td>`}</tr>`).join("");
+  return `<article class="document template-${esc(tmpl)}" style="${templateStyle}" aria-label="${quote ? "Quotation" : "Invoice"} ${esc(d.number)}"><header class="doc-head"><img src="${LOGO}" alt="Blesscon Candy logo"><div><h1>${esc(s.company_name)}</h1><p>${esc(s.address)}<br>${esc(s.phone)} · ${esc(s.email)}<br>${esc(s.website)}${s.ntn ? "<br>NTN: " + esc(s.ntn) : ""}</p></div><div class="doc-title"><h2>${documentTitle}${bilingual ? " / " + (quote ? "کوٹیشن" : "انوائس") : ""}</h2><b>${esc(d.number)}</b><p>Date: ${esc(d.date)}<br>${quote ? "Valid until" : "Due date"}: ${esc(quote ? d.valid_until : d.due_date)}${quote ? "<br>Revision: " + esc(d.revision) : ""}</p></div></header>${pending ? '<p class="notice">PENDING SYNC — provisional document. Await server confirmation before issuing.</p>' : ""}${d.status === "cancelled" ? '<p class="notice danger">CANCELLED — no amount due</p>' : ""}<section class="doc-parties"><div><small>${quote ? "QUOTATION FOR" : "BILL TO"}</small><h3>${esc(c.name)}</h3><p>${esc(c.address)}<br>${esc(c.phone)} ${esc(c.email)}</p></div><div><small>SALESMAN / CHANNEL</small><p>${esc(salesman)}<br>${esc(d.channel)}</p></div></section><table class="doc-lines"><thead><tr>${columns}</tr></thead><tbody>${lineRows}</tbody></table><p class="doc-note">Pricing: ${[...new Set(items.map((l) => l.tier_label))].map(esc).join(", ")}. Rani wholesale tiers use combined Rani cartons, including loose boxes.</p>${noPrices ? `<p>Receiver name: ____________________ &nbsp; Signature: ____________________</p>` : `<section class="doc-summary"><div>${!quote ? `<div class="stamp ${state.status === "PAID" ? "paid" : state.status === "PART PAID" ? "partial" : "unpaid"}">${state.status === "UNPAID" ? "UNPAID / CREDIT SALE" : state.status}</div>${state.status === "PAID" ? "<p>Received with thanks · " + esc(paidDate || d.date) + "</p>" : ""}` : `<p>Status: ${esc(d.status)}</p>`}</div><table><tbody><tr><td>Subtotal</td><td>${money(d.subtotal_paisa)}</td></tr><tr><td>Discount</td><td>${money(d.discount_paisa)}</td></tr><tr class="total"><th>Total</th><th>${money(d.total_paisa)}</th></tr>${!quote ? `<tr><td>Paid</td><td>${money(state.paid)}</td></tr><tr><th>Balance due</th><th>${money(state.balance)}</th></tr>${state.credit ? `<tr><td>Customer credit</td><td>${money(state.credit)}</td></tr>` : ""}` : ""}</tbody></table></section>`}${!quote && payments.length && !noPrices ? `<section><h3>Payment history</h3><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${payments.map((p) => `<tr><td>${esc(p.date)}</td><td>${esc(p.method)}</td><td>${esc(p.reference || "")}</td><td>${money(p.amount_paisa)}</td></tr>`).join("")}</tbody></table></section>` : ""}<section class="doc-terms"><h3>Terms & payment details</h3><p>${esc(d.terms || s.terms).replace(/\n/g, "<br>")}</p>${s.bank_details ? "<p>" + esc(s.bank_details).replace(/\n/g, "<br>") + "</p>" : ""}${d.notes ? "<p>Notes: " + esc(d.notes) + "</p>" : ""}</section><footer class="doc-sign">${sig.map((x) => "<p>" + esc(x) + "</p>").join("")}${!quote && state.status === "PAID" && /^data:image\/(png|jpeg);base64,/.test(s.signature_data || "") ? `<img src="${s.signature_data}" alt="Authorised company signature" style="max-width:160px;max-height:60px">` : ""}<small>Thank you for choosing ${esc(s.company_name)}.</small></footer></article>`;
 }
-export function makePDF(payload, jsPDF = globalThis.jspdf?.jsPDF) {
+export function makePDF(payload, jsPDF = globalThis.jspdf?.jsPDF, template = "classic") {
   if (!jsPDF) throw Error("PDF library is unavailable; reload once online");
   const {
     settings: s,
@@ -87,7 +108,7 @@ export function makePDF(payload, jsPDF = globalThis.jspdf?.jsPDF) {
     type,
   } = payload;
   const quote = type === "quote";
-  const pdf = new jsPDF({ unit: "mm", format: "a4" });
+  const pdf = new jsPDF({ unit: "mm", format: template === "thermal" ? [80, 220] : template === "challan" ? "a4" : "a4" });
   pdf.addFileToVFS("BlessconSans.ttf", PDF_FONT);
   pdf.addFont("BlessconSans.ttf", "BlessconSans", "normal");
   pdf.setFont("BlessconSans", "normal");
@@ -118,7 +139,7 @@ export function makePDF(payload, jsPDF = globalThis.jspdf?.jsPDF) {
     }
   };
   pdf.addImage(LOGO, "JPEG", 15, 12, 28, 28);
-  pdf.setTextColor(18, 35, 63);
+  if (template === "minimal") pdf.setTextColor(0, 0, 0); else pdf.setTextColor(18, 35, 63);
   pdf.setFontSize(17);
   pdf.text(s.company_name, 48, 20);
   pdf.setFontSize(9);
@@ -133,7 +154,7 @@ export function makePDF(payload, jsPDF = globalThis.jspdf?.jsPDF) {
     26,
   );
   y = 49;
-  text((quote ? "QUOTATION" : "INVOICE") + "  " + d.number, 16, 16);
+  text((template === "proforma" ? "PROFORMA INVOICE" : template === "challan" ? "DELIVERY CHALLAN" : template === "pricelist" ? "PRICE LIST / RATE CARD" : (quote ? "QUOTATION" : "INVOICE")) + "  " + d.number, 16, 16);
   text(
     "Date: " +
       d.date +
