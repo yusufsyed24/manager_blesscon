@@ -226,7 +226,7 @@ function readKeyValueSheet(wb, name, XLSX, warnings) {
     if (!label || /^settings?$/i.test(label)) continue;
     const key = norm(label);
     // Ignore title/help rows; settings are a two-column key/value list.
-    const known = /^(companyname|monthlytargetcartons|monthlytarget|boxespercarton|costperbox|salepriceperbox|basesalary|salarypertargetcarton|extrasalarypercartonabovetarget|below60incentive|6074incentive|7589incentive|9099incentive|100incentive|phone|email|address|ntn|bankdetails|incentiveslabs|tier.*|.*threshold.*)$/.test(key);
+    const known = /^(companyname|monthlytargetcartons|monthlytarget|boxespercarton|costperbox|salepriceperbox|salaryrule|basesalary|salarypertargetcarton|extrasalarypercartonabovetarget|below60incentive|6074incentive|7589incentive|9099incentive|100incentive|phone|email|address|ntn|bankdetails|incentiveslabs|tier.*|.*threshold.*)$/.test(key);
     if (known) {
       started = true;
       out.push({_row:i+1,_sheet:name,setting:label,value});
@@ -301,7 +301,7 @@ export function importWorkbook(wb, XLSX, current = {}) {
       } catch {
         setting[str(r.setting)] = str(val);
       }
-    } else if (str(r.setting) && !/^(costperbox|salepriceperbox|salarypertargetcarton|extrasalarypercartonabovetarget|below60incentive|6074incentive|7589incentive|9099incentive|100incentive|tier.*|.*threshold.*)$/.test(key))
+    } else if (str(r.setting) && !/^(costperbox|salepriceperbox|salaryrule|salarypertargetcarton|extrasalarypercartonabovetarget|below60incentive|6074incentive|7589incentive|9099incentive|100incentive|tier.*|.*threshold.*)$/.test(key))
       warnings.push("Settings row " + r._row + " column A: unrecognised key " + str(r.setting));
   }
   data.settings = {
@@ -325,27 +325,30 @@ export function importWorkbook(wb, XLSX, current = {}) {
         );
         continue;
       }
+      const missingPrice = [r.cost, r.retail, r.wh1].some(missing);
       const p = {
         id,
         name: str(r.name),
         category: str(r.category),
         boxes_per_carton: num(r.boxes_per_carton, setting.boxes_per_carton),
-        cost_paisa: rs(r.cost, undefined),
-        retail_paisa: rs(r.retail, undefined),
-        wholesale_paisa: rs(r.wh1, undefined),
-        active: true,
+        // Missing prices are intentionally imported as zero so the product can
+        // be completed from Products & pricing. Keep it inactive until priced.
+        cost_paisa: rs(r.cost, 0),
+        retail_paisa: rs(r.retail, 0),
+        wholesale_paisa: rs(r.wh1, 0),
+        active: !missingPrice,
       };
       if (!Number.isInteger(p.boxes_per_carton) || p.boxes_per_carton < 1)
         throw Error("Invalid pack size for " + id);
-      if (
-        [p.cost_paisa, p.retail_paisa, p.wholesale_paisa].some(
-          (v) => v === undefined,
-        )
-      )
-        throw Error("Missing base price/cost for " + id);
+      if (missingPrice) {
+        warnings.push(
+          "Price Codes row " + r._row + ": missing cost, retail, or wholesale price for " + id +
+          "; imported inactive with missing prices set to Rs. 0. Update in Products & pricing before activating."
+        );
+      }
       data.products.push(p);
       [r.wh1, r.wh6, r.wh25, r.wh50].forEach((v, i) => {
-        if (missing(v)) {
+        if (missing(v) && !missingPrice) {
           warnings.push(
             "Missing tier " +
               setting.tiers[i].label +

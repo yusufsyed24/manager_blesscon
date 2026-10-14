@@ -54,3 +54,10 @@ This release is a deployable source package, not a live deployment. Production c
 - **Snapshot/schema cache:** added PostgREST schema reload notification, schema usage grant, and fallback table loading when `business_snapshot` is unavailable. Added `supabase/verify.sql` and setup troubleshooting instructions.
 - **Workbook warnings:** added sheet classification so instruction/report tabs are skipped and Settings is parsed as key/value rows rather than header-based data.
 - **Order/quotation product picker:** replaced free-text product ID entry with an accessible select, searchable by name/ID, showing product name, ID and rate; empty and missing-product states are explicit.
+
+## Import follow-up: allow products with missing wholesale prices
+
+- Root cause: the workbook intentionally leaves wholesale tiers blank for 27 products, but the importer treated a missing base wholesale price as a fatal row error. Those products were omitted, causing cascading unknown-product errors in Addon Stock.
+- Fix: import products with missing base prices using zero placeholders and mark them inactive until an admin completes pricing in Products & pricing. Missing-price rows are reported as actionable warnings rather than errors. This avoids allowing orders against zero-priced products.
+- Settings: recognize `Salary Rule` as a supported settings key so it is not reported as an unknown key.
+- Validation: JavaScript syntax checks passed. The automated test suite could not be executed because the local dependency installation is incomplete (`vitest` and a usable `typescript` package are missing).
