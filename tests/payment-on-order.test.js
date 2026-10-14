@@ -31,3 +31,26 @@ it("product.save persists product fields and restores deleted tiers",()=>{
   expect(out.products[0]).toMatchObject({name:"New",active:false,boxes_per_carton:12,cost_paisa:10});
   expect(out.price_tiers[0]).toMatchObject({rate_paisa:15,deleted_at:null});
 });
+
+it("receiving a later payment updates the existing invoice ledger without creating another order",()=>{
+  const first=setup("unpaid"), s=first.state, user={id:uid(),role:"admin",name:"QA",practice:true};
+  const order=s.orders[0], invoice=s.invoices.find(x=>x.order_id===order.id), count=s.orders.length, number=invoice.number;
+  const op={id:uid(),kind:"payment.add",data:{invoice_id:invoice.id,transaction_id:"LATER-RECEIPT-1",date:today(),amount_paisa:40000,method:"Cash",reference:"QA",received_by:"QA"}};
+  const out=localApply(s,op,user).state;
+  expect(out.orders).toHaveLength(count);
+  expect(out.orders[0].id).toBe(order.id);
+  expect(out.invoices[0].number).toBe(number);
+  expect(out.payments.filter(p=>p.invoice_id===invoice.id&&!p.voided_at).reduce((sum,p)=>sum+p.amount_paisa,0)).toBe(40000);
+});
+
+it("keeps the existing order id, invoice number and payments when an order is edited",()=>{
+  const first=setup("partial",30000), s=first.state, user={id:uid(),role:"admin",name:"QA",practice:true};
+  const order=s.orders[0], invoice=s.invoices.find(x=>x.order_id===order.id), payCount=s.payments.length, number=invoice.number;
+  const op={id:uid(),kind:"order.save",data:{...order,items:[{product_id:"P",cartons:2,loose_boxes:0}],payment:undefined}};
+  const out=localApply(s,op,user).state;
+  expect(out.orders).toHaveLength(1);
+  expect(out.orders[0].id).toBe(order.id);
+  expect(out.orders[0].number).toBe(number);
+  expect(out.orders[0].version).toBe(order.version+1);
+  expect(out.payments).toHaveLength(payCount);
+});

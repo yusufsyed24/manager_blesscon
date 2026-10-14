@@ -312,7 +312,7 @@ function renderDocs(quote) {
         money(d.total_paisa),
         quote ? "—" : (() => { const invoice = s.invoices.find(i => i.order_id === d.id); const pay = invoice ? invoiceState(invoice, s.payments) : {status:"UNPAID"}; return badge(d.status === "cancelled" ? "CANCELLED" : pay.status); })(),
         badge(d.status),
-        `<div class="actions">${btn("View", quote ? "view-quote" : "view-order", d.id)}${(!quote && d.status === "confirmed") || (quote && ["Draft", "Sent"].includes(d.status)) ? btn("Edit", quote ? "edit-quote" : "edit-order", d.id) : ""}${quote && !["Converted", "Expired", "Rejected"].includes(d.status) ? btn("Convert", "convert", d.id) : ""}${quote && ["Draft", "Sent"].includes(d.status) ? btn("Status", "quote-status", d.id) : ""}${admin() ? btn(quote ? "Delete" : "Cancel", quote ? "delete-quote" : "cancel-order", d.id, "", "danger") : ""}</div>`,
+        `<div class="actions">${btn("View", quote ? "view-quote" : "view-order", d.id)}${(!quote && d.status === "confirmed") || (quote && ["Draft", "Sent"].includes(d.status)) ? btn("Edit", quote ? "edit-quote" : "edit-order", d.id) : ""}${!quote && d.status === "confirmed" && (()=>{const inv=s.invoices.find(i=>i.order_id===d.id);return inv && invoiceState(inv,s.payments).balance>0 && (admin() || s.user_permissions.some(p=>p.user_id===user.id&&p.section==="invoices"&&p.can_create)) ? btn("Receive payment","add-payment",inv.id) : ""})()}${quote && !["Converted", "Expired", "Rejected"].includes(d.status) ? btn("Convert", "convert", d.id) : ""}${quote && ["Draft", "Sent"].includes(d.status) ? btn("Status", "quote-status", d.id) : ""}${admin() ? btn(quote ? "Delete" : "Cancel", quote ? "delete-quote" : "cancel-order", d.id, "", "danger") : ""}</div>`,
       ]),
     )}</section>`
   );
@@ -1036,7 +1036,7 @@ function masterForm(kind, id) {
     existing = !!id;
   let html = "";
   if (kind === "product") {
-    html = `<div class="grid three">${field("Product ID", "id", r.id || "", "text", existing ? "readonly" : "required")}${field("Name", "name", r.name || "", "text", "required")}${field("Category", "category", r.category || "")}${field("Boxes per carton", "boxes_per_carton", r.boxes_per_carton || s.settings.boxes_per_carton, "number", 'min="1" step="1" required')}${field("Cost / box (Rs.)", "cost", num(r.cost_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Retail / box (Rs.)", "retail", num(r.retail_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Wholesale / box (Rs.)", "wholesale", num(r.wholesale_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Expiry date", "expiry_date", r.expiry_date || "", "date")}${select(
+    html = `<div class="grid three">${field("Product ID (optional — auto-generated if blank)", "id", r.id || "", "text", existing ? "readonly" : "")}${field("Name", "name", r.name || "", "text", "required")}${field("Category", "category", r.category || "")}${field("Boxes per carton", "boxes_per_carton", r.boxes_per_carton || s.settings.boxes_per_carton, "number", 'min="1" step="1" required')}${field("Cost / box (Rs.)", "cost", num(r.cost_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Retail / box (Rs.)", "retail", num(r.retail_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Wholesale / box (Rs.)", "wholesale", num(r.wholesale_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Expiry date", "expiry_date", r.expiry_date || "", "date")}${select(
       "Status",
       "active",
       [
@@ -1084,11 +1084,15 @@ async function saveMaster(form) {
       expense: "expenses",
     }[kind],
     old = S()[tableName].find((x) => x.id === form.dataset.id);
+  let generatedProductId = "";
+  if (kind === "product" && !old && !String(f.id || "").trim()) {
+    const categoryCode = String(f.category || "GEN").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 4) || "GEN";
+    const used = new Set(S().products.map(p => String(p.id).toUpperCase()));
+    let seq = 1;
+    do { generatedProductId = `BC-${categoryCode}-${String(seq++).padStart(4, "0")}`; } while (used.has(generatedProductId.toUpperCase()));
+  }
   let r = {
-    id:
-      old?.id ||
-      f.id ||
-      { staff: "SP-", customer: "CU-", expense: "EXP-" }[kind] + uid(),
+    id: old?.id || String(f.id || "").trim() || generatedProductId || ({ staff: "SP-", customer: "CU-", expense: "EXP-" }[kind] + uid()),
   };
   if (kind === "product")
     Object.assign(r, {
@@ -1155,6 +1159,10 @@ async function saveMaster(form) {
     }
   }
   if (kind === "product") {
+    r.id = String(r.id || "").trim();
+    if (!r.id || r.id.length > 180 || !/^[A-Za-z0-9._:-]+$/.test(r.id)) throw Error("Product ID must be 1–180 characters using letters, numbers, dot, underscore, colon or hyphen");
+    const idCollision = S().products.find(p => String(p.id).toLowerCase() === r.id.toLowerCase() && p.id !== old?.id);
+    if (idCollision) throw Error(idCollision.deleted_at ? "This ID belongs to a deleted product. Restore that product or use a different ID." : "This Product ID is already in use. Choose a unique ID.");
     if (!r.name.trim()) throw Error("Product name is required");
     if (!Number.isInteger(r.boxes_per_carton) || r.boxes_per_carton < 1) throw Error("Boxes per carton must be at least 1");
     const tierIndexes = Object.keys(f).filter(k => /^pt_min_\d+$/.test(k)).map(k => Number(k.slice(7))).sort((a,b)=>a-b);
@@ -1178,7 +1186,9 @@ function showDocument(id, quote = false) {
   const key = "blesscon:template:" + user.id + ":" + activeDoc.type;
   const documentKey = key + ":" + activeDoc.document.id;
   activeTemplate = localStorage.getItem(documentKey) || localStorage.getItem(key) || "classic";
-  const renderView = () => `<div class="actions doc-tools"><div class="field"><label for="document-template">Template</label><select id="document-template">${(DOCUMENT_TEMPLATES[activeDoc.type] || DOCUMENT_TEMPLATES.invoice).map(t=>`<option value="${t.id}" ${t.id===activeTemplate?"selected":""}>${esc(t.label)}</option>`).join("")}</select></div>${btn("Print", "doc-print")}${btn("Download PDF", "doc-pdf")}${btn("Share PDF", "doc-share")}${btn("WhatsApp", "doc-whatsapp")}${btn("Email", "doc-email")}${btn("Copy public link", "doc-link")}${btn("Revoke public link", "doc-revoke")}</div><div id="document-preview">${documentHTML(activeDoc, pending, activeTemplate)}</div>`;
+  const payState = activeDoc.invoice ? invoiceState(activeDoc.invoice, S().payments) : { balance: 0 };
+  const canCollect = !quote && payState.balance > 0 && (admin() || S().user_permissions.some(p => p.user_id === user.id && p.section === "invoices" && p.can_create));
+  const renderView = () => `<div class="actions doc-tools">${canCollect ? btn("Receive payment", "add-payment", activeDoc.invoice.id, "", "gold") : ""}<div class="field"><label for="document-template">Template</label><select id="document-template">${(DOCUMENT_TEMPLATES[activeDoc.type] || DOCUMENT_TEMPLATES.invoice).map(t=>`<option value="${t.id}" ${t.id===activeTemplate?"selected":""}>${esc(t.label)}</option>`).join("")}</select></div>${btn("Print", "doc-print")}${btn("Download PDF", "doc-pdf")}${btn("Share PDF", "doc-share")}${btn("WhatsApp", "doc-whatsapp")}${btn("Email", "doc-email")}${btn("Copy public link", "doc-link")}${btn("Revoke public link", "doc-revoke")}</div><div id="document-preview">${documentHTML(activeDoc, pending, activeTemplate)}</div>`;
   modal((quote ? "Quotation " : "Invoice ") + activeDoc.document.number, renderView());
 }
 function paymentModal(id) {
@@ -1186,7 +1196,7 @@ function paymentModal(id) {
     p = invoiceState(i, S().payments);
   modal(
     "Receive payment · " + i.number,
-    `<p>Total: <b>${money(i.total_paisa)}</b> · Paid: ${money(p.paid)} · Balance: <b>${money(p.balance)}</b></p><form id="payment-form" data-id="${id}"><div class="grid">${field("Date", "date", today(), "date", "required")}${field("Amount (Rs.)", "amount", p.balance / 100, "number", 'min="0.01" step="0.01" required')}${select("Method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "reference")}${field("Received by", "received_by", user.name || user.email || "Owner", "text", "required")}</div><button class="gold" style="margin-top:20px">Record payment</button></form>`,
+    `<div class="notice"><b>Invoice:</b> ${esc(i.number)} · <b>Customer:</b> ${esc(customerName(S().orders.find(o=>o.id===i.order_id)?.customer_id))}<br><b>Total:</b> ${money(i.total_paisa)} · <b>Already paid:</b> ${money(p.paid)} · <b>Balance due:</b> ${money(p.balance)} · ${badge(p.status)}</div><form id="payment-form" data-id="${id}"><div class="grid">${field("Date", "date", today(), "date", "required")}${field("Amount received now (Rs.)", "amount", p.balance / 100, "number", 'min="0.01" step="0.01" required')}<button type="button" class="secondary" data-act="pay-full-balance" data-id="${id}">Pay full balance</button>${select("Method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "reference")}${field("Received by", "received_by", user.name || user.email || "Owner", "text", "required")}</div><button class="gold" style="margin-top:20px">Record payment</button></form>`,
   );
 }
 function stockModal() {
@@ -1552,6 +1562,12 @@ async function action(act, id, element) {
     case "add-payment":
       paymentModal(id);
       break;
+    case "pay-full-balance": {
+      const amount = document.querySelector('#payment-form [name="amount"]');
+      const invoice = S().invoices.find(x => x.id === id);
+      if (amount && invoice) amount.value = (invoiceState(invoice, S().payments).balance / 100).toFixed(2);
+      break;
+    }
     case "add-stock":
       stockModal();
       break;
