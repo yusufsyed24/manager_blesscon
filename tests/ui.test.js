@@ -99,3 +99,22 @@ it("practice sale confirms, invoice shows unpaid stamp and stock changes", async
   expect(document.querySelector(".stamp").textContent).toContain("UNPAID");
   expect(s.stock.find((x) => x.product_id === "DEMO-RANI-1").boxes).toBe(2328);
 });
+
+it("product save form always reaches app validation and can create a product in practice mode", async () => {
+  app.practice();
+  document.querySelector('[data-page="products"]').click();
+  document.querySelector('[data-act="add-product"]').click();
+  const form = document.querySelector("#master-form");
+  expect(form).not.toBeNull();
+  expect(form.noValidate).toBe(true);
+  expect(form.querySelector('button[type="submit"]')?.textContent).toContain("Save product");
+  form.elements.name.value = "UI Save Test Candy";
+  form.elements.category.value = "Test";
+  form.elements.boxes_per_carton.value = "24";
+  form.elements.cost.value = "1.00";
+  form.elements.retail.value = "2.50";
+  form.elements.wholesale.value = "2.30";
+  form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(document.querySelector("#modal").open).toBe(false));
+  expect(document.querySelector("#page").textContent).toContain("UI Save Test Candy");
+});

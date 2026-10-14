@@ -1,14 +1,16 @@
-Blesscon Candy Manager — product save hardening validation
+Product Save Button Fix — validation log (2026-10-14)
 
-PASS: node --check for js/*.js, tests/*.js, web/js/*.js
-PASS: local product create/update smoke test (name, expiry date, wholesale price; no duplicate row)
-PASS: root js/app.js matches web/js/app.js
-PASS: root js/store.js matches web/js/store.js
-PASS: root js/documents.js matches web/js/documents.js
-PASS: schema.sql and fix_product_save.sql apply_command function bodies match
-PASS: node scripts/release.mjs
-BLOCKED: npm test -- --reporter=dot — vitest: not found
-BLOCKED: npm run check — TypeScript dependency unavailable
-NOT RUN: live Supabase product save / RLS / deployed-schema test
+PASS: node --check js/app.js
+PASS: node --check all js/*.js, tests/*.js, and web/js/*.js
+PASS: node scripts/release.mjs completed
+PASS: root/deployed js/app.js and js/store.js are byte-identical
+PASS: ZIP integrity check will be performed after packaging
 
-The full regression suite has NOT passed because it could not be executed in this environment.
+NOT RUN / BLOCKED:
+FAIL TO START: npm test -- --reporter=dot
+Reason: vitest: not found (dependencies are not installed in this environment).
+
+FAIL TO START: npm run check
+Reason: ERR_MODULE_NOT_FOUND for package 'typescript' imported by scripts/check.mjs.
+
+Not verified: live Supabase product create/update. The deployed database must have the product.save migration applied, the logged-in user must be an admin, and the live app_config.js must retain the project's working public Supabase URL and publishable/anon key.

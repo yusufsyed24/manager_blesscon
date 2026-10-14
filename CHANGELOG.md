@@ -126,3 +126,10 @@ This release is a deployable source package, not a live deployment. Production c
 - **Validation:** Added explicit client-side checks for non-negative integer-paisa cost/retail/wholesale values and valid tier rates/minimums.
 - **Database fix:** `product.save` now validates required fields server-side and returns clear errors for an ID already in use, including an ID held by a soft-deleted product. Product and tier writes remain within the same `apply_command` transaction. Updated both the full schema and the existing-installation migration.
 - **Build validation:** JavaScript syntax checks and local product create/update smoke checks are run for this build. Full Vitest/PostgreSQL/live-Supabase validation is not claimed unless those environments are available and the tests actually run.
+
+## Product form submit fix (2026-10-14)
+
+- **Observed symptom:** the Products & pricing Save button could appear inert when a browser-native `required` / `min` constraint failed. In that case, the browser does not dispatch the form `submit` event, so application validation and its inline error handler never run. This is especially confusing when product-specific tier fields are enabled and an existing tier label/rate is invalid.
+- **Fix:** product/master form now uses `novalidate` and an explicit submit button so every attempt reaches the app's validation path. Required product fields and tier rules are checked in JavaScript; errors are displayed inline while preserving the dialog and entered values. Missing cost/retail/wholesale values now produce a clear message rather than being silently treated as zero. The inline error clears as the user edits fields.
+- **Regression coverage:** added a UI test asserting the product form bypasses silent browser-native blocking and successfully creates a product in the offline practice workspace.
+- **Limit:** this reproduces and fixes the frontend's silent-submit failure mode. A live Supabase write still depends on the deployed `product.save` SQL migration and admin permissions; those cannot be verified without access to the user's project.

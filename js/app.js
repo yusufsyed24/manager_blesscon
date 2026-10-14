@@ -1062,7 +1062,7 @@ function masterForm(kind, id) {
     html = `<div class="grid">${field("Date", "date", r.date || today(), "date", "required")}${field("Category", "category", r.category || "Misc", "text", 'list="expense-categories" required')}<datalist id="expense-categories">${["Rent", "Salaries", "Transport", "Utilities", "Packaging", "Marketing", "Misc"].map((x) => "<option>" + x + "</option>").join("")}</datalist>${field("Amount (Rs.)", "amount", num(r.amount_paisa) / 100, "number", 'min="0.01" step="0.01" required')}${select("Payment method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"], r.method || "Cash")}${select("Salesman (optional)", "salesman_id", [["", "Not linked"], ...visible(s.salesmen).map((x) => [x.id, x.name])], r.salesman_id || "")}${area("Description", "description", r.description || "")}<div class="field"><label for="receipt-file">Receipt image (optional, up to 5 MB)</label><input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp"></div></div>`;
   modal(
     (existing ? "Edit " : "New ") + kind,
-    `<form id="master-form" data-kind="${kind}" data-id="${esc(id || "")}">${html}<div id="master-form-error" role="alert" class="notice danger" style="display:none"></div><div class="actions" style="margin-top:22px"><button class="gold">Save ${kind}</button></div></form>`,
+    `<form id="master-form" data-kind="${kind}" data-id="${esc(id || "")}" novalidate>${html}<div id="master-form-error" role="alert" class="notice danger" style="display:none" aria-live="polite"></div><div class="actions" style="margin-top:22px"><button type="submit" class="gold">Save ${kind}</button></div></form>`,
   );
   if (kind === "product") {
     const form = $("master-form"), toggle = form?.querySelector('[name="product_override"]');
@@ -1177,7 +1177,8 @@ async function saveMaster(form) {
     if (idCollision) throw Error(idCollision.deleted_at ? "This ID belongs to a deleted product. Restore that product or use a different ID." : "This Product ID is already in use. Choose a unique ID.");
     if (!r.name.trim()) throw Error("Product name is required");
     if (!Number.isInteger(r.boxes_per_carton) || r.boxes_per_carton < 1) throw Error("Boxes per carton must be at least 1");
-    for (const [label, value] of [["Cost", r.cost_paisa], ["Retail price", r.retail_paisa], ["Wholesale price", r.wholesale_paisa]]) {
+    for (const [label, raw, value] of [["Cost", f.cost, r.cost_paisa], ["Retail price", f.retail, r.retail_paisa], ["Wholesale price", f.wholesale, r.wholesale_paisa]]) {
+      if (raw == null || String(raw).trim() === "") throw Error(`${label} is required`);
       if (!Number.isSafeInteger(value) || value < 0) throw Error(`${label} must be a valid non-negative amount`);
     }
     const tierIndexes = Object.keys(f).filter(k => /^pt_min_\d+$/.test(k)).map(k => Number(k.slice(7))).sort((a,b)=>a-b);
@@ -1939,6 +1940,11 @@ document.addEventListener("click", async (e) => {
 });
 document.addEventListener("input", (e) => {
   const input = e.target;
+  const masterForm = input.closest?.("#master-form");
+  if (masterForm) {
+    const error = masterForm.querySelector("#master-form-error");
+    if (error) { error.textContent = ""; error.style.display = "none"; }
+  }
   if (input.dataset.filter === "search") {
     const pos = input.selectionStart;
     filter.search = input.value;
@@ -2124,9 +2130,16 @@ document.addEventListener("submit", async (e) => {
       }
     }
   } catch (err) {
-    toast(err.message || String(err));
-    const el = form.querySelector("[role=alert]");
-    if (el) { el.textContent = err.message; el.style.display = "block"; }
+    const message = err?.message || String(err);
+    toast(message);
+    const el = form.querySelector("#master-form-error, [role=alert]");
+    if (el) {
+      el.textContent = message;
+      el.style.display = "block";
+      el.setAttribute("tabindex", "-1");
+      el.focus({ preventScroll: true });
+      el.scrollIntoView?.({ block: "nearest" });
+    }
   } finally {
     delete form.dataset.saving;
     buttons.forEach((b) => (b.disabled = false));
