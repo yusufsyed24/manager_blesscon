@@ -121,7 +121,6 @@ const card = (label, value, meta = "", accent = false) =>
 const customerName = (id) => S().customers.find((c) => c.id === id)?.name || id;
 const salesmanName = (id) =>
   S().salesmen.find((s) => s.id === id)?.name || "Unassigned";
-const balance = (id) =>
 const balance = (id, salesmanId = null) => {
   const movements = S().salesman_stock_movements.filter(
     (movement) =>
