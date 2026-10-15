@@ -44,6 +44,8 @@ it("practice workspace navigates every sidebar page without DOM errors", async (
   expect(tableCells[0].dataset.label).toBe(tableHeaders[0].textContent);
   const pages = [
     "dashboard",
+    "dsr",
+    "closing",
     "orders",
     "invoices",
     "quotes",
