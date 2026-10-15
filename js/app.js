@@ -533,6 +533,7 @@ function stockOverview() {
     );
   let totalBoxes = 0,
     totalCartons = 0;
+  const byCategory = new Map();
   const rows = products.map((p) => {
     const b = balance(p.id, admin() ? null : own()?.id),
       per = num(p.boxes_per_carton) || 1,
@@ -540,6 +541,9 @@ function stockOverview() {
       loose = b % per;
     totalBoxes += b;
     totalCartons += cartons;
+    const category = String(p.category || "Uncategorized").trim() || "Uncategorized";
+    if (!byCategory.has(category)) byCategory.set(category, []);
+    byCategory.get(category).push({ product: p, boxes: b, cartons, loose, per });
     const status =
       b <= 0
         ? badge("Out of stock", "red")
@@ -554,7 +558,13 @@ function stockOverview() {
       `${b}<small>${per} boxes / carton</small>`,
     ];
   });
-  return `<section class="panel"><div class="panel-heading"><h2>Product stock</h2><span class="muted">${products.length} products · ${totalCartons} cartons · ${totalBoxes} boxes in total</span></div>${table(
+  const categorySummary = `<section class="panel"><div class="panel-heading"><h2>Stock by category</h2><span class="muted">Cartons and loose boxes are counted per product pack size</span></div>${[...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => {
+    const categoryCartons = items.reduce((sum, item) => sum + item.cartons, 0);
+    const categoryLoose = items.reduce((sum, item) => sum + item.loose, 0);
+    const categoryBoxes = items.reduce((sum, item) => sum + item.boxes, 0);
+    return `<section class="stock-category"><div class="panel-heading"><h3>${esc(category)}</h3><span class="muted">${categoryCartons} cartons · ${categoryLoose} loose boxes · ${categoryBoxes} boxes</span></div>${table(["Product", "Pack size", "Cartons", "Loose boxes", "Total boxes"], items.map(({ product, boxes, cartons, loose, per }) => [esc(product.name) + `<small>${esc(product.id)}</small>`, `${per} boxes / carton`, cartons, loose, boxes]), "No products in this category")}</section>`;
+  }).join("")}${products.length ? "" : '<div class="empty"><h3>No products yet</h3></div>'}</section>`;
+  return categorySummary + `<section class="panel"><div class="panel-heading"><h2>Product stock</h2><span class="muted">${products.length} products · ${totalCartons} cartons · ${totalBoxes} boxes in total</span></div>${table(
     ["Product", "Availability", "Cartons", "Loose boxes", "Total boxes"],
     rows,
     "No products yet",

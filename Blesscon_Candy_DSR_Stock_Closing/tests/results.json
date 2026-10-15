@@ -1,7 +1,0 @@
-{
-  "status": "not_run_current_environment",
-  "reason": "Vitest and TypeScript dependencies were unavailable; npm ci timed out. Do not treat earlier archived results as results for this build.",
-  "syntax_checks": "passed",
-  "local_product_create_update_smoke_test": "passed",
-  "live_supabase_test": "not_run"
-}

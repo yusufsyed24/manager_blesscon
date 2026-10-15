@@ -2,6 +2,7 @@
 import { beforeAll, it, expect, vi } from "vitest";
 import fs from "node:fs/promises";
 import axe from "axe-core";
+import { empty } from "../js/store.js";
 let app;
 beforeAll(async () => {
   const html = await fs.readFile(process.cwd() + "/index.html", "utf8");
@@ -124,4 +125,35 @@ it("product save form always reaches app validation and can create a product in 
   form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   await vi.waitFor(() => expect(document.querySelector("#modal").open).toBe(false));
   expect(document.querySelector("#page").textContent).toContain("UI Save Test Candy");
+});
+
+it("overview groups stock by category and respects each product carton size", () => {
+  localStorage.clear();
+  const state = empty();
+  state.products = [
+    { id: "A", name: "Mint", category: "Candy", boxes_per_carton: 24, active: true },
+    { id: "B", name: "Fruit", category: "Candy", boxes_per_carton: 12, active: true },
+    { id: "C", name: "Gum", category: "Gum", boxes_per_carton: 10, active: true },
+  ];
+  state.stock = [
+    { product_id: "A", boxes: 50 },
+    { product_id: "B", boxes: 25 },
+    { product_id: "C", boxes: 5 },
+  ];
+  localStorage.setItem(
+    "blesscon:v2:practice.local:practice-owner",
+    JSON.stringify({ base: state, queue: [] }),
+  );
+  app.practice();
+  const summary = [...document.querySelectorAll(".panel")].find((panel) =>
+    panel.querySelector("h2")?.textContent.includes("Stock by category"),
+  );
+  expect(summary).not.toBeUndefined();
+  const text = summary.textContent;
+  expect(text).toContain("Candy");
+  expect(text).toContain("4 cartons · 3 loose boxes · 75 boxes");
+  expect(text).toContain("24 boxes / carton");
+  expect(text).toContain("12 boxes / carton");
+  expect(text).toContain("Gum");
+  expect(text).toContain("0 cartons · 5 loose boxes · 5 boxes");
 });

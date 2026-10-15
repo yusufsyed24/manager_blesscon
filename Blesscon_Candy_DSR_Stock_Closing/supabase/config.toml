@@ -1,5 +1,0 @@
-project_id = "blesscon-candy-manager"
-[functions.admin-create-user]
-verify_jwt = false
-# The function validates the bearer token using auth.getUser() and checks is_admin().
-# This also supports Supabase publishable keys; no service key is sent to browsers.
