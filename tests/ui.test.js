@@ -127,13 +127,13 @@ it("product save form always reaches app validation and can create a product in 
   expect(document.querySelector("#page").textContent).toContain("UI Save Test Candy");
 });
 
-it("overview groups stock by category and respects each product carton size", () => {
+it("overview groups similar candy names and respects each product carton size", () => {
   localStorage.clear();
   const state = empty();
   state.products = [
-    { id: "A", name: "Mint", category: "Candy", boxes_per_carton: 24, active: true },
-    { id: "B", name: "Fruit", category: "Candy", boxes_per_carton: 12, active: true },
-    { id: "C", name: "Gum", category: "Gum", boxes_per_carton: 10, active: true },
+    { id: "A", name: "Rani Candy - Strawberry", category: "Sweet", boxes_per_carton: 24, active: true },
+    { id: "B", name: "Rani Candy - Orange", category: "Variant", boxes_per_carton: 12, active: true },
+    { id: "C", name: "Sour Chew (Mango)", category: "Chew", boxes_per_carton: 10, active: true },
   ];
   state.stock = [
     { product_id: "A", boxes: 50 },
@@ -145,15 +145,26 @@ it("overview groups stock by category and respects each product carton size", ()
     JSON.stringify({ base: state, queue: [] }),
   );
   app.practice();
-  const summary = [...document.querySelectorAll(".panel")].find((panel) =>
-    panel.querySelector("h2")?.textContent.includes("Stock by category"),
-  );
-  expect(summary).not.toBeUndefined();
-  const text = summary.textContent;
-  expect(text).toContain("Candy");
-  expect(text).toContain("4 cartons · 3 loose boxes · 75 boxes");
-  expect(text).toContain("24 boxes / carton");
-  expect(text).toContain("12 boxes / carton");
-  expect(text).toContain("Gum");
-  expect(text).toContain("0 cartons · 5 loose boxes · 5 boxes");
+  const cards = [...document.querySelectorAll(".stock-family-card")];
+  expect(cards).toHaveLength(2);
+  const rani = cards.find((card) => card.querySelector("h3")?.textContent === "Rani Candy");
+  const sourChew = cards.find((card) => card.querySelector("h3")?.textContent === "Sour Chew");
+  expect([...rani.querySelectorAll(".stock-family-totals div")].map((metric) => [
+    metric.querySelector("b").textContent,
+    metric.querySelector("span").textContent,
+  ])).toEqual([
+    ["4", "cartons"],
+    ["3", "loose boxes"],
+    ["75", "total boxes"],
+  ]);
+  expect(rani.textContent).toContain("24 boxes / carton");
+  expect(rani.textContent).toContain("12 boxes / carton");
+  expect([...sourChew.querySelectorAll(".stock-family-totals div")].map((metric) => [
+    metric.querySelector("b").textContent,
+    metric.querySelector("span").textContent,
+  ])).toEqual([
+    ["0", "cartons"],
+    ["5", "loose boxes"],
+    ["5", "total boxes"],
+  ]);
 });

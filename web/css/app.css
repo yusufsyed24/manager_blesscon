@@ -313,6 +313,71 @@ hr {
 .card.accent .meta {
   color: #d4ddeb;
 }
+.stock-family-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+}
+.stock-family-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.stock-family-heading,
+.stock-family-product {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.stock-family-heading h3 {
+  margin: 0 0 3px;
+  font-size: 16px;
+}
+.stock-family-heading small,
+.stock-family-product small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.stock-family-units {
+  white-space: nowrap;
+}
+.stock-family-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0 10px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.stock-family-totals div {
+  min-width: 0;
+}
+.stock-family-totals b,
+.stock-family-totals span {
+  display: block;
+}
+.stock-family-totals b {
+  font-size: 18px;
+}
+.stock-family-totals span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.stock-family-products {
+  display: grid;
+  gap: 11px;
+}
+.stock-family-product > div:last-child {
+  flex: 0 0 auto;
+  text-align: right;
+}
 .panel {
   padding: 24px;
   margin-bottom: 20px;

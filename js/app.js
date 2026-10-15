@@ -526,49 +526,45 @@ function dsrClosingSection() {
     });
   return `<section class="panel"><h2>Daily cash and closing status</h2>${table(["Salesman", "Opening cash", "Cash received", "Cash expenses", "Handed over", "Expected", "Counted", "Variance", "Stock variances", "Status", "Reason"], rows, "No salesman records available")}</section>`;
 }
+function stockFamilyName(name) {
+  const normalized = String(name || "").trim().replace(/\s+/g, " ");
+  const separated = normalized.match(/^(.+?)\s+(?:-|–|—|\||:|\/)\s+.+$/);
+  if (separated) return separated[1].trim();
+  const parenthetical = normalized.match(/^(.+?)\s*\([^)]*\)\s*$/);
+  if (parenthetical) return parenthetical[1].trim();
+  const words = normalized.split(" ");
+  return words.length > 2 ? words.slice(0, 2).join(" ") : normalized;
+}
 function stockOverview() {
-  const s = S(),
-    products = [...visible(s.products)].sort((a, b) =>
-      String(a.name).localeCompare(String(b.name)),
-    );
+  const products = [...visible(S().products)].sort((a, b) =>
+    String(a.name).localeCompare(String(b.name)),
+  );
+  const families = new Map();
   let totalBoxes = 0,
-    totalCartons = 0;
-  const byCategory = new Map();
-  const rows = products.map((p) => {
-    const b = balance(p.id, admin() ? null : own()?.id),
-      per = num(p.boxes_per_carton) || 1,
-      cartons = Math.floor(b / per),
-      loose = b % per;
-    totalBoxes += b;
+    totalCartons = 0,
+    totalLoose = 0;
+  for (const product of products) {
+    const boxes = balance(product.id, admin() ? null : own()?.id);
+    const per = num(product.boxes_per_carton) || 1;
+    const cartons = Math.floor(boxes / per);
+    const loose = boxes % per;
+    const family = stockFamilyName(product.name) || "Other products";
+    const key = family.toLocaleLowerCase();
+    const group = families.get(key) || { name: family, products: [], cartons: 0, loose: 0, boxes: 0 };
+    group.products.push({ product, boxes, per, cartons, loose });
+    group.cartons += cartons;
+    group.loose += loose;
+    group.boxes += boxes;
+    families.set(key, group);
+    totalBoxes += boxes;
     totalCartons += cartons;
-    const category = String(p.category || "Uncategorized").trim() || "Uncategorized";
-    if (!byCategory.has(category)) byCategory.set(category, []);
-    byCategory.get(category).push({ product: p, boxes: b, cartons, loose, per });
-    const status =
-      b <= 0
-        ? badge("Out of stock", "red")
-        : b <= num(s.settings.low_stock_boxes)
-          ? badge("Low stock", "amber")
-          : badge("In stock", "green");
-    return [
-      esc(p.name) + "<small>" + esc(p.id) + (p.active === false ? " · inactive" : "") + "</small>",
-      status,
-      `<b>${cartons}</b>`,
-      loose,
-      `${b}<small>${per} boxes / carton</small>`,
-    ];
-  });
-  const categorySummary = `<section class="panel"><div class="panel-heading"><h2>Stock by category</h2><span class="muted">Cartons and loose boxes are counted per product pack size</span></div>${[...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([category, items]) => {
-    const categoryCartons = items.reduce((sum, item) => sum + item.cartons, 0);
-    const categoryLoose = items.reduce((sum, item) => sum + item.loose, 0);
-    const categoryBoxes = items.reduce((sum, item) => sum + item.boxes, 0);
-    return `<section class="stock-category"><div class="panel-heading"><h3>${esc(category)}</h3><span class="muted">${categoryCartons} cartons · ${categoryLoose} loose boxes · ${categoryBoxes} boxes</span></div>${table(["Product", "Pack size", "Cartons", "Loose boxes", "Total boxes"], items.map(({ product, boxes, cartons, loose, per }) => [esc(product.name) + `<small>${esc(product.id)}</small>`, `${per} boxes / carton`, cartons, loose, boxes]), "No products in this category")}</section>`;
-  }).join("")}${products.length ? "" : '<div class="empty"><h3>No products yet</h3></div>'}</section>`;
-  return categorySummary + `<section class="panel"><div class="panel-heading"><h2>Product stock</h2><span class="muted">${products.length} products · ${totalCartons} cartons · ${totalBoxes} boxes in total</span></div>${table(
-    ["Product", "Availability", "Cartons", "Loose boxes", "Total boxes"],
-    rows,
-    "No products yet",
-  )}</section>`;
+    totalLoose += loose;
+  }
+  const cards = [...families.values()]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((group) => `<article class="stock-family-card"><header class="stock-family-heading"><div><h3>${esc(group.name)}</h3><small>${group.products.length} product${group.products.length === 1 ? "" : "s"}</small></div><b class="stock-family-units">${group.boxes.toLocaleString()} boxes</b></header><div class="stock-family-totals"><div><b>${group.cartons.toLocaleString()}</b><span>cartons</span></div><div><b>${group.loose.toLocaleString()}</b><span>loose boxes</span></div><div><b>${group.boxes.toLocaleString()}</b><span>total boxes</span></div></div><div class="stock-family-products">${group.products.map(({ product, boxes, per, cartons, loose }) => `<div class="stock-family-product"><div><b>${esc(product.name)}</b><small>${per} boxes / carton</small></div><div><b>${cartons} ct · ${loose} loose</b><small>${boxes.toLocaleString()} boxes</small></div></div>`).join("")}</div></article>`)
+    .join("");
+  return `<section class="panel"><div class="panel-heading"><h2>Stock by candy</h2><span class="muted">${products.length} products · ${totalCartons} cartons · ${totalLoose} loose boxes · ${totalBoxes} boxes</span></div>${cards ? `<div class="stock-family-grid">${cards}</div>` : '<div class="empty"><h3>No products yet</h3></div>'}</section>`;
 }
 function renderDocs(quote) {
   const s = S(),
