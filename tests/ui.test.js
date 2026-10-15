@@ -37,6 +37,11 @@ it("login embeds logo, labels inputs and has no serious/critical axe violations"
 });
 it("practice workspace navigates every sidebar page without DOM errors", async () => {
   app.practice();
+  const tableHeaders = [...document.querySelectorAll(".table-wrap thead th")];
+  const tableCells = [...document.querySelectorAll(".table-wrap tbody td")];
+  expect(tableCells.length).toBeGreaterThan(0);
+  expect(tableCells.every((cell) => cell.dataset.label)).toBe(true);
+  expect(tableCells[0].dataset.label).toBe(tableHeaders[0].textContent);
   const pages = [
     "dashboard",
     "orders",

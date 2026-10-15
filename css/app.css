@@ -982,6 +982,47 @@ pre {
   }
 }
 @media (max-width: 760px) {
+  .table-wrap {
+    overflow: visible;
+    border: 0;
+  }
+  .table-wrap table {
+    display: block;
+  }
+  .table-wrap thead {
+    display: none;
+  }
+  .table-wrap tbody {
+    display: grid;
+    gap: 10px;
+  }
+  .table-wrap tr {
+    display: block;
+    overflow: hidden;
+    padding: 4px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: white;
+  }
+  .table-wrap td {
+    display: grid;
+    grid-template-columns: minmax(86px, 36%) minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding: 9px 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .table-wrap td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .table-wrap td button {
+    justify-self: start;
+  }
   .document {
     overflow-x: auto;
   }

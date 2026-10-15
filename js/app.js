@@ -91,7 +91,7 @@ const select = (label, name, options, value = "") =>
     .join("")}</select></div>`;
 const table = (headers, rows, emptyText = "No records yet") =>
   rows.length
-    ? `<div class="table-wrap"><table><thead><tr>${headers.map((h) => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c ?? ""}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
+    ? `<div class="table-wrap"><table><thead><tr>${headers.map((h) => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td data-label="${esc(String(headers[i] ?? "").replace(/<[^>]*>/g, ""))}">${c ?? ""}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
     : `<div class="empty"><h3>${esc(emptyText)}</h3><p>Use the button above to add a record, or import your workbook.</p></div>`;
 const card = (label, value, meta = "", accent = false) =>
   `<div class="card${accent ? " accent" : ""}"><div class="label">${label}</div><div class="value">${value}</div><div class="meta">${meta}</div></div>`;
