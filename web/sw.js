@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v4-search-addline-20261015-1";
+const CACHE = "blesscon-static-v6-minimise-stock-20261015-2";
 const ASSETS = [
   "./",
   "./index.html",

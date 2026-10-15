@@ -120,6 +120,7 @@ function modal(title, html) {
   $("modal-title").textContent = title;
   $("modal-body").innerHTML = html;
   if (!$("modal").open) $("modal").showModal();
+  $("minimize-modal").hidden = !(draft && $("document-form"));
   setTimeout(
     () => $("modal-body").querySelector("input,select,button")?.focus(),
     0,
@@ -131,6 +132,39 @@ function close() {
   preview = null;
 }
 $("close-modal").onclick = close;
+// Minimise: park the open sale/quotation form (with everything typed into it)
+// so the user can look at other pages, then resume exactly where they left off.
+let minimized = null;
+function updatePill() {
+  const pill = $("draft-pill");
+  if (!pill) return;
+  pill.hidden = !minimized;
+  if (minimized) pill.textContent = "▲ Resume: " + minimized.title;
+}
+function minimizeModal() {
+  if (!draft || !$("document-form")) return;
+  const frag = document.createDocumentFragment();
+  while ($("modal-body").firstChild) frag.appendChild($("modal-body").firstChild);
+  minimized = { title: $("modal-title").textContent, frag, draft };
+  draft = null;
+  $("modal").close();
+  $("minimize-modal").hidden = true;
+  updatePill();
+}
+function restoreModal() {
+  if (!minimized) return;
+  const m = minimized;
+  minimized = null;
+  draft = m.draft;
+  $("modal-title").textContent = m.title;
+  $("modal-body").replaceChildren(m.frag);
+  $("minimize-modal").hidden = false;
+  if (!$("modal").open) $("modal").showModal();
+  updatePill();
+  calcEditor();
+}
+$("minimize-modal").onclick = minimizeModal;
+$("draft-pill").onclick = restoreModal;
 function syncBadge() {
   if (!store) return;
   const text = user.practice
@@ -267,8 +301,42 @@ function renderDashboard() {
         money(t.total),
       ]),
       "Create your first salesman",
-    )}</section>`
+    )}</section>${stockOverview()}`
   );
+}
+function stockOverview() {
+  const s = S(),
+    products = [...visible(s.products)].sort((a, b) =>
+      String(a.name).localeCompare(String(b.name)),
+    );
+  let totalBoxes = 0,
+    totalCartons = 0;
+  const rows = products.map((p) => {
+    const b = balance(p.id),
+      per = num(p.boxes_per_carton) || 1,
+      cartons = Math.floor(b / per),
+      loose = b % per;
+    totalBoxes += b;
+    totalCartons += cartons;
+    const status =
+      b <= 0
+        ? badge("Out of stock", "red")
+        : b <= num(s.settings.low_stock_boxes)
+          ? badge("Low stock", "amber")
+          : badge("In stock", "green");
+    return [
+      esc(p.name) + "<small>" + esc(p.id) + (p.active === false ? " · inactive" : "") + "</small>",
+      status,
+      `<b>${cartons}</b>`,
+      loose,
+      `${b}<small>${per} boxes / carton</small>`,
+    ];
+  });
+  return `<section class="panel"><div class="panel-heading"><h2>Product stock</h2><span class="muted">${products.length} products · ${totalCartons} cartons · ${totalBoxes} boxes in total</span></div>${table(
+    ["Product", "Availability", "Cartons", "Loose boxes", "Total boxes"],
+    rows,
+    "No products yet",
+  )}</section>`;
 }
 function renderDocs(quote) {
   const s = S(),
@@ -837,6 +905,14 @@ function renderImport() {
   );
 }
 function openEditor(quote, id) {
+  if (minimized) {
+    if (!confirm("You have a minimised " + minimized.title.toLowerCase() + " in progress. Discard it and start a new one?")) {
+      restoreModal();
+      return;
+    }
+    minimized = null;
+    updatePill();
+  }
   const s = S(),
     t = quote ? "quotations" : "orders",
     it = quote ? "quotation_items" : "order_items";
@@ -959,7 +1035,8 @@ function calcEditor() {
       const amount = $("f-payment_amount"), due = $("f-payment_due_date");
       if (payStatus.value === "paid") { amount.value = (total / 100).toFixed(2); amount.readOnly = true; }
       else if (payStatus.value === "unpaid") { amount.value = "0.00"; amount.readOnly = true; }
-      else { amount.readOnly = false; if (amount.value === "0.00" && total > 0) amount.value = ""; }
+      else { amount.readOnly = false; if (amount.dataset.mode !== "partial") amount.value = ""; }
+      amount.dataset.mode = payStatus.value;
       due.closest(".field").style.display = payStatus.value === "unpaid" ? "block" : "none";
       const paid = payStatus.value === "paid" ? total : payStatus.value === "partial" ? (Number(String(amount.value).replace(/,/g,"")) || 0) * 100 : 0;
       $("payment-summary").innerHTML = `Total: <b>${money(total)}</b> · Paid now: <b>${money(paid)}</b> · Balance: <b>${money(total-paid)}</b> · ${badge(payStatus.value === "paid" ? "PAID" : payStatus.value === "partial" ? "PART PAID" : "UNPAID")}`;
@@ -1926,6 +2003,8 @@ async function action(act, id, element) {
       );
       break;
     case "logout":
+      minimized = null;
+      updatePill();
       if (
         store.queue.length &&
         !confirm(
@@ -1983,9 +2062,24 @@ document.addEventListener("input", (e) => {
       const i = num(row.dataset.line),
         key = input.dataset.lineField;
       if (key === "manual_rate") {
-        draft.items[i].manual_rate_paisa = paisa(input.value);
-        if (draft.items[i].override_reason?.trim())
+        const reasonBox = row.querySelector('[data-line-field="override_reason"]');
+        if (String(input.value).trim() === "") {
+          // Field cleared: go back to automatic tier pricing.
+          delete draft.items[i].manual_rate_paisa;
+          if (draft.items[i].override_reason === "Manual rate") {
+            draft.items[i].override_reason = "";
+            if (reasonBox) reasonBox.value = "";
+          }
+        } else {
+          // A typed rate is kept as entered; mark the line as a manual rate so
+          // recalculation no longer restores the tier price.
+          draft.items[i].manual_rate_paisa = paisa(input.value);
           draft.items[i].rate_paisa = paisa(input.value);
+          if (!draft.items[i].override_reason?.trim()) {
+            draft.items[i].override_reason = "Manual rate";
+            if (reasonBox) reasonBox.value = "Manual rate";
+          }
+        }
       } else if (key) {
         draft.items[i][key] = input.value;
         if (

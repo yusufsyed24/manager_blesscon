@@ -31,12 +31,18 @@
     <dialog id="modal" aria-labelledby="modal-title">
       <header>
         <h2 id="modal-title"></h2>
-        <button id="close-modal" class="icon-button" aria-label="Close dialog">
-          ×
-        </button>
+        <div class="modal-controls">
+          <button id="minimize-modal" class="icon-button" aria-label="Minimise and keep this form" title="Minimise — keep this form and check other pages" hidden>
+            –
+          </button>
+          <button id="close-modal" class="icon-button" aria-label="Close dialog">
+            ×
+          </button>
+        </div>
       </header>
       <div id="modal-body"></div>
     </dialog>
+    <button id="draft-pill" class="gold" type="button" hidden></button>
     <div id="print-area"></div>
   </body>
 </html>
