@@ -19,12 +19,19 @@ export const TABLES = [
   "invoices",
   "payments",
   "stock_movements",
+  "salesman_stock_movements",
+  "daily_closings",
   "expenses",
   "audit_log",
   "profiles",
   "user_roles",
   "user_permissions",
 ];
+const commandRpc = (kind) =>
+  ["stock.issue", "stock.return"].includes(kind) ||
+  kind.startsWith("closing.")
+    ? "apply_operational_command"
+    : "apply_command";
 export function empty() {
   return Object.fromEntries([
     ...TABLES.map((t) => [t, []]),
@@ -55,7 +62,40 @@ export function localApply(base, op, user) {
       ? Number(cached.boxes)
       : s.stock_movements
           .filter((m) => m.product_id === pid)
-          .reduce((a, m) => a + m.boxes, 0);
+          .reduce((a, m) => a + m.boxes, 0) -
+          s.salesman_stock_movements
+            .filter((m) => m.product_id === pid)
+            .reduce((a, m) => a + m.boxes, 0);
+  };
+  const salesmanStock = (pid, sid) =>
+    s.salesman_stock_movements
+      .filter((m) => m.product_id === pid && m.salesman_id === sid)
+      .reduce((sum, movement) => sum + Number(movement.boxes), 0);
+  const salesmanStockTracked = (pid, sid) =>
+    s.salesman_stock_movements.some(
+      (m) => m.product_id === pid && m.salesman_id === sid && m.kind === "issue",
+    );
+  const sellerMove = (pid, sid, boxes, kind, date, tx, order_id = null) => {
+    s.salesman_stock_movements.push({
+      id: uid(),
+      transaction_id: tx,
+      product_id: pid,
+      salesman_id: sid,
+      date,
+      boxes,
+      kind,
+      order_id,
+      created_by: user.id,
+    });
+  };
+  const adjustWarehouse = (pid) => {
+    const total = s.stock_movements
+      .filter((movement) => movement.product_id === pid)
+      .reduce((sum, movement) => sum + Number(movement.boxes), 0);
+    const held = s.salesman_stock_movements
+      .filter((movement) => movement.product_id === pid)
+      .reduce((sum, movement) => sum + Number(movement.boxes), 0);
+    upsert(s.stock, { product_id: pid, boxes: total - held }, "product_id");
   };
   const move = (pid, boxes, kind, order_id, tx) => {
     s.stock_movements.push({
@@ -120,19 +160,29 @@ export function localApply(base, op, user) {
     if (!quote && old)
       s[it]
         .filter((l) => l[fk] === old.id)
-        .forEach((l) =>
-          move(
-            l.product_id,
-            l.boxes,
-            "reversal",
-            old.id,
-            "edit:" + op.id + ":" + l.product_id,
-          ),
-        );
+        .forEach((l) => {
+          const tracked = s.salesman_stock_movements.some(
+            (movement) =>
+              movement.order_id === old.id &&
+              movement.product_id === l.product_id &&
+              movement.kind === "sale",
+          );
+          const transaction = "edit:" + op.id + ":" + l.product_id;
+          move(l.product_id, l.boxes, "reversal", old.id, transaction);
+          if (tracked) {
+            sellerMove(l.product_id, old.salesman_id, l.boxes, "sale_reversal", d.date || today(), "seller:" + transaction, old.id);
+            adjustWarehouse(l.product_id);
+          }
+        });
     if (!quote)
-      for (const l of lines)
-        if (s.settings.block_negative_stock && stock(l.product_id) < l.boxes)
-          throw Error("Insufficient stock: " + l.product_name);
+      for (const l of lines) {
+        const tracked = salesmanStockTracked(l.product_id, input.salesman_id);
+        const available = tracked
+          ? salesmanStock(l.product_id, input.salesman_id)
+          : stock(l.product_id);
+        if (s.settings.block_negative_stock && available < l.boxes)
+          throw Error("Insufficient " + (tracked ? "salesman " : "warehouse ") + "stock: " + l.product_name);
+      }
     const rec = {
       ...old,
       ...input,
@@ -163,7 +213,8 @@ export function localApply(base, op, user) {
         [fk]: rec.id,
         amount_paisa: l.rate_paisa * l.boxes,
       });
-      if (!quote)
+      if (!quote) {
+        const tracked = salesmanStockTracked(l.product_id, rec.salesman_id);
         move(
           l.product_id,
           -l.boxes,
@@ -171,6 +222,11 @@ export function localApply(base, op, user) {
           rec.id,
           "sale:" + op.id + ":" + l.product_id,
         );
+        if (tracked) {
+          sellerMove(l.product_id, rec.salesman_id, -l.boxes, "sale", d.date || today(), "seller:sale:" + op.id + ":" + l.product_id, rec.id);
+          adjustWarehouse(l.product_id);
+        }
+      }
     }
     if (!quote)
       upsert(s.invoices, {
@@ -267,15 +323,20 @@ export function localApply(base, op, user) {
       if (o.status !== "cancelled") {
         s.order_items
           .filter((l) => l.order_id === o.id)
-          .forEach((l) =>
-            move(
-              l.product_id,
-              l.boxes,
-              "reversal",
-              o.id,
-              "cancel:" + o.id + ":" + l.product_id,
-            ),
-          );
+          .forEach((l) => {
+            const tracked = s.salesman_stock_movements.some(
+              (movement) =>
+                movement.order_id === o.id &&
+                movement.product_id === l.product_id &&
+                movement.kind === "sale",
+            );
+            const transaction = "cancel:" + o.id + ":" + l.product_id;
+            move(l.product_id, l.boxes, "reversal", o.id, transaction);
+            if (tracked) {
+              sellerMove(l.product_id, o.salesman_id, l.boxes, "sale_reversal", d.date || today(), "seller:" + transaction, o.id);
+              adjustWarehouse(l.product_id);
+            }
+          });
         o.status = "cancelled";
         o.version++;
       }
@@ -373,6 +434,289 @@ export function localApply(base, op, user) {
         throw Error("Insufficient stock");
       move(d.product_id, d.boxes, d.kind, null, d.transaction_id);
       break;
+    case "stock.issue": {
+      const canIssue =
+        admin ||
+        s.user_permissions.some(
+          (permission) =>
+            permission.user_id === user.id &&
+            permission.section === "stock" &&
+            permission.can_create,
+        );
+      if (!canIssue) throw Error("Stock issue permission required");
+      const transaction = s.salesman_stock_movements.find(
+        (movement) => movement.transaction_id === d.transaction_id,
+      );
+      if (transaction) {
+        if (
+          transaction.kind === "issue" &&
+          transaction.product_id === d.product_id &&
+          transaction.salesman_id === d.salesman_id &&
+          transaction.boxes === d.boxes &&
+          transaction.date === d.date
+        ) {
+          result = transaction;
+          break;
+        }
+        throw Error("Stock reference already exists with different details");
+      }
+      if (
+        d.reference &&
+        s.salesman_stock_movements.some(
+          (movement) =>
+            movement.reference === d.reference &&
+            ["issue", "return_saleable", "return_damaged", "return_expired", "return_unsaleable"].includes(movement.kind),
+        )
+      )
+        throw Error("Stock voucher reference already exists");
+      const seller = s.salesmen.find(
+        (row) => row.id === d.salesman_id && row.active && !row.deleted_at,
+      );
+      const product = s.products.find(
+        (row) => row.id === d.product_id && row.active && !row.deleted_at,
+      );
+      if (!seller || !product) throw Error("Choose an active salesman and product");
+      if (!Number.isSafeInteger(d.boxes) || d.boxes <= 0)
+        throw Error("Enter a positive whole-box quantity");
+      const close = s.daily_closings.find(
+        (row) =>
+          row.salesman_id === d.salesman_id &&
+          row.business_date === d.date &&
+          ["submitted", "approved"].includes(row.status),
+      );
+      if (close) throw Error("Reopen the daily closing before changing stock");
+      if (stock(d.product_id) < d.boxes)
+        throw Error("Insufficient warehouse stock");
+      result = {
+        id: uid(),
+        ...d,
+        kind: "issue",
+        reference: d.reference || d.transaction_id,
+        created_by: user.id,
+        created_at: now,
+      };
+      s.salesman_stock_movements.push(result);
+      adjustWarehouse(d.product_id);
+      break;
+    }
+    case "stock.return": {
+      const ownsSeller = s.salesmen.some(
+        (row) => row.id === d.salesman_id && row.user_id === user.id && row.active,
+      );
+      const canReturn =
+        admin ||
+        ownsSeller ||
+        s.user_permissions.some(
+          (permission) =>
+            permission.user_id === user.id &&
+            permission.section === "stock" &&
+            permission.can_create,
+        );
+      if (!canReturn) throw Error("Stock return permission required");
+      const transaction = s.salesman_stock_movements.find(
+        (movement) => movement.transaction_id === d.transaction_id,
+      );
+      if (transaction) {
+        if (
+          transaction.product_id === d.product_id &&
+          transaction.salesman_id === d.salesman_id &&
+          transaction.boxes === -d.boxes &&
+          transaction.date === d.date &&
+          transaction.kind === "return_" + d.condition
+        ) {
+          result = transaction;
+          break;
+        }
+        throw Error("Stock reference already exists with different details");
+      }
+      if (
+        d.reference &&
+        s.salesman_stock_movements.some(
+          (movement) =>
+            movement.reference === d.reference &&
+            ["issue", "return_saleable", "return_damaged", "return_expired", "return_unsaleable"].includes(movement.kind),
+        )
+      )
+        throw Error("Stock voucher reference already exists");
+      if (!Number.isSafeInteger(d.boxes) || d.boxes <= 0)
+        throw Error("Enter a positive whole-box quantity");
+      if (!s.products.some((row) => row.id === d.product_id))
+        throw Error("Choose a product");
+      if (!new Set(["saleable", "damaged", "expired", "unsaleable"]).has(d.condition))
+        throw Error("Choose a valid return condition");
+      const close = s.daily_closings.find(
+        (row) =>
+          row.salesman_id === d.salesman_id &&
+          row.business_date === d.date &&
+          ["submitted", "approved"].includes(row.status),
+      );
+      if (close) throw Error("Reopen the daily closing before changing stock");
+      if (salesmanStock(d.product_id, d.salesman_id) < d.boxes)
+        throw Error("Insufficient salesman stock");
+      result = {
+        id: uid(),
+        ...d,
+        boxes: -d.boxes,
+        kind: "return_" + d.condition,
+        reference: d.reference || d.transaction_id,
+        created_by: user.id,
+        created_at: now,
+      };
+      s.salesman_stock_movements.push(result);
+      if (d.condition === "saleable") adjustWarehouse(d.product_id);
+      else {
+        move(
+          d.product_id,
+          -d.boxes,
+          "damage",
+          null,
+          "return-loss:" + d.transaction_id,
+        );
+        adjustWarehouse(d.product_id);
+      }
+      break;
+    }
+    case "closing.submit": {
+      const ownsSeller = s.salesmen.some(
+        (row) => row.id === d.salesman_id && row.user_id === user.id && row.active,
+      );
+      if (!admin && !ownsSeller)
+        throw Error("Only the assigned salesman or management may submit this closing");
+      const old = s.daily_closings.find(
+        (row) =>
+          row.salesman_id === d.salesman_id && row.business_date === d.date,
+      );
+      if (
+        old &&
+        (!(["rejected", "reopened"].includes(old.status)) ||
+          old.version !== d.expected_version)
+      )
+        throw Error("Closing already submitted or changed; reload before retrying");
+      const prior = s.daily_closings
+        .filter(
+          (row) =>
+            row.salesman_id === d.salesman_id &&
+            row.business_date < d.date &&
+            row.status === "approved",
+        )
+        .sort((a, b) => b.business_date.localeCompare(a.business_date))[0];
+      if (
+        prior &&
+        Number(prior.actual_cash_paisa) !== Number(d.opening_cash_paisa)
+      )
+        throw Error("Opening cash must match the previous approved closing");
+      const payments = s.payments.filter((payment) => {
+        const invoice = s.invoices.find((row) => row.id === payment.invoice_id);
+        const order = invoice && s.orders.find((row) => row.id === invoice.order_id);
+        return (
+          order?.salesman_id === d.salesman_id &&
+          order.status === "confirmed" &&
+          payment.date === d.date &&
+          payment.method === "Cash" &&
+          !payment.voided_at
+        );
+      });
+      const cashReceived = payments.reduce(
+        (sum, payment) => sum + Number(payment.amount_paisa),
+        0,
+      );
+      const cashExpenses = s.expenses
+        .filter(
+          (expense) =>
+            expense.salesman_id === d.salesman_id &&
+            expense.date === d.date &&
+            expense.method === "Cash" &&
+            !expense.deleted_at,
+        )
+        .reduce((sum, expense) => sum + Number(expense.amount_paisa), 0);
+      const expectedCash =
+        Number(d.opening_cash_paisa) +
+        cashReceived -
+        cashExpenses -
+        Number(d.cash_handed_over_paisa || 0);
+      const cashVariance = Number(d.actual_cash_paisa) - expectedCash;
+      const expectedStock = Object.fromEntries(
+        [...new Set(s.salesman_stock_movements.map((row) => row.product_id))]
+          .map((productId) => [productId, salesmanStock(productId, d.salesman_id)])
+          .filter(([, boxes]) => boxes !== 0),
+      );
+      const stockVariance = {};
+      for (const productId of new Set([
+        ...Object.keys(expectedStock),
+        ...Object.keys(d.actual_stock || {}),
+      ])) {
+        const expected = Number(expectedStock[productId] || 0);
+        const actual = Number(d.actual_stock?.[productId] || 0);
+        if (actual !== expected)
+          stockVariance[productId] = { expected, actual, variance: actual - expected };
+      }
+      if (
+        (cashVariance !== 0 || Object.keys(stockVariance).length) &&
+        !String(d.reason || "").trim()
+      )
+        throw Error("A reason is required for cash or stock variance");
+      result = {
+        ...old,
+        id: old?.id || uid(),
+        salesman_id: d.salesman_id,
+        business_date: d.date,
+        opening_cash_paisa: Number(d.opening_cash_paisa),
+        cash_handed_over_paisa: Number(d.cash_handed_over_paisa || 0),
+        cash_received_paisa: cashReceived,
+        cash_expenses_paisa: cashExpenses,
+        expected_cash_paisa: expectedCash,
+        actual_cash_paisa: Number(d.actual_cash_paisa),
+        cash_variance_paisa: cashVariance,
+        expected_stock: expectedStock,
+        actual_stock: d.actual_stock || {},
+        stock_variances: stockVariance,
+        reason: d.reason || "",
+        notes: d.notes || "",
+        status: "submitted",
+        version: (old?.version || 0) + 1,
+        submitted_by: user.id,
+        submitted_at: now,
+        approved_by: null,
+        approved_at: null,
+      };
+      upsert(s.daily_closings, result);
+      break;
+    }
+    case "closing.approve":
+    case "closing.reject":
+    case "closing.reopen": {
+      if (!admin) throw Error("Management approval required");
+      const old = find("daily_closings", d.id);
+      if (!old || old.version !== d.expected_version)
+        throw Error("Closing changed; refresh before updating");
+      if (op.kind === "closing.approve" && old.status !== "submitted")
+        throw Error("Only submitted closings can be approved");
+      if (
+        op.kind === "closing.reject" &&
+        (old.status !== "submitted" || !String(d.reason || "").trim())
+      )
+        throw Error("A rejection reason is required for a submitted closing");
+      if (
+        op.kind === "closing.reopen" &&
+        (!new Set(["approved", "rejected"]).has(old.status) ||
+          !String(d.reason || "").trim())
+      )
+        throw Error("A reopening reason is required for an approved or rejected closing");
+      Object.assign(old, {
+        status:
+          op.kind === "closing.approve"
+            ? "approved"
+            : op.kind === "closing.reject"
+              ? "rejected"
+              : "reopened",
+        approved_by: op.kind === "closing.approve" ? user.id : null,
+        approved_at: op.kind === "closing.approve" ? now : null,
+        decision_reason: d.reason || "",
+        version: old.version + 1,
+      });
+      result = old;
+      break;
+    }
     case "import.batch":
       throw Error(
         "Workbook import requires a live connection so the complete batch can be checked and committed atomically",
@@ -415,7 +759,11 @@ export class Store extends EventTarget {
       ":" +
       user.id;
     const saved = JSON.parse(localStorage.getItem(this.key) || "null");
-    this.base = saved?.base || empty();
+    this.base = {
+      ...empty(),
+      ...saved?.base,
+      settings: { ...DEFAULTS, ...saved?.base?.settings },
+    };
     this.queue = saved?.queue || [];
     this.error = "";
     this.busy = false;
@@ -649,7 +997,7 @@ export class Store extends EventTarget {
       await this.verifyUser();
       while (this.queue.length) {
         const op = this.queue[0];
-        const { data, error } = await this.client.rpc("apply_command", {
+        const { data, error } = await this.client.rpc(commandRpc(op.kind), {
           op_id: op.id,
           kind: op.kind,
           data: op.data,

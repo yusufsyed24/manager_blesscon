@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v6-minimise-stock-20261015-2";
+const CACHE = "blesscon-static-v7-dsr-stock-close-20261015";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,6 +12,7 @@ const ASSETS = [
   "./js/exporter.js",
   "./js/documents.js",
   "./js/store.js",
+  "./js/reports.js",
   "./assets/logo.jpeg",
   "./assets/logo-square.png",
   "./vendor/supabase.js",

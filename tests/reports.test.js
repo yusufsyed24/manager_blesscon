@@ -117,3 +117,34 @@ it("keeps an invoice partially outstanding after a payment", () => {
   expect(report.previous_recovery_paisa).toBe(500_000);
   expect(report.outstanding_paisa).toBe(1_500_000);
 });
+
+it("allocates an invoice discount across product totals so they equal net sales", () => {
+  const state = {
+    orders: [
+      {
+        id: "sale",
+        customer_id: "shop",
+        salesman_id: "seller",
+        date: "2026-10-15",
+        status: "confirmed",
+        subtotal_paisa: 1_000,
+        discount_paisa: 100,
+        total_paisa: 900,
+      },
+    ],
+    invoices: [{ id: "invoice", order_id: "sale", total_paisa: 900 }],
+    payments: [],
+    expenses: [],
+    order_items: [
+      { order_id: "sale", product_id: "A", product_name: "A", boxes: 1, amount_paisa: 600 },
+      { order_id: "sale", product_id: "B", product_name: "B", boxes: 1, amount_paisa: 400 },
+    ],
+    products: [],
+    salesman_stock_movements: [],
+  };
+  const report = dailySalesReport(state, "2026-10-15", "seller");
+  expect(report.sales_paisa).toBe(900);
+  expect(report.products.reduce((sum, row) => sum + row.amount_paisa, 0)).toBe(
+    report.sales_paisa,
+  );
+});

@@ -381,7 +381,7 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   update public.profiles set active=(data->>'active')::boolean,updated_at=now() where id=(data->>'id')::uuid;
   update public.user_roles set role=data->>'role',updated_at=now() where user_id=(data->>'id')::uuid;
   for r in select value from jsonb_array_elements(coalesce(data->'permissions','[]')) loop
-   if r->>'section' not in ('dashboard','orders','invoices','quotes','stock','products','staff','expenses','pnl','settings','users','ledger') then raise exception 'Invalid section';end if;
+    if r->>'section' not in ('dashboard','dsr','closing','orders','invoices','quotes','stock','products','staff','expenses','pnl','settings','users','ledger') then raise exception 'Invalid section';end if;
    insert into public.user_permissions(user_id,section,can_view,can_create,can_edit,can_delete,can_export,can_share) values((data->>'id')::uuid,r->>'section',coalesce((r->>'can_view')::boolean,false),coalesce((r->>'can_create')::boolean,false),coalesce((r->>'can_edit')::boolean,false),false,coalesce((r->>'can_export')::boolean,false),coalesce((r->>'can_share')::boolean,false)) on conflict(user_id,section) do update set can_view=excluded.can_view,can_create=excluded.can_create,can_edit=excluded.can_edit,can_delete=false,can_export=excluded.can_export,can_share=excluded.can_share;
   end loop; result:='{"updated":true}';
  else raise exception 'Unknown command';end case;

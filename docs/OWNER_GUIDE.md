@@ -14,3 +14,13 @@
 **Offline:** Keep pending changes on the same device. Sync before issuing final documents. If a conflict appears, export the pending change, discard that conflicting action, refresh and enter it again. Do not clear browser storage until the badge says Synced.
 
 **Daily habit:** Review collections, outstanding balances, target shortfalls and stock. Export regular backups. Salary projections are base plus earned incentive; advances/deductions are outside this calculator.
+
+## DSR, stock issue and daily closing
+
+- Run `supabase/operational_modules.sql` after `supabase/schema.sql` before deploying the updated app. Back up the Supabase project and test the migration in staging first.
+- In Stock & expiry, issue whole boxes to a salesman. Carton counts are converted using each product's saved boxes-per-carton. Issue references are unique; retries with the same reference and same details do not duplicate stock.
+- Record returns as saleable, damaged, expired or other unsaleable. Saleable returns increase warehouse availability. Non-saleable returns reduce total saleable inventory. Sales and returns are append-only movements, not edited balances.
+- Daily Sales Report uses confirmed invoice totals for sales and payment dates for collections. Payments allocated to invoices from earlier dates appear as previous recovery and are not revenue. Same-day invoice payments reduce new credit. Product totals allocate invoice discounts across lines.
+- Submit each salesman's physical stock and cash count in Daily closing. Expected cash is opening cash + cash-method receipts - cash expenses - amounts handed over. Bank/digital receipts are not physical cash. A reason is mandatory for cash or stock variance. Admins approve/reject; reopening a decided closing requires a reason and is audited.
+- The operational migration does not reconstruct prior salesman-held stock. Issue opening stock from the warehouse for location-specific tracking. Existing orders with no corresponding issue remain in the legacy company stock ledger.
+- Purchase orders, dispatch/delivery lifecycle, bank/cash transfer ledger, and cash deposits as separate transfer records are not included in this release. Their figures are intentionally not shown as if they existed.

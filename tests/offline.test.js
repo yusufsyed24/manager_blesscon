@@ -1,6 +1,24 @@
 // @vitest-environment jsdom
 import { it, expect, vi } from "vitest";
 import { Store, empty } from "../js/store.js";
+it("hydrates older local snapshots with empty operational ledgers without losing cached records", () => {
+  localStorage.clear();
+  const user = { id: "legacy-owner", role: "admin" };
+  const client = { supabaseUrl: "https://legacy.supabase.co" };
+  const key = "blesscon:v2:legacy.supabase.co:legacy-owner";
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      base: { customers: [{ id: "C", name: "Cached shop" }], settings: {} },
+      queue: [],
+    }),
+  );
+  const store = new Store(client, user);
+  expect(store.state.customers[0].name).toBe("Cached shop");
+  expect(store.state.salesman_stock_movements).toEqual([]);
+  expect(store.state.daily_closings).toEqual([]);
+});
+
 it("offline writes are queued per account, survive reload, and retry with the SAME operation ID", async () => {
   localStorage.clear();
   Object.defineProperty(navigator, "onLine", {

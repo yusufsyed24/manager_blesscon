@@ -16,6 +16,14 @@ The available input was `blesscon_online_backend.zip`. The specifically named `B
 4. Open `supabase/schema.sql` from this folder, copy the entire file, paste it into the query and click **Run**.
 5. Open **Table Editor**. You should see products, customers, orders, invoices, payments, stock_movements and the other named relational tables.
 
+### Operational DSR, stock issue and closing migration
+
+After `schema.sql` succeeds, run the full contents of `supabase/operational_modules.sql` in a second SQL Editor query. This migration is additive and repeatable; it creates the salesman stock ledger and daily closing register, adds idempotent operational commands and scoped snapshot fields, and does not reset existing business tables. Run it in staging first, then production. Refresh the Supabase schema cache and redeploy the matching `web/` files before using the new pages. The DSR is derived from confirmed invoices, dated payments, expenses and stock movements; an older-invoice recovery is never added to the sales total.
+
+Warehouse operators need the `stock` permission. Salesmen can see and submit their own closing records; management approval is admin-only. The close cash calculation is opening cash + cash-method payments - cash expenses - cash handed over. Bank and digital receipts are included in DSR collections but not in physical cash. Stock closing compares the recorded salesman ledger with the entered physical count. Reopening an approved/rejected close requires an admin and a reason.
+
+For an existing installation, back up the database before applying migrations. Existing stock movements remain unchanged and are not automatically attributed to a salesman. Start location tracking by issuing stock to a salesman; the application will not invent historical salesman stock balances.
+
 Screen description: the SQL Editor has a large query area and a **Run** button. The results area must finish without a red error. Do not continue past a SQL error.
 
 ## 2. Create the first owner login

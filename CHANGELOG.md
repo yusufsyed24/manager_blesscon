@@ -1,5 +1,22 @@
 # Changelog — 2.0.0 (14 October 2026)
 
+## Operational DSR, stock accountability and daily closing (15 October 2026)
+
+- **Root cause:** the existing schema had one company-wide `stock_movements` table and invoice-linked payments but no salesman location ledger or closing entity. Dashboard summaries could report total company stock but could not reconcile issued stock, seller-held stock or daily cash/stock variance as one connected source of truth.
+- Added an additive `supabase/operational_modules.sql` migration for a unique-reference salesman stock subledger, per-day closing records, RLS reads, append-only audit triggers, server-side idempotency, nonnegative warehouse checks, approved-day write locks, and scoped snapshot access.
+- Added offline-queueable stock issue, stock return and closing submit/approve/reject/reopen commands. Cartons are converted to whole boxes using each product's pack size. Saleable returns move stock back to warehouse availability; damaged/expired/unsaleable returns reduce saleable total stock. Sales on a product with issued salesman stock deduct that seller's balance; legacy sales without a stock issue remain on the existing company stock ledger.
+- Added a DSR calculation and screen for confirmed sales, date-based collections, previous-invoice recovery, new credit, overdue/outstanding, product/customer totals, expenses and tracked stock movements. Product totals allocate invoice discount so they reconcile to net sales. Dashboard now separates sales, collection, previous recovery and credit, and includes issue/return and closing status totals. Added date/salesman filters, CSV export and print.
+- Added cash/physical-stock closing submission with variance reason, admin approval/rejection and reasoned reopening. Submitted/approved days block further linked transaction mutations until management reopens them.
+- Restricted the operational snapshot and direct SELECT of sensitive product/order-line tables so sales roles do not receive cost or salary fields; corresponding UI columns are hidden without P&L permission.
+- Added DSR, local stock projection, PGlite stock/closing/security regressions and DSR navigation coverage. The test harness applies the new migration after `schema.sql`.
+- Updated deployment, owner and salesman instructions with migration order and calculation rules.
+
+### Verification and remaining scope
+
+- Editor diagnostics report no errors for changed JavaScript, tests and SQL files. `git diff --check` passed after the final edits.
+- `npm test`, `npm run check`, SQL execution and browser/mobile tests have not run because Node.js/npm and a PostgreSQL client are not available in this environment. Do not treat the migration as production-verified until the isolated PGlite suite and staging migration pass.
+- Dispatch/delivery status, supplier/purchase ledger, customer multi-invoice allocation, cash/bank transfer records, deposited-cash ledger, route management, payroll advances/deductions, returns against customer invoices, and automated backup/restore remain outside this implementation.
+
 ## Source and delivery boundary
 
 Rebuilt from the available `blesscon_online_backend.zip`. The requested `Blesscon_Candy_Rebuilt.zip` and `Blesscon_Candy_Connected_Workbook.xlsx` were not found after exact and simpler filename searches. The exact `logo_of_blesscon.jpeg` was also unavailable. The existing saved “Centered Blesscon Candy logo on white.png” was resized/compressed without redesign and embedded as the substitute. Original supplied files were not overwritten.

@@ -71,6 +71,14 @@ const canStockWrite = () =>
       permission.section === "stock" &&
       permission.can_create,
   );
+const canViewAllClosings = () =>
+  admin() ||
+  S().user_permissions.some(
+    (permission) =>
+      permission.user_id === user.id &&
+      permission.section === "closing" &&
+      permission.can_view,
+  );
 const can = (p) =>
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
@@ -256,6 +264,8 @@ function render() {
     import: renderImport,
   };
   $("page").innerHTML = methods[page]();
+  if (page === "dsr")
+    $("page").insertAdjacentHTML("beforeend", dsrClosingSection());
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
 }
@@ -293,7 +303,29 @@ function renderDashboard() {
     monthlyTarget = visible(s.salesmen).reduce(
       (sum, salesman) => sum + num(salesman.monthly_target),
       0,
-    );
+    ),
+    todaysClosings = s.daily_closings.filter(
+      (closing) =>
+        closing.business_date === today() &&
+        (admin() || closing.salesman_id === own()?.id),
+    ),
+    pendingClosings = todaysClosings.filter(
+      (closing) => closing.status === "submitted",
+    ).length,
+    unsubmittedClosings = admin()
+      ? Math.max(
+          0,
+          visible(s.salesmen).filter((salesman) => salesman.active).length -
+            todaysClosings.filter((closing) =>
+              ["submitted", "approved"].includes(closing.status),
+            ).length,
+        )
+      : own() &&
+          !todaysClosings.some((closing) =>
+            ["submitted", "approved"].includes(closing.status),
+          )
+        ? 1
+        : 0;
   const low = visible(s.products).filter(
     (p) => balance(p.id, admin() ? null : own()?.id) <= num(s.settings.low_stock_boxes),
   );
@@ -307,7 +339,7 @@ function renderDashboard() {
       btn("New quotation", "new-quote") +
         btn("+ New sale", "new-order", "", "", "gold"),
     ) +
-    `<div class="cards">${card("Today's sales", money(sales), s.orders.filter((o) => o.date === today() && o.status === "confirmed").length + " confirmed orders", true)}${card("Today's collection", money(report.collected_paisa), "Payments received today")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Allocated to older invoices")}${card("New credit issued", money(report.new_credit_paisa), "Today's invoices less same-day payments")}${card("Today's expenses", money(report.expense_paisa), "Recorded expense entries")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + today())}${card("Overdue outstanding", money(report.overdue_paisa), "Past-due invoices")}${card("Stock issued", `${report.stock_issued_boxes} boxes`, "Issued to salesmen today")}${card("Stock returned", `${report.stock_returned_boxes} boxes`, "Returned by salesmen today")}${card("Monthly target", `${targetCartons.toFixed(2)} / ${monthlyTarget.toFixed(2)} cartons`, "Confirmed sales this month")}${p ? card("Month-to-date profit", money(p.net), "Restricted management figure") : ""}</div><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Last six months</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Monthly revenue, expenses and net profit"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${
+    `<div class="cards">${card("Today's sales", money(sales), s.orders.filter((o) => o.date === today() && o.status === "confirmed").length + " confirmed orders", true)}${card("Today's collection", money(report.collected_paisa), "Payments received today")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Allocated to older invoices")}${card("New credit issued", money(report.new_credit_paisa), "Today's invoices less same-day payments")}${card("Today's expenses", money(report.expense_paisa), "Recorded expense entries")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + today())}${card("Overdue outstanding", money(report.overdue_paisa), "Past-due invoices")}${card("Stock issued", `${report.stock_issued_boxes} boxes`, "Issued to salesmen today")}${card("Stock returned", `${report.stock_returned_boxes} boxes`, "Returned by salesmen today")}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${card("Monthly target", `${targetCartons.toFixed(2)} / ${monthlyTarget.toFixed(2)} cartons`, "Confirmed sales this month")}${p ? card("Month-to-date profit", money(p.net), "Restricted management figure") : ""}</div><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Last six months</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Monthly revenue, expenses and net profit"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${
       targets
         .filter((t) => num(t.day?.shortfall) > 0)
         .map(
@@ -447,7 +479,10 @@ function renderDailyClosing() {
   const s = S(),
     salesmanId = own()?.id,
     rows = s.daily_closings
-      .filter((closing) => admin() || closing.salesman_id === salesmanId)
+      .filter(
+        (closing) =>
+          canViewAllClosings() || closing.salesman_id === salesmanId,
+      )
       .sort((a, b) => b.business_date.localeCompare(a.business_date)),
     pending = rows.filter((row) => row.status === "submitted").length,
     discrepancies = rows.filter(
@@ -463,6 +498,34 @@ function renderDailyClosing() {
     ) +
     `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
   );
+}
+function dsrClosingSection() {
+  const s = S(),
+    selectedSalesman = admin() ? reportSalesman : own()?.id || "",
+    salesmen = selectedSalesman
+      ? visible(s.salesmen).filter((row) => row.id === selectedSalesman)
+      : visible(s.salesmen),
+    rows = salesmen.map((salesman) => {
+      const closing = s.daily_closings.find(
+        (row) =>
+          row.salesman_id === salesman.id &&
+          row.business_date === reportDate,
+      );
+      return [
+        esc(salesman.name),
+        closing ? money(closing.opening_cash_paisa) : "—",
+        closing ? money(closing.cash_received_paisa) : "—",
+        closing ? money(closing.cash_expenses_paisa) : "—",
+        closing ? money(closing.cash_handed_over_paisa) : "—",
+        closing ? money(closing.expected_cash_paisa) : "—",
+        closing ? money(closing.actual_cash_paisa) : "—",
+        closing ? money(closing.cash_variance_paisa) : "—",
+        closing ? Object.keys(closing.stock_variances || {}).length : "—",
+        closing ? badge(closing.status) : badge("Not submitted", "amber"),
+        esc(closing?.reason || closing?.decision_reason || ""),
+      ];
+    });
+  return `<section class="panel"><h2>Daily cash and closing status</h2>${table(["Salesman", "Opening cash", "Cash received", "Cash expenses", "Handed over", "Expected", "Counted", "Variance", "Stock variances", "Status", "Reason"], rows, "No salesman records available")}</section>`;
 }
 function stockOverview() {
   const s = S(),
@@ -1191,7 +1254,7 @@ function calcEditor() {
       $("line-total-" + i).innerHTML = "<b>" + money(l.amount_paisa) + "</b>";
       $("line-note-" + i).innerHTML =
         badge(l.tier_label + ": " + money(l.rate_paisa) + "/box") +
-        ` · ${l.boxes} boxes · Stock: ${avail} · Margin: <span class="${l.margin_paisa < 0 ? "text-red" : "text-green"}">${money(l.margin_paisa)}</span>${l.margin_paisa < 0 ? " · BELOW COST" : ""}${l.boxes > avail ? ' · <b class="text-red">Insufficient stock</b>' : ""}`;
+        ` · ${l.boxes} boxes · Stock: ${avail}${admin() || can("pnl") ? ` · Margin: <span class="${l.margin_paisa < 0 ? "text-red" : "text-green"}">${money(l.margin_paisa)}</span>${l.margin_paisa < 0 ? " · BELOW COST" : ""}` : ""}${l.boxes > avail ? ' · <b class="text-red">Insufficient stock</b>' : ""}`;
       if (
         !draft.items[i].override_reason?.trim() &&
         document.activeElement !== $("line-r-" + i)
@@ -1522,9 +1585,10 @@ function stockReturnModal() {
 }
 function closingStockFields(salesmanId, date) {
   const expected = expectedClosingStock(salesmanId, date);
-  return Object.entries(expected)
-    .map(([productId, boxes]) => {
-      const product = S().products.find((row) => row.id === productId);
+  return visible(S().products)
+    .map((product) => {
+      const productId = product.id;
+      const boxes = Number(expected[productId] || 0);
       return `<div class="field"><label for="closing-count-${esc(productId)}">${esc(product?.name || productId)} · expected ${boxes} boxes</label><input id="closing-count-${esc(productId)}" name="stock-${esc(productId)}" data-stock-count="${esc(productId)}" type="number" min="0" step="1" value="${boxes}" required></div>`;
     })
     .join("");
@@ -2238,6 +2302,7 @@ async function action(act, id, element) {
         ? salesmanName(report.salesman_id)
         : "All salesmen";
       $("print-area").innerHTML = `<article class="document"><header class="doc-head"><img src="${ICON}" alt="Blesscon Candy"><div><h1>Daily Sales Report</h1><p>${esc(report.date)} · ${esc(selectedName)}</p></div></header><div class="cards">${card("Sales", money(report.sales_paisa))}${card("Collection", money(report.collected_paisa))}${card("Previous recovery", money(report.previous_recovery_paisa))}${card("New credit", money(report.new_credit_paisa))}${card("Expenses", money(report.expense_paisa))}${card("Outstanding", money(report.outstanding_paisa))}${card("Overdue", money(report.overdue_paisa))}</div><h2>Product sales</h2>${table(["Product", "Boxes", "Sales value"], report.products.map((row) => [esc(row.product_name), row.boxes, money(row.amount_paisa)]))}<h2>Payment allocations</h2>${table(["Receipt", "Invoice", "Date", "Method", "Amount"], report.payments.map((payment) => { const invoice = S().invoices.find((row) => row.id === payment.invoice_id); const order = invoice && S().orders.find((row) => row.id === invoice.order_id); return [esc(payment.transaction_id), esc(invoice?.number || ""), esc(payment.date), esc(payment.method), money(payment.amount_paisa)]; }))}</article>`;
+      $("print-area").insertAdjacentHTML("beforeend", dsrClosingSection());
       window.print();
       break;
     }

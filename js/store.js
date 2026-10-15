@@ -460,6 +460,15 @@ export function localApply(base, op, user) {
         }
         throw Error("Stock reference already exists with different details");
       }
+      if (
+        d.reference &&
+        s.salesman_stock_movements.some(
+          (movement) =>
+            movement.reference === d.reference &&
+            ["issue", "return_saleable", "return_damaged", "return_expired", "return_unsaleable"].includes(movement.kind),
+        )
+      )
+        throw Error("Stock voucher reference already exists");
       const seller = s.salesmen.find(
         (row) => row.id === d.salesman_id && row.active && !row.deleted_at,
       );
@@ -520,6 +529,15 @@ export function localApply(base, op, user) {
         }
         throw Error("Stock reference already exists with different details");
       }
+      if (
+        d.reference &&
+        s.salesman_stock_movements.some(
+          (movement) =>
+            movement.reference === d.reference &&
+            ["issue", "return_saleable", "return_damaged", "return_expired", "return_unsaleable"].includes(movement.kind),
+        )
+      )
+        throw Error("Stock voucher reference already exists");
       if (!Number.isSafeInteger(d.boxes) || d.boxes <= 0)
         throw Error("Enter a positive whole-box quantity");
       if (!s.products.some((row) => row.id === d.product_id))
@@ -741,7 +759,11 @@ export class Store extends EventTarget {
       ":" +
       user.id;
     const saved = JSON.parse(localStorage.getItem(this.key) || "null");
-    this.base = saved?.base || empty();
+    this.base = {
+      ...empty(),
+      ...saved?.base,
+      settings: { ...DEFAULTS, ...saved?.base?.settings },
+    };
     this.queue = saved?.queue || [];
     this.error = "";
     this.busy = false;

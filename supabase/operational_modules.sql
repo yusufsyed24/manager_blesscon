@@ -17,6 +17,8 @@ create table if not exists public.salesman_stock_movements (
 );
 create index if not exists salesman_stock_product_date on public.salesman_stock_movements(product_id,salesman_id,date);
 create index if not exists salesman_stock_date on public.salesman_stock_movements(salesman_id,date);
+create unique index if not exists salesman_stock_voucher_unique on public.salesman_stock_movements(reference)
+where reference<>'' and kind in ('issue','return_saleable','return_damaged','return_expired','return_unsaleable');
 
 create table if not exists public.daily_closings (
   id uuid primary key default gen_random_uuid(),
@@ -67,6 +69,17 @@ create policy daily_closing_read on public.daily_closings for select to authenti
   public.is_admin() or public.owns_salesman(salesman_id) or public.has_permission('closing')
 );
 
+create or replace function public.app_settings()
+returns jsonb language sql stable security definer set search_path=''
+as $$
+  select case
+    when not exists(select 1 from public.profiles where id=auth.uid() and active) then null
+    when public.is_admin() or public.has_permission('pnl','view') then value-'signature_data'
+    else jsonb_set(value-'signature_data'-'base_salary_paisa','{incentives}','[]'::jsonb,true)
+  end
+  from public.settings where id='business'
+$$;
+
 create or replace function public.stock_balances()
 returns table(product_id text,boxes bigint)
 language sql stable security definer set search_path=''
@@ -101,7 +114,7 @@ begin
   if sid is null then return new; end if;
   if new.kind='sale' and new.boxes<0 and exists (
     select 1 from public.salesman_stock_movements sm
-    where sm.product_id=new.product_id and sm.salesman_id=sid and sm.kind='issue'
+    where sm.product_id=new.product_id and sm.salesman_id=sid and sm.kind='issue' and sm.date<=new.date
   ) then
     select coalesce(sum(boxes),0) into available from public.salesman_stock_movements
       where product_id=new.product_id and salesman_id=sid;
@@ -130,9 +143,15 @@ for each row execute function private.track_salesman_stock();
 create or replace function private.guard_warehouse_balance()
 returns trigger language plpgsql security definer set search_path=''
 as $$
-declare warehouse_qty bigint; blocks boolean;
+declare warehouse_qty bigint; blocks boolean; sid text;
 begin
-  if new.order_id is not null or new.boxes>=0 or new.note like 'Salesman return marked %' then return new; end if;
+  if new.boxes>=0 or new.note like 'Salesman return marked %' then return new; end if;
+  if new.order_id is not null then
+    if new.kind<>'sale' then return new; end if;
+    select salesman_id into sid from public.orders where id=new.order_id;
+    if exists(select 1 from public.salesman_stock_movements where product_id=new.product_id and salesman_id=sid and kind='issue' and date<=new.date) then return new; end if;
+  elsif new.kind='sale' then return new;
+  end if;
   select coalesce((value->>'block_negative_stock')::boolean,true) into blocks from public.settings where id='business';
   select coalesce(sum(m.boxes),0)-coalesce((
     select sum(sm.boxes)::bigint from public.salesman_stock_movements sm where sm.product_id=new.product_id
@@ -145,23 +164,18 @@ drop trigger if exists guard_warehouse_balance on public.stock_movements;
 create trigger guard_warehouse_balance before insert on public.stock_movements
 for each row execute function private.guard_warehouse_balance();
 
-create or replace function private.prevent_closed_day_change()
-returns trigger language plpgsql security definer set search_path=''
+create or replace function private.assert_day_open(table_name text,row_data jsonb)
+returns void language plpgsql security definer set search_path=''
 as $$
-declare row_data jsonb; sid text; d date; oid uuid; iid uuid;
+declare sid text; d date; oid uuid; iid uuid;
 begin
-  row_data:=case when tg_op='DELETE' then to_jsonb(old) else to_jsonb(new) end;
-  if tg_table_name='orders' then
-    sid:=row_data->>'salesman_id'; d:=(row_data->>'date')::date;
-  elsif tg_table_name='expenses' then
-    sid:=row_data->>'salesman_id'; d:=(row_data->>'date')::date;
-  elsif tg_table_name='salesman_stock_movements' then
-    sid:=row_data->>'salesman_id'; d:=(row_data->>'date')::date;
-  elsif tg_table_name='payments' then
-    iid:=nullif(row_data->>'invoice_id','')::uuid; d:=(row_data->>'date')::date;
+  if table_name in ('orders','expenses','salesman_stock_movements') then
+    sid:=row_data->>'salesman_id'; d:=nullif(row_data->>'date','')::date;
+  elsif table_name='payments' then
+    iid:=nullif(row_data->>'invoice_id','')::uuid; d:=nullif(row_data->>'date','')::date;
     select o.salesman_id into sid from public.invoices i join public.orders o on o.id=i.order_id where i.id=iid;
-  elsif tg_table_name='stock_movements' then
-    oid:=nullif(row_data->>'order_id','')::uuid; d:=(row_data->>'date')::date;
+  elsif table_name='stock_movements' then
+    oid:=nullif(row_data->>'order_id','')::uuid; d:=nullif(row_data->>'date','')::date;
     if oid is not null then select o.salesman_id into sid from public.orders o where o.id=oid; end if;
   end if;
   if sid is not null and d is not null and exists(
@@ -169,6 +183,14 @@ begin
   ) then
     raise exception 'This salesman day is submitted or approved; management must reopen the closing before changing transactions';
   end if;
+end $$;
+
+create or replace function private.prevent_closed_day_change()
+returns trigger language plpgsql security definer set search_path=''
+as $$
+begin
+  if tg_op<>'INSERT' then perform private.assert_day_open(tg_table_name,to_jsonb(old)); end if;
+  if tg_op<>'DELETE' then perform private.assert_day_open(tg_table_name,to_jsonb(new)); end if;
   return coalesce(new,old);
 end $$;
 do $$declare t text; begin
@@ -321,12 +343,12 @@ declare privileged boolean:=public.is_admin() or public.has_permission('pnl','vi
 begin
   if not exists(select 1 from public.profiles where id=auth.uid() and active) then return null; end if;
   select value-'signature_data' into cfg from public.settings where id='business';
-  if not privileged then cfg:=cfg-'base_salary_paisa'; end if;
+  if not privileged then cfg:=jsonb_set(cfg-'base_salary_paisa','{incentives}','[]'::jsonb,true); end if;
   return jsonb_build_object(
-    'products',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'cost_paisa' end),'[]'::jsonb) from public.products x where public.is_admin() or public.has_permission('products') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)),
-    'price_tiers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.price_tiers x where exists(select 1 from public.products p where p.id=x.product_id and (public.is_admin() or public.has_permission('products') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)))),
+    'products',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'cost_paisa' end),'[]'::jsonb) from public.products x where public.is_admin() or public.has_permission('products') or public.has_permission('stock') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)),
+    'price_tiers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.price_tiers x where exists(select 1 from public.products p where p.id=x.product_id and (public.is_admin() or public.has_permission('products') or public.has_permission('stock') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)))),
     'customers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.customers x where public.is_admin() or public.owns_salesman(x.salesman_id) or (x.created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active))),
-    'salesmen',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'base_salary_paisa' end),'[]'::jsonb) from public.salesmen x where public.is_admin() or public.owns_salesman(x.id)),
+    'salesmen',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'base_salary_paisa' end),'[]'::jsonb) from public.salesmen x where public.is_admin() or public.owns_salesman(x.id) or public.has_permission('stock')),
     'salesman_daily_targets',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.salesman_daily_targets x where public.is_admin() or public.owns_salesman(x.salesman_id)),
     'quotations',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.quotations x where public.can_document(x.salesman_id,'quotes')),
     'quotation_items',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'cost_paisa' end),'[]'::jsonb) from public.quotation_items x join public.quotations q on q.id=x.quotation_id where public.can_document(q.salesman_id,'quotes')),
@@ -337,7 +359,7 @@ begin
     'stock_movements',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.stock_movements x where public.is_admin() or public.has_permission('stock')),
     'salesman_stock_movements',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.salesman_stock_movements x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('stock')),
     'daily_closings',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.daily_closings x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('closing')),
-    'expenses',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.expenses x where public.is_admin() or public.has_permission('expenses')),
+    'expenses',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.expenses x where public.is_admin() or public.has_permission('expenses') or public.owns_salesman(x.salesman_id)),
     'audit_log',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.audit_log x where public.is_admin()),
     'profiles',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.profiles x where x.id=auth.uid() or public.is_admin()),
     'user_roles',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.user_roles x where x.user_id=auth.uid() or public.is_admin()),
@@ -357,5 +379,5 @@ revoke all on function public.apply_operational_command(uuid,text,jsonb),public.
 grant execute on function public.apply_operational_command(uuid,text,jsonb),public.salesman_stock_balances() to authenticated;
 revoke all on function public.stock_balances() from public,anon;
 grant execute on function public.stock_balances() to authenticated;
-revoke all on function private.track_salesman_stock(),private.guard_warehouse_balance(),private.prevent_closed_day_change() from public,anon,authenticated;
+revoke all on function private.track_salesman_stock(),private.guard_warehouse_balance(),private.assert_day_open(text,jsonb),private.prevent_closed_day_change() from public,anon,authenticated;
 NOTIFY pgrst,'reload schema';

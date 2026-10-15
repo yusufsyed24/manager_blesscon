@@ -16,7 +16,7 @@ export function dailySalesReport(state, date, salesmanId = "") {
     .map((payment) => {
       const invoice = invoiceById.get(payment.invoice_id);
       const order = invoice && orderById.get(invoice.order_id);
-      return order && (!salesmanId || order.salesman_id === salesmanId)
+      return order && order.date <= date && (!salesmanId || order.salesman_id === salesmanId)
         ? { payment, invoice, order }
         : null;
     })
@@ -95,7 +95,30 @@ export function dailySalesReport(state, date, salesmanId = "") {
   }, 0);
   const productTotals = new Map();
   for (const order of orders) {
-    for (const item of state.order_items.filter((line) => line.order_id === order.id)) {
+    const lines = state.order_items.filter((line) => line.order_id === order.id);
+    const grossTotal = lines.reduce(
+      (sum, line) =>
+        sum +
+        Number(
+          line.amount_paisa ??
+            (Number(line.rate_paisa) || 0) * (Number(line.boxes) || 0),
+        ),
+      0,
+    );
+    const discount = Math.min(Number(order.discount_paisa || 0), grossTotal);
+    let allocatedDiscount = 0;
+    lines.forEach((item, index) => {
+      const gross = Number(
+        item.amount_paisa ??
+          (Number(item.rate_paisa) || 0) * (Number(item.boxes) || 0),
+      );
+      const lineDiscount =
+        index === lines.length - 1
+          ? discount - allocatedDiscount
+          : grossTotal
+            ? Math.floor((discount * gross) / grossTotal)
+            : 0;
+      allocatedDiscount += lineDiscount;
       const row = productTotals.get(item.product_id) || {
         product_id: item.product_id,
         product_name: item.product_name,
@@ -103,9 +126,9 @@ export function dailySalesReport(state, date, salesmanId = "") {
         amount_paisa: 0,
       };
       row.boxes += Number(item.boxes || 0);
-      row.amount_paisa += Number(item.amount_paisa || 0);
+      row.amount_paisa += gross - lineDiscount;
       productTotals.set(item.product_id, row);
-    }
+    });
   }
   const customerTotals = new Map();
   for (const order of orders) {

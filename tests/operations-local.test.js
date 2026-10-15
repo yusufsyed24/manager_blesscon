@@ -3,7 +3,7 @@ import { empty, localApply } from "../js/store.js";
 import { uid, today } from "../js/domain.js";
 
 it("keeps warehouse availability stable when an issued salesman sells and returns stock", () => {
-  const state = empty();
+  let state = empty();
   const user = { id: uid(), role: "admin", name: "Manager", practice: true };
   state.products.push({
     id: "P",
@@ -35,8 +35,19 @@ it("keeps warehouse availability stable when an issued salesman sells and return
     product_id: "P",
     date: today(),
     boxes: 240,
+    reference: "V-001",
   });
   expect(state.stock[0].boxes).toBe(760);
+  expect(() =>
+    apply("stock.issue", {
+      transaction_id: "ISSUE-2",
+      salesman_id: "S",
+      product_id: "P",
+      date: today(),
+      boxes: 240,
+      reference: "V-001",
+    }),
+  ).toThrow(/voucher reference already exists/i);
 
   apply("order.save", {
     id: "ORDER-1",
