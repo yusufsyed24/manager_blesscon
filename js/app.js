@@ -447,13 +447,23 @@ function renderStock() {
 }
 function renderProducts() {
   const s = S();
+  const q = filter.search.trim().toLowerCase().replace(/\s+/g, " ");
+  const qCompact = q.replace(/[^a-z0-9]/g, "");
+  const rows = visible(s.products).filter((p) => {
+    if (!q) return true;
+    const text = (p.name + " " + p.id).toLowerCase();
+    return (
+      text.includes(q) ||
+      (qCompact && text.replace(/[^a-z0-9]/g, "").includes(qCompact))
+    );
+  });
   return (
     head(
       "Products & pricing",
       "Prices are saved on each sale so later changes cannot alter old invoices.",
       admin() ? btn("+ Product", "add-product", "", "", "gold") : "",
     ) +
-    `<section class="panel">${table(
+    `<section class="panel"><div class="filters">${field("Search products by name or ID", "search", filter.search, "search", 'data-filter="search" placeholder="Type a product name or ID" autocomplete="off"')}</div><p class="muted" style="margin:0 0 12px">${q ? rows.length + " of " + visible(s.products).length + " products match" : visible(s.products).length + " products"}</p>${table(
       [
         "Product",
         "Pack size",
@@ -464,7 +474,7 @@ function renderProducts() {
         "Status",
         "Actions",
       ],
-      visible(s.products).map((p) => [
+      rows.map((p) => [
         esc(p.name) + "<small>" + esc(p.id) + "</small>",
         p.boxes_per_carton,
         money(p.cost_paisa),
@@ -477,6 +487,7 @@ function renderProducts() {
         badge(p.active ? "Active" : "Inactive"),
         admin() ? btn("Edit", "edit-product", p.id) + btn(p.active ? "Deactivate" : "Activate", "toggle-product", p.id) : "—",
       ]),
+      q ? "No products match your search" : "No products yet",
     )}</section>`
   );
 }
@@ -877,14 +888,14 @@ function openEditor(quote, id) {
           .map((x) => [x.id, x.name]),
       ],
       draft.salesman_id,
-    )}${select("Channel", "channel", ["wholesale", "retail"], draft.channel)}${field("Date", "date", draft.date, "date", "required")}${field(quote ? "Valid until" : "Due date", quote ? "valid_until" : "due_date", quote ? draft.valid_until : draft.due_date, "date", "required")}</div><button type="button" class="secondary" data-act="quick-customer" style="margin-top:12px">+ New customer</button><div id="new-customer-fields" class="grid" style="margin:16px 0;${draft.customer_id === "__new__" ? "" : "display:none"}">${field("New customer name", "customer_name", "", "text")}${field("Customer phone", "customer_phone", "", "tel")}${field("Customer email", "customer_email", "", "email")}${field("Customer address", "customer_address")}</div><hr><div class="panel-heading"><h2>Product lines</h2><button type="button" class="secondary" data-act="add-line">+ Add product</button></div><datalist id="product-list">${visible(
+    )}${select("Channel", "channel", ["wholesale", "retail"], draft.channel)}${field("Date", "date", draft.date, "date", "required")}${field(quote ? "Valid until" : "Due date", quote ? "valid_until" : "due_date", quote ? draft.valid_until : draft.due_date, "date", "required")}</div><button type="button" class="secondary" data-act="quick-customer" style="margin-top:12px">+ New customer</button><div id="new-customer-fields" class="grid" style="margin:16px 0;${draft.customer_id === "__new__" ? "" : "display:none"}">${field("New customer name", "customer_name", "", "text")}${field("Customer phone", "customer_phone", "", "tel")}${field("Customer email", "customer_email", "", "email")}${field("Customer address", "customer_address")}</div><hr><div class="panel-heading"><h2>Product lines</h2></div><datalist id="product-list">${visible(
       s.products,
     )
       .filter((p) => p.active)
       .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`)
       .join(
         "",
-      )}</datalist><div id="editor-lines"></div><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div>${!quote && !old ? `<section class="panel" aria-labelledby="payment-section-title"><h2 id="payment-section-title">Payment</h2><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section>` : ""}<div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
+      )}</datalist><div id="editor-lines"></div><button type="button" class="secondary add-line-bottom" data-act="add-line" style="margin:4px 0 16px">+ Add product</button><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div>${!quote && !old ? `<section class="panel" aria-labelledby="payment-section-title"><h2 id="payment-section-title">Payment</h2><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section>` : ""}<div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
   );
   renderLines();
   calcEditor();
@@ -1548,6 +1559,12 @@ async function action(act, id, element) {
       });
       renderLines();
       calcEditor();
+      {
+        const last = draft.items.length - 1;
+        const row = document.querySelector('[data-line="' + last + '"]');
+        row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        $("line-search-" + last)?.focus({ preventScroll: true });
+      }
       break;
     case "remove-line":
       draft.items.splice(num(id), 1);
