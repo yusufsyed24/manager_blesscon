@@ -365,8 +365,28 @@ function renderDashboard() {
     companySold = companyTargetProgress.salesman_cartons,
     managerExtra = companyTargetProgress.manager_direct_cartons,
     companyPct = (companySold / companyMonthlyTarget) * 100,
+    directOrders = s.orders.filter(
+      (o) =>
+        o.status === "confirmed" &&
+        !o.deleted_at &&
+        !o.salesman_id &&
+        o.date >= monthStart(today()) &&
+        o.date <= today(),
+    ),
+    cartonsOf = (o) =>
+      s.order_items
+        .filter((i) => i.order_id === o.id)
+        .reduce(
+          (a, i) => a + Number(i.boxes || 0) / (Number(i.boxes_per_carton) || 1),
+          0,
+        ),
+    myDirect = manager()
+      ? directOrders.filter((o) => o.created_by === user.id)
+      : directOrders,
+    myCartons = myDirect.reduce((a, o) => a + cartonsOf(o), 0),
+    myValue = myDirect.reduce((a, o) => a + num(o.total_paisa), 0),
     companyPanel = mgmt()
-      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card("Manager sales (additional)", `+${managerExtra.toFixed(2)} cartons`, "Counted separately, on top of the company target")}${card("Total sold incl. manager", `${(companySold + managerExtra).toFixed(2)} cartons`, "Salesman sales + manager direct sales")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div><h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
+      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · counted separately, on top of the company target`, manager())}${card("Total sold incl. manager", `${(companySold + managerExtra).toFixed(2)} cartons`, "Salesman sales + manager direct sales")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
       : "",
     todaysClosings = s.daily_closings.filter(
       (closing) =>
