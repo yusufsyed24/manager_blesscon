@@ -18,7 +18,8 @@
 ## DSR, stock issue and daily closing
 
 - The company monthly target defaults to 2,000 cartons, separately from the default 130-carton target for each salesman. Company progress includes all confirmed sales. Manager/direct sales are shown separately and counted once; a salesperson's cartons still count toward the company goal and that salesperson's own target.
-- In the sale form, administrators can choose **Manager / direct sale** instead of a salesman. Use this only for cartons sold directly by management; select a salesman when the sale belongs to that salesperson.
+- Create or change the manager login to the **Manager** role in Users & access. It grants company sales/target visibility and closing approvals, but not admin settings, purchase costs or payroll data.
+- In the sale form, managers and administrators can choose **Manager / direct sale** instead of a salesman. Use this only for cartons sold directly by management; select a salesman when the sale belongs to that salesperson.
 - Run `supabase/operational_modules.sql` after `supabase/schema.sql` before deploying the updated app. Back up the Supabase project and test the migration in staging first.
 - In Stock & expiry, issue whole boxes to a salesman. Carton counts are converted using each product's saved boxes-per-carton. Issue references are unique; retries with the same reference and same details do not duplicate stock.
 - Record returns as saleable, damaged, expired or other unsaleable. Saleable returns increase warehouse availability. Non-saleable returns reduce total saleable inventory. Sales and returns are append-only movements, not edited balances.

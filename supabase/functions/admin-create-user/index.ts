@@ -65,7 +65,7 @@ Deno.serve(async (req: Request) => {
       name.length > 120 ||
       password.length < 12 ||
       password.length > 128 ||
-      !["admin", "salesman", "user"].includes(role)
+      !["admin", "manager", "salesman", "user"].includes(role)
     )
       return reply(
         {

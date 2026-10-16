@@ -67,6 +67,8 @@ const NAV = [
 ];
 const S = () => store.state,
   admin = () => user?.role === "admin",
+  manager = () => user?.role === "manager",
+  management = () => admin() || manager(),
   own = () => S().salesmen.find((s) => s.user_id === user.id);
 const canStockWrite = () =>
   admin() ||
@@ -77,7 +79,7 @@ const canStockWrite = () =>
       permission.can_create,
   );
 const canViewAllClosings = () =>
-  admin() ||
+  management() ||
   S().user_permissions.some(
     (permission) =>
       permission.user_id === user.id &&
@@ -268,7 +270,7 @@ function render() {
     import: renderImport,
   };
   $("page").innerHTML = methods[page]();
-  if (page === "dashboard" && !admin()) {
+  if (page === "dashboard" && !management()) {
     const companyCards = new Set([
       "Company monthly target",
       "Salesman cartons",
@@ -292,7 +294,11 @@ function targetRows() {
       const linkedRole = s.user_roles.find(
         (role) => role.user_id === salesman.user_id,
       )?.role;
-      return !salesman.user_id || linkedRole === "salesman";
+      return (
+        !salesman.user_id ||
+        salesman.user_id !== user.id ||
+        linkedRole === "salesman"
+      );
     })
     .map((x) => {
       const days = s.salesman_daily_targets.filter(
@@ -374,12 +380,12 @@ function renderDashboard() {
     todaysClosings = s.daily_closings.filter(
       (closing) =>
         closing.business_date === today() &&
-        (admin() || closing.salesman_id === own()?.id),
+        (management() || closing.salesman_id === own()?.id),
     ),
     pendingClosings = todaysClosings.filter(
       (closing) => closing.status === "submitted",
     ).length,
-    unsubmittedClosings = admin()
+    unsubmittedClosings = management()
       ? Math.max(
           0,
           targets.filter((salesman) => salesman.active).length -
@@ -422,7 +428,7 @@ function renderDashboard() {
 function renderDailyReport() {
   const s = S(),
     owner = own(),
-    selectedSalesman = admin() ? reportSalesman : owner?.id || "",
+    selectedSalesman = management() ? reportSalesman : owner?.id || "",
     report = dailySalesReport(s, reportDate, selectedSalesman),
     orderByInvoice = (payment) => {
       const invoice = s.invoices.find((row) => row.id === payment.invoice_id);
@@ -431,7 +437,7 @@ function renderDailyReport() {
         order: invoice && s.orders.find((row) => row.id === invoice.order_id),
       };
     },
-    salesmanFilter = admin()
+    salesmanFilter = management()
       ? select(
           "Salesman",
           "dsr_salesman",
@@ -543,18 +549,35 @@ function renderDailyClosing() {
         Number(row.cash_variance_paisa) !== 0 ||
         Object.keys(row.stock_variances || {}).length > 0,
     ).length;
+  const rowsData = rows.map((closing) => {
+    const actions = management() && closing.status === "submitted"
+      ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>`
+      : management() && ["approved", "rejected"].includes(closing.status)
+        ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>`
+        : "";
+    return [
+      esc(closing.business_date),
+      esc(salesmanName(closing.salesman_id)),
+      money(closing.expected_cash_paisa),
+      money(closing.actual_cash_paisa),
+      money(closing.cash_variance_paisa),
+      Object.keys(closing.stock_variances || {}).length,
+      badge(closing.status),
+      `${esc(closing.reason || closing.decision_reason || "")}${actions}`,
+    ];
+  });
   return (
     head(
       "Daily closing",
       "Reconcile collected cash and salesman-held stock before management approval.",
       admin() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : "",
     ) +
-    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
+    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", "Stock variances", "Status", "Action"], rowsData, "No daily closings submitted")}</section>`
   );
 }
 function dsrClosingSection() {
   const s = S(),
-    selectedSalesman = admin() ? reportSalesman : own()?.id || "",
+    selectedSalesman = management() ? reportSalesman : own()?.id || "",
     salesmen = selectedSalesman
       ? visible(s.salesmen).filter((row) => row.id === selectedSalesman)
       : visible(s.salesmen),
@@ -1223,7 +1246,7 @@ function openEditor(quote, id) {
     salesman_id:
       old
         ? old.salesman_id || ""
-        : admin()
+        : management()
           ? ""
           : own()?.id || visible(s.salesmen).find((x) => x.active)?.id || "",
     date: old?.date || today(),
@@ -1257,7 +1280,7 @@ function openEditor(quote, id) {
       "Salesman",
       "salesman_id",
       [
-        ...(admin() ? [["", "Manager / direct sale"]] : []),
+        ...(management() ? [["", "Manager / direct sale"]] : []),
         ...visible(s.salesmen)
           .filter((x) => x.active)
           .map((x) => [x.id, x.name]),
@@ -1862,7 +1885,7 @@ function userModal(id) {
   if (!id) {
     modal(
       "Create login",
-      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Temporary password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "user", "admin"], "salesman")}${select(
+      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Temporary password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select(
         "Link salesman (optional)",
         "salesman_id",
         [
@@ -1877,7 +1900,7 @@ function userModal(id) {
   }
   modal(
     "Access · " + p.display_name,
-    `<form id="user-form" data-id="${id}"><div class="grid">${select("Role", "role", ["salesman", "user", "admin"], role)}${select(
+    `<form id="user-form" data-id="${id}"><div class="grid">${select("Role", "role", ["salesman", "manager", "user", "admin"], role)}${select(
       "Status",
       "active",
       [
@@ -2394,7 +2417,7 @@ async function action(act, id, element) {
       const report = dailySalesReport(
         S(),
         reportDate,
-        admin() ? reportSalesman : own()?.id || "",
+        management() ? reportSalesman : own()?.id || "",
       );
       const rows = [
         ["Date", "Type", "Reference", "Customer / product", "Classification", "Amount PKR", "Boxes"],

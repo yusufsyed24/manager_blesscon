@@ -288,6 +288,12 @@ function targetRows() {
   const s = S(),
     start = monthStart(today());
   return visible(s.salesmen)
+    .filter((salesman) => {
+      const linkedRole = s.user_roles.find(
+        (role) => role.user_id === salesman.user_id,
+      )?.role;
+      return !salesman.user_id || linkedRole === "salesman";
+    })
     .map((x) => {
       const days = s.salesman_daily_targets.filter(
         (d) => d.salesman_id === x.id && d.date >= start && d.date <= today(),
@@ -376,7 +382,7 @@ function renderDashboard() {
     unsubmittedClosings = admin()
       ? Math.max(
           0,
-          visible(s.salesmen).filter((salesman) => salesman.active).length -
+          targets.filter((salesman) => salesman.active).length -
             todaysClosings.filter((closing) =>
               ["submitted", "approved"].includes(closing.status),
             ).length,

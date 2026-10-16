@@ -293,3 +293,75 @@ it("requires a reason for cash or stock discrepancies and blocks salesman approv
   ).rejects.toThrow(/management approval/i);
   await db.close();
 }, 30000);
+
+it("manager role can record direct sales and view company target inputs without cost access", async () => {
+  const db = await database();
+  const managerId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const run = (kind, data) =>
+    db.query("select public.apply_command($1,$2,$3) result", [
+      randomUUID(),
+      kind,
+      data,
+    ]);
+  await db.query("insert into auth.users(id,email) values($1,'manager@test.test')", [managerId]);
+  await db.query("insert into public.profiles(id,display_name) values($1,'Manager')", [managerId]);
+  await db.query("insert into public.user_roles(user_id,role) values($1,'manager')", [managerId]);
+  await run("master.save", {
+    table: "products",
+    record: {
+      id: "M-P",
+      name: "Manager Direct Test Candy",
+      boxes_per_carton: 24,
+      cost_paisa: 10000,
+      retail_paisa: 25000,
+      wholesale_paisa: 20000,
+    },
+  });
+  await run("master.save", {
+    table: "customers",
+    record: { id: "M-C", name: "Manager Shop", salesman_id: null },
+  });
+  await run("stock.add", {
+    transaction_id: "M-OPEN",
+    product_id: "M-P",
+    date: "2026-10-15",
+    boxes: 1000,
+    kind: "opening",
+  });
+  const snapshot = await as(db, managerId, async () =>
+    (await db.query("select public.business_snapshot() snapshot")).rows[0]
+      .snapshot,
+  );
+  expect(snapshot.orders).toEqual([]);
+  expect(snapshot.products.find((product) => product.id === "M-P").cost_paisa).toBeUndefined();
+  const order = await as(db, managerId, async () =>
+    (
+      await db.query(
+        "select public.apply_command($1,'order.save',$2) result",
+        [
+          randomUUID(),
+          {
+            id: randomUUID(),
+            customer_id: "M-C",
+            salesman_id: null,
+            date: "2026-10-15",
+            due_date: "2026-10-22",
+            channel: "wholesale",
+            items: [{ product_id: "M-P", cartons: 3, loose_boxes: 0 }],
+          },
+        ],
+      )
+    ).rows[0].result,
+  );
+  expect(order.salesman_id).toBeNull();
+  const managerSnapshot = await as(db, managerId, async () =>
+    (await db.query("select public.business_snapshot() snapshot")).rows[0]
+      .snapshot,
+  );
+  expect(managerSnapshot.orders).toHaveLength(1);
+  expect(managerSnapshot.order_items[0].cost_paisa).toBeUndefined();
+  await expect(
+    as(db, managerId, () => db.query("select cost_paisa from public.products")),
+  ).rejects.toThrow();
+  await db.close();
+}, 30000);

@@ -134,7 +134,7 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   result:=jsonb_build_object('imported',true,'products',jsonb_array_length(data->'products'),'orders',jsonb_array_length(data->'orders'));
  when 'user.provision' then
   if not public.is_admin() then raise exception 'Admin required';end if;
-  if data->>'role' not in ('admin','salesman','user') or length(trim(data->>'display_name'))<2 then raise exception 'Invalid user fields';end if;
+    if data->>'role' not in ('admin','manager','salesman','user') or length(trim(data->>'display_name'))<2 then raise exception 'Invalid user fields';end if;
   if not exists(select 1 from auth.users where id=(data->>'user_id')::uuid) then raise exception 'Auth user missing';end if;
   insert into public.profiles(id,display_name,active) values((data->>'user_id')::uuid,data->>'display_name',true);
   insert into public.user_roles(user_id,role) values((data->>'user_id')::uuid,data->>'role');

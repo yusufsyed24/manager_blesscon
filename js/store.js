@@ -50,7 +50,8 @@ export function localApply(base, op, user) {
   const s = structuredClone(base),
     d = op.data,
     now = new Date().toISOString(),
-    admin = user.role === "admin";
+    admin = user.role === "admin",
+    manager = user.role === "manager";
   let result = {};
   const find = (t, id) => s[t].find((x) => x.id === id);
   const check = (old) => {
@@ -125,6 +126,7 @@ export function localApply(base, op, user) {
       old = find(t, input.id);
     if (
       !admin &&
+      !manager &&
       !s.salesmen.some(
         (x) => x.id === input.salesman_id && x.user_id === user.id && x.active,
       )

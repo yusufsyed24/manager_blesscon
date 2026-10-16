@@ -97,7 +97,37 @@ create policy stock_voucher_read on public.stock_vouchers for select to authenti
 );
 drop policy if exists daily_closing_read on public.daily_closings;
 create policy daily_closing_read on public.daily_closings for select to authenticated using (
-  public.is_admin() or public.owns_salesman(salesman_id) or public.has_permission('closing')
+  public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or public.has_permission('closing')
+);
+
+create or replace function public.is_manager()
+returns boolean language sql stable security definer set search_path=''
+as $$
+  select exists(
+    select 1 from public.user_roles r
+    join public.profiles p on p.id=r.user_id and p.active
+    where r.user_id=auth.uid() and r.role='manager'
+  )
+$$;
+create or replace function public.can_document(sid text,section text,action text default 'view')
+returns boolean language sql stable security definer set search_path=''
+as $$
+  select public.is_admin()
+    or (public.is_manager() and section in ('dashboard','dsr','closing','orders','invoices','quotes','ledger') and action in ('view','create','edit','share','export'))
+    or (public.owns_salesman(sid) and action in ('view','create','edit','share','export') and (exists(select 1 from public.user_roles where user_id=auth.uid() and role='salesman') or public.has_permission(section,action)))
+$$;
+drop policy if exists customer_read on public.customers;
+create policy customer_read on public.customers for select to authenticated using (
+  public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or
+  (created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active))
+);
+drop policy if exists salesman_read on public.salesmen;
+create policy salesman_read on public.salesmen for select to authenticated using (
+  public.is_admin() or public.is_manager() or public.owns_salesman(id) or public.has_permission('stock')
+);
+drop policy if exists target_read on public.salesman_daily_targets;
+create policy target_read on public.salesman_daily_targets for select to authenticated using (
+  public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id)
 );
 
 create or replace function public.app_settings()
@@ -372,15 +402,15 @@ begin
         values(sid,d,opening,handed,cash_in,cash_expense,expected_cash,actual_cash,variance,expected_stock,actual_stock,stock_variance,coalesce(data->>'reason',''),coalesce(data->>'notes',''),'submitted',auth.uid()) returning to_jsonb(daily_closings.*) into result;
       end if;
     when 'closing.approve' then
-      if not public.is_admin() then raise exception 'Management approval required'; end if;
+      if not(public.is_admin() or public.is_manager()) then raise exception 'Management approval required'; end if;
       update public.daily_closings set status='approved',approved_by=auth.uid(),approved_at=now(),decision_reason=coalesce(data->>'reason',''),version=version+1 where id=(data->>'id')::uuid and version=(data->>'expected_version')::integer and status='submitted' returning to_jsonb(daily_closings.*) into result;
       if result is null then raise exception 'Closing is not submitted or has changed'; end if;
     when 'closing.reject' then
-      if not public.is_admin() or length(trim(coalesce(data->>'reason','')))=0 then raise exception 'Management and a rejection reason are required'; end if;
+      if not(public.is_admin() or public.is_manager()) or length(trim(coalesce(data->>'reason','')))=0 then raise exception 'Management and a rejection reason are required'; end if;
       update public.daily_closings set status='rejected',decision_reason=data->>'reason',version=version+1 where id=(data->>'id')::uuid and version=(data->>'expected_version')::integer and status='submitted' returning to_jsonb(daily_closings.*) into result;
       if result is null then raise exception 'Closing is not submitted or has changed'; end if;
     when 'closing.reopen' then
-      if not public.is_admin() or length(trim(coalesce(data->>'reason','')))=0 then raise exception 'Management and a reopening reason are required'; end if;
+      if not(public.is_admin() or public.is_manager()) or length(trim(coalesce(data->>'reason','')))=0 then raise exception 'Management and a reopening reason are required'; end if;
       update public.daily_closings set status='reopened',decision_reason=data->>'reason',version=version+1 where id=(data->>'id')::uuid and version=(data->>'expected_version')::integer and status in ('approved','rejected') returning to_jsonb(daily_closings.*) into result;
       if result is null then raise exception 'Closing cannot be reopened from its current status'; end if;
     else raise exception 'Unknown operational command';
@@ -398,11 +428,11 @@ begin
   select value-'signature_data' into cfg from public.settings where id='business';
   if not privileged then cfg:=jsonb_set(cfg-'base_salary_paisa','{incentives}','[]'::jsonb,true); end if;
   return jsonb_build_object(
-    'products',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'cost_paisa' end),'[]'::jsonb) from public.products x where public.is_admin() or public.has_permission('products') or public.has_permission('stock') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)),
-    'price_tiers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.price_tiers x where exists(select 1 from public.products p where p.id=x.product_id and (public.is_admin() or public.has_permission('products') or public.has_permission('stock') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)))),
-    'customers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.customers x where public.is_admin() or public.owns_salesman(x.salesman_id) or (x.created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active))),
-    'salesmen',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'base_salary_paisa' end),'[]'::jsonb) from public.salesmen x where public.is_admin() or public.owns_salesman(x.id) or public.has_permission('stock')),
-    'salesman_daily_targets',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.salesman_daily_targets x where public.is_admin() or public.owns_salesman(x.salesman_id)),
+    'products',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'cost_paisa' end),'[]'::jsonb) from public.products x where public.is_admin() or public.is_manager() or public.has_permission('products') or public.has_permission('stock') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)),
+    'price_tiers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.price_tiers x where exists(select 1 from public.products p where p.id=x.product_id and (public.is_admin() or public.is_manager() or public.has_permission('products') or public.has_permission('stock') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active)))),
+    'customers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.customers x where public.is_admin() or public.is_manager() or public.owns_salesman(x.salesman_id) or (x.created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active))),
+    'salesmen',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'base_salary_paisa' end),'[]'::jsonb) from public.salesmen x where public.is_admin() or public.is_manager() or public.owns_salesman(x.id) or public.has_permission('stock')),
+    'salesman_daily_targets',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.salesman_daily_targets x where public.is_admin() or public.is_manager() or public.owns_salesman(x.salesman_id)),
     'quotations',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.quotations x where public.can_document(x.salesman_id,'quotes')),
     'quotation_items',(select coalesce(jsonb_agg(case when privileged then to_jsonb(x) else to_jsonb(x)-'cost_paisa' end),'[]'::jsonb) from public.quotation_items x join public.quotations q on q.id=x.quotation_id where public.can_document(q.salesman_id,'quotes')),
     'orders',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.orders x where public.can_document(x.salesman_id,'orders')),
@@ -413,7 +443,7 @@ begin
     'salesman_stock_movements',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.salesman_stock_movements x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('stock')),
     'stock_vouchers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.stock_vouchers x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('stock')),
     'daily_closings',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.daily_closings x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('closing')),
-    'expenses',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.expenses x where public.is_admin() or public.has_permission('expenses') or public.owns_salesman(x.salesman_id)),
+    'expenses',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.expenses x where public.is_admin() or public.is_manager() or public.has_permission('expenses') or public.owns_salesman(x.salesman_id)),
     'audit_log',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.audit_log x where public.is_admin()),
     'profiles',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.profiles x where x.id=auth.uid() or public.is_admin()),
     'user_roles',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.user_roles x where x.user_id=auth.uid() or public.is_admin()),
