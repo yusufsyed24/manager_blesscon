@@ -1167,6 +1167,47 @@ function renderSettings() {
       )}</div></section><section class="panel"><h2>Default Rani wholesale tiers</h2><p class="muted">Minimum cartons are inclusive. The first starts at 0, so loose-box orders receive a rate. Product overrides take priority; untick overrides on a product to use these defaults.</p><div class="grid three">${s.tiers.map((t, i) => field("Tier " + (i + 1) + " minimum cartons", "tier_min_" + i, t.min, "number", 'min="0" step="0.01" required') + field("Tier " + (i + 1) + " label", "tier_label_" + i, t.label, "text", "required") + field("Tier " + (i + 1) + " rate / box (Rs.)", "tier_rate_" + i, t.rate_paisa / 100, "number", 'min="0" step="0.01" required')).join("")}</div></section><section class="panel"><h2>Incentive slabs</h2><div class="grid">${s.incentives.map((t, i) => field("Slab " + (i + 1) + " minimum achievement %", "incentive_min_" + i, t.min, "number", 'min="0" required') + field("Slab " + (i + 1) + " incentive (Rs.)", "incentive_amount_" + i, t.amount_paisa / 100, "number", 'min="0" required')).join("")}</div></section><button class="gold" type="submit">Save settings</button></form>`
   );
 }
+function managersPanel() {
+  const s = S(),
+    from = monthStart(today()),
+    to = today(),
+    target = num(s.settings.company_monthly_target) || 2000,
+    team = targetPerformance(s.orders, s.order_items, from, to).salesman_cartons,
+    cartonsOf = (o) =>
+      s.order_items
+        .filter((i) => i.order_id === o.id)
+        .reduce(
+          (a, i) => a + Number(i.boxes || 0) / (Number(i.boxes_per_carton) || 1),
+          0,
+        ),
+    managers = s.profiles.filter(
+      (p) => s.user_roles.find((r) => r.user_id === p.id)?.role === "manager",
+    ),
+    rows = managers.map((m) => {
+      const own = s.orders.filter(
+          (o) =>
+            o.status === "confirmed" &&
+            !o.deleted_at &&
+            !o.salesman_id &&
+            o.created_by === m.id &&
+            o.date >= from &&
+            o.date <= to,
+        ),
+        ownCartons = own.reduce((a, o) => a + cartonsOf(o), 0),
+        ownValue = own.reduce((a, o) => a + num(o.total_paisa), 0),
+        total = team + ownCartons,
+        pct = (total / target) * 100;
+      return [
+        esc(m.display_name),
+        `${target.toFixed(2)} cartons`,
+        `${team.toFixed(2)} cartons`,
+        `+${ownCartons.toFixed(2)} cartons<br><small>${own.length} orders · ${money(ownValue)}</small>`,
+        `<b>${total.toFixed(2)}</b> cartons${total >= target ? " " + badge("Target closed", "green") : `<br><small>${(target - total).toFixed(2)} remaining</small>`}`,
+        `${pct.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div>`,
+      ];
+    });
+  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div>${table(["Manager", "Monthly target", "Team (salesmen) achieved", "Own sales (additional)", "Total target met", "Achievement"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
+}
 function renderUsers() {
   const s = S();
   return (
@@ -1175,6 +1216,7 @@ function renderUsers() {
       "Admin permissions are enforced by the database, including direct API requests.",
       btn("+ Create login", "create-user", "", "", "gold"),
     ) +
+    managersPanel() +
     `<section class="panel">${table(
       ["Name", "Role", "Linked salesman", "Status", "Actions"],
       s.profiles.map((p) => [
