@@ -1,5 +1,7 @@
 # Changelog — 2.0.0 (14 October 2026)
 
+- Manager role: company monthly target panel, salesman contribution, manager direct sales counted separately (supabase/manager_role.sql).
+
 ## Company and manager target attribution (16 October 2026)
 
 - Added a 2,000-carton company target, separate from the existing 130-carton default individual salesman target.

@@ -9,7 +9,6 @@ export const DEFAULTS = {
   terms: "Please pay by the agreed due date.",
   monthly_target: 130,
   company_monthly_target: 2000,
-  company_monthly_target: 2000,
   boxes_per_carton: 24,
   base_salary_paisa: 4500000,
   working_days: [1, 2, 3, 4, 5, 6],

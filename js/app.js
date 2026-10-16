@@ -67,6 +67,8 @@ const NAV = [
 ];
 const S = () => store.state,
   admin = () => user?.role === "admin",
+  manager = () => user?.role === "manager",
+  mgmt = () => user?.role === "admin" || user?.role === "manager",
   own = () => S().salesmen.find((s) => s.user_id === user.id);
 const canStockWrite = () =>
   admin() ||
@@ -77,7 +79,7 @@ const canStockWrite = () =>
       permission.can_create,
   );
 const canViewAllClosings = () =>
-  admin() ||
+  mgmt() ||
   S().user_permissions.some(
     (permission) =>
       permission.user_id === user.id &&
@@ -268,17 +270,6 @@ function render() {
     import: renderImport,
   };
   $("page").innerHTML = methods[page]();
-  if (page === "dashboard" && !admin()) {
-    const companyCards = new Set([
-      "Company monthly target",
-      "Salesman cartons",
-      "Manager direct sales",
-    ]);
-    document.querySelectorAll("#page .card").forEach((element) => {
-      if (companyCards.has(element.querySelector(".label")?.textContent))
-        element.remove();
-    });
-  }
   if (page === "dsr")
     $("page").insertAdjacentHTML("beforeend", dsrClosingSection());
   syncBadge();
@@ -371,10 +362,16 @@ function renderDashboard() {
       own()?.id || "",
     ),
     companyMonthlyTarget = num(s.settings.company_monthly_target) || 2000,
+    companySold = companyTargetProgress.salesman_cartons,
+    managerExtra = companyTargetProgress.manager_direct_cartons,
+    companyPct = (companySold / companyMonthlyTarget) * 100,
+    companyPanel = mgmt()
+      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card("Manager sales (additional)", `+${managerExtra.toFixed(2)} cartons`, "Counted separately, on top of the company target")}${card("Total sold incl. manager", `${(companySold + managerExtra).toFixed(2)} cartons`, "Salesman sales + manager direct sales")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div><h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
+      : "",
     todaysClosings = s.daily_closings.filter(
       (closing) =>
         closing.business_date === today() &&
-        (admin() || closing.salesman_id === own()?.id),
+        (mgmt() || closing.salesman_id === own()?.id),
     ),
     pendingClosings = todaysClosings.filter(
       (closing) => closing.status === "submitted",
@@ -416,7 +413,7 @@ function renderDashboard() {
             btn("New quotation", "new-quote") +
               btn("+ New sale", "new-order", "", "", "gold"),
           ) +
-          `<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${card("Company monthly target", `${companyTargetProgress.achieved_cartons.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, "Includes manager and salesman confirmed sales")}${card("Salesman cartons", `${companyTargetProgress.salesman_cartons.toFixed(2)} cartons`, "Contributes to company target and individual targets")}${card("Manager direct sales", `${companyTargetProgress.manager_direct_cartons.toFixed(2)} cartons`, "Included in company target; shown separately")}${p ? card("Profit in period", money(p.net), "Restricted management figure") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
+          `${companyPanel}<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${p ? card("Profit in period", money(p.net), "Restricted management figure") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
   );
 }
 function renderDailyReport() {
@@ -1136,7 +1133,7 @@ function renderSettings() {
       )
       .join(
         "",
-      )}</div></section><section class="panel"><h2>Salesman targets</h2><div class="grid">${field("Default monthly target (cartons)", "monthly_target", s.monthly_target, "number", 'min="1" required')}${area("Company holidays (one YYYY-MM-DD per line)", "holidays", s.holidays.join("\n"))}</div><p style="margin-top:18px">Working days</p><div class="pill-list">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => `<div class="checkbox"><input type="checkbox" name="working_day" id="wd-${i}" value="${i}" ${s.working_days.includes(i) ? "checked" : ""}><label for="wd-${i}">${d}</label></div>`).join("")}</div><div class="grid" style="margin-top:20px">${[
+      )}</div></section><section class="panel"><h2>Salesman targets</h2><div class="grid">${field("Default monthly target (cartons)", "monthly_target", s.monthly_target, "number", 'min="1" required')}${field("Company monthly target (cartons)", "company_monthly_target", s.company_monthly_target ?? 2000, "number", 'min="1" required')}${area("Company holidays (one YYYY-MM-DD per line)", "holidays", s.holidays.join("\n"))}</div><p style="margin-top:18px">Working days</p><div class="pill-list">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => `<div class="checkbox"><input type="checkbox" name="working_day" id="wd-${i}" value="${i}" ${s.working_days.includes(i) ? "checked" : ""}><label for="wd-${i}">${d}</label></div>`).join("")}</div><div class="grid" style="margin-top:20px">${[
       ["carry_month_end", "Roll shortfalls across month end (off = reset)"],
       ["reduce_by_surplus", "Use surplus to reduce the next day target"],
     ]
@@ -1257,8 +1254,8 @@ function openEditor(quote, id) {
       "Salesman",
       "salesman_id",
       [
-        ...(admin() ? [["", "Manager / direct sale"]] : []),
-        ...visible(s.salesmen)
+        ...(mgmt() ? [["", "Manager / direct sale"]] : []),
+        ...(manager() ? [] : visible(s.salesmen))
           .filter((x) => x.active)
           .map((x) => [x.id, x.name]),
       ],
@@ -1805,7 +1802,7 @@ async function saveSettings(form) {
     "signature_name",
   ])
     s[k] = String(f.get(k) || "");
-  for (const k of ["boxes_per_carton", "low_stock_boxes", "monthly_target"])
+  for (const k of ["boxes_per_carton", "low_stock_boxes", "monthly_target", "company_monthly_target"])
     s[k] = num(f.get(k));
   s.base_salary_paisa = paisa(f.get("base_salary"));
   for (const k of [
@@ -1862,7 +1859,7 @@ function userModal(id) {
   if (!id) {
     modal(
       "Create login",
-      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Temporary password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "user", "admin"], "salesman")}${select(
+      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Temporary password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select(
         "Link salesman (optional)",
         "salesman_id",
         [
@@ -1877,7 +1874,7 @@ function userModal(id) {
   }
   modal(
     "Access · " + p.display_name,
-    `<form id="user-form" data-id="${id}"><div class="grid">${select("Role", "role", ["salesman", "user", "admin"], role)}${select(
+    `<form id="user-form" data-id="${id}"><div class="grid">${select("Role", "role", ["salesman", "manager", "user", "admin"], role)}${select(
       "Status",
       "active",
       [

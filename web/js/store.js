@@ -20,6 +20,7 @@ export const TABLES = [
   "payments",
   "stock_movements",
   "salesman_stock_movements",
+  "stock_vouchers",
   "daily_closings",
   "expenses",
   "audit_log",
@@ -28,7 +29,6 @@ export const TABLES = [
   "user_permissions",
 ];
 const commandRpc = (kind) =>
-  ["stock.issue", "stock.return"].includes(kind) ||
   kind.startsWith("closing.")
     ? "apply_operational_command"
     : "apply_command";
@@ -444,40 +444,16 @@ export function localApply(base, op, user) {
             permission.can_create,
         );
       if (!canIssue) throw Error("Stock issue permission required");
-      const transaction = s.salesman_stock_movements.find(
-        (movement) => movement.transaction_id === d.transaction_id,
-      );
-      if (transaction) {
-        if (
-          transaction.kind === "issue" &&
-          transaction.product_id === d.product_id &&
-          transaction.salesman_id === d.salesman_id &&
-          transaction.boxes === d.boxes &&
-          transaction.date === d.date
-        ) {
-          result = transaction;
-          break;
-        }
-        throw Error("Stock reference already exists with different details");
-      }
-      if (
-        d.reference &&
-        s.salesman_stock_movements.some(
-          (movement) =>
-            movement.reference === d.reference &&
-            ["issue", "return_saleable", "return_damaged", "return_expired", "return_unsaleable"].includes(movement.kind),
-        )
-      )
+      const items = Array.isArray(d.items) ? d.items : [d];
+      const reference = d.reference || d.transaction_id;
+      if (!items.length || items.length > 100)
+        throw Error("A stock issue must contain 1 to 100 product lines");
+      if (reference && s.salesman_stock_movements.some((movement) => movement.reference === reference))
         throw Error("Stock voucher reference already exists");
       const seller = s.salesmen.find(
         (row) => row.id === d.salesman_id && row.active && !row.deleted_at,
       );
-      const product = s.products.find(
-        (row) => row.id === d.product_id && row.active && !row.deleted_at,
-      );
-      if (!seller || !product) throw Error("Choose an active salesman and product");
-      if (!Number.isSafeInteger(d.boxes) || d.boxes <= 0)
-        throw Error("Enter a positive whole-box quantity");
+      if (!seller) throw Error("Choose an active salesman");
       const close = s.daily_closings.find(
         (row) =>
           row.salesman_id === d.salesman_id &&
@@ -485,18 +461,57 @@ export function localApply(base, op, user) {
           ["submitted", "approved"].includes(row.status),
       );
       if (close) throw Error("Reopen the daily closing before changing stock");
-      if (stock(d.product_id) < d.boxes)
-        throw Error("Insufficient warehouse stock");
-      result = {
-        id: uid(),
-        ...d,
+      const byProduct = new Map();
+      for (const item of items) {
+        const product = s.products.find(
+          (row) => row.id === item.product_id && row.active && !row.deleted_at,
+        );
+        if (!product) throw Error("Choose an active product for every issue line");
+        if (!Number.isSafeInteger(item.boxes) || item.boxes <= 0)
+          throw Error("Every issue line needs a positive whole-box quantity");
+        const transactionId = item.transaction_id || d.transaction_id;
+        if (!transactionId) throw Error("A unique transaction ID is required for each line");
+        if (s.salesman_stock_movements.some((movement) => movement.transaction_id === transactionId))
+          throw Error("Duplicate stock movement transaction ID");
+        byProduct.set(item.product_id, (byProduct.get(item.product_id) || 0) + item.boxes);
+      }
+      for (const [productId, boxes] of byProduct)
+        if (stock(productId) < boxes)
+          throw Error("Insufficient warehouse stock for " + s.products.find((row) => row.id === productId).name);
+      const voucherId = uid();
+      const voucher = {
+        id: voucherId,
+        reference,
         kind: "issue",
-        reference: d.reference || d.transaction_id,
+        salesman_id: d.salesman_id,
+        date: d.date,
+        condition: null,
+        note: d.note || "",
         created_by: user.id,
         created_at: now,
       };
-      s.salesman_stock_movements.push(result);
-      adjustWarehouse(d.product_id);
+      s.stock_vouchers.push(voucher);
+      result = [];
+      for (const item of items) {
+        const movement = {
+          id: uid(),
+          transaction_id: item.transaction_id || d.transaction_id,
+          reference,
+          salesman_id: d.salesman_id,
+          product_id: item.product_id,
+          date: d.date,
+          boxes: item.boxes,
+          note: d.note || "",
+          kind: "issue",
+          voucher_id: voucherId,
+          created_by: user.id,
+          created_at: now,
+        };
+        s.salesman_stock_movements.push(movement);
+        adjustWarehouse(item.product_id);
+        result.push(movement);
+      }
+      result = { ...voucher, items: result };
       break;
     }
     case "stock.return": {
@@ -513,35 +528,12 @@ export function localApply(base, op, user) {
             permission.can_create,
         );
       if (!canReturn) throw Error("Stock return permission required");
-      const transaction = s.salesman_stock_movements.find(
-        (movement) => movement.transaction_id === d.transaction_id,
-      );
-      if (transaction) {
-        if (
-          transaction.product_id === d.product_id &&
-          transaction.salesman_id === d.salesman_id &&
-          transaction.boxes === -d.boxes &&
-          transaction.date === d.date &&
-          transaction.kind === "return_" + d.condition
-        ) {
-          result = transaction;
-          break;
-        }
-        throw Error("Stock reference already exists with different details");
-      }
-      if (
-        d.reference &&
-        s.salesman_stock_movements.some(
-          (movement) =>
-            movement.reference === d.reference &&
-            ["issue", "return_saleable", "return_damaged", "return_expired", "return_unsaleable"].includes(movement.kind),
-        )
-      )
+      const items = Array.isArray(d.items) ? d.items : [d];
+      const reference = d.reference || d.transaction_id;
+      if (!items.length || items.length > 100)
+        throw Error("A stock return must contain 1 to 100 product lines");
+      if (reference && s.salesman_stock_movements.some((movement) => movement.reference === reference))
         throw Error("Stock voucher reference already exists");
-      if (!Number.isSafeInteger(d.boxes) || d.boxes <= 0)
-        throw Error("Enter a positive whole-box quantity");
-      if (!s.products.some((row) => row.id === d.product_id))
-        throw Error("Choose a product");
       if (!new Set(["saleable", "damaged", "expired", "unsaleable"]).has(d.condition))
         throw Error("Choose a valid return condition");
       const close = s.daily_closings.find(
@@ -551,29 +543,66 @@ export function localApply(base, op, user) {
           ["submitted", "approved"].includes(row.status),
       );
       if (close) throw Error("Reopen the daily closing before changing stock");
-      if (salesmanStock(d.product_id, d.salesman_id) < d.boxes)
-        throw Error("Insufficient salesman stock");
-      result = {
-        id: uid(),
-        ...d,
-        boxes: -d.boxes,
-        kind: "return_" + d.condition,
-        reference: d.reference || d.transaction_id,
+      const byProduct = new Map();
+      for (const item of items) {
+        if (!s.products.some((row) => row.id === item.product_id))
+          throw Error("Choose a product for every return line");
+        if (!Number.isSafeInteger(item.boxes) || item.boxes <= 0)
+          throw Error("Every return line needs a positive whole-box quantity");
+        const transactionId = item.transaction_id || d.transaction_id;
+        if (!transactionId) throw Error("A unique transaction ID is required for each line");
+        if (s.salesman_stock_movements.some((movement) => movement.transaction_id === transactionId))
+          throw Error("Duplicate stock movement transaction ID");
+        byProduct.set(item.product_id, (byProduct.get(item.product_id) || 0) + item.boxes);
+      }
+      for (const [productId, boxes] of byProduct)
+        if (salesmanStock(productId, d.salesman_id) < boxes)
+          throw Error("Insufficient salesman stock for " + s.products.find((row) => row.id === productId).name);
+      const voucherId = uid();
+      const voucher = {
+        id: voucherId,
+        reference,
+        kind: "return",
+        salesman_id: d.salesman_id,
+        date: d.date,
+        condition: d.condition,
+        note: d.note || "",
         created_by: user.id,
         created_at: now,
       };
-      s.salesman_stock_movements.push(result);
-      if (d.condition === "saleable") adjustWarehouse(d.product_id);
-      else {
-        move(
-          d.product_id,
-          -d.boxes,
-          "damage",
-          null,
-          "return-loss:" + d.transaction_id,
-        );
-        adjustWarehouse(d.product_id);
+      s.stock_vouchers.push(voucher);
+      result = [];
+      for (const item of items) {
+        const transactionId = item.transaction_id || d.transaction_id;
+        const movement = {
+          id: uid(),
+          transaction_id: transactionId,
+          reference,
+          salesman_id: d.salesman_id,
+          product_id: item.product_id,
+          date: d.date,
+          boxes: -item.boxes,
+          kind: "return_" + d.condition,
+          note: d.note || "",
+          voucher_id: voucherId,
+          created_by: user.id,
+          created_at: now,
+        };
+        s.salesman_stock_movements.push(movement);
+        if (d.condition === "saleable") adjustWarehouse(item.product_id);
+        else {
+          move(
+            item.product_id,
+            -item.boxes,
+            "damage",
+            null,
+            "return-loss:" + transactionId,
+          );
+          adjustWarehouse(item.product_id);
+        }
+        result.push(movement);
       }
+      result = { ...voucher, items: result };
       break;
     }
     case "closing.submit": {
