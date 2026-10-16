@@ -123,8 +123,29 @@ const table = (headers, rows, emptyText = "No records yet") =>
   rows.length
     ? `<div class="table-wrap"><table><thead><tr>${headers.map((h) => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td data-label="${esc(String(headers[i] ?? "").replace(/<[^>]*>/g, ""))}">${c ?? ""}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
     : `<div class="empty"><h3>${esc(emptyText)}</h3><p>Use the button above to add a record, or import your workbook.</p></div>`;
-const card = (label, value, meta = "", accent = false) =>
-  `<div class="card${accent ? " accent" : ""}"><div class="label">${label}</div><div class="value">${value}</div><div class="meta">${meta}</div></div>`;
+// Overview cards that open the section their figures come from.
+const CARD_LINKS = {
+  "Sales in period": "orders",
+  "Collections in period": "invoices",
+  "Previous debt recovered": "invoices",
+  "New credit issued": "ledger",
+  "Expenses in period": "expenses",
+  "Customer outstanding": "ledger",
+  "Overdue outstanding": "ledger",
+  "Stock issued": "stock",
+  "Stock returned": "stock",
+  "Unsubmitted closings": "closing",
+  "Profit in period": "pnl",
+  "Company monthly target": "staff",
+  "Salesman sales": "staff",
+  "Your achievement (your sales)": "orders",
+  "Manager direct sales": "orders",
+};
+const card = (label, value, meta = "", accent = false) => {
+  const to = CARD_LINKS[label],
+    link = to && can(to);
+  return `<div class="card${accent ? " accent" : ""}${link ? " clickable" : ""}"${link ? ` data-page="${to}" role="link" tabindex="0" title="Open ${esc(NAV.find((n) => n[0] === to)?.[1] || to)}"` : ""}><div class="label">${label}</div><div class="value">${value}</div><div class="meta">${meta}</div></div>`;
+};
 const customerName = (id) => S().customers.find((c) => c.id === id)?.name || id;
 const salesmanName = (id) =>
   S().salesmen.find((s) => s.id === id)?.name || "Unassigned";
@@ -2592,6 +2613,12 @@ async function action(act, id, element) {
       break;
   }
 }
+document.addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".card[data-page]")) {
+    e.preventDefault();
+    e.target.click();
+  }
+});
 document.addEventListener("click", async (e) => {
   const nav = e.target.closest("[data-page]");
   if (nav) {

@@ -1127,3 +1127,16 @@ pre {
   box-shadow: 0 8px 28px #12233f55;
   font-weight: 700;
 }
+
+/* Clickable overview cards */
+.card.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.card.clickable:hover,
+.card.clickable:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
