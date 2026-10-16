@@ -1,3 +1,10 @@
+## Salesman field sales and admin fieldwork visibility (16 October 2026)
+
+- Fixed the My profile & fieldwork navigation guard so a salesman is not silently redirected to the dashboard when their linked salesman row is missing; the page now shows the account-link diagnostic instead. Salesman matching compares IDs as strings to avoid UUID/text representation mismatches.
+- Salesmen now see only products with positive stock issued to their own account in Products & pricing, Stock & expiry, their profile stock list, and the sale product picker. The quantity displayed is the salesman-held stock ledger balance, never the warehouse balance.
+- Added an admin-only fieldwork panel to Salesmen & targets showing salesman profile-photo links, attendance, uploaded employee documents with expiring private download links, customer visits, visit notes, and optional GPS coordinates. Data is loaded from Supabase and surfaces migration/RLS errors rather than silently hiding failures.
+- Validation: changed JavaScript passes `node --check`; root deployment copies are synchronized. Supabase permissions and browser-level live behavior still require verification in the target project.
+
 ## Daily closing balances (16 October 2026)
 
 - The daily closing form now records **Cash in Bank, Cash in Hand, Cash in Easypaisa, Cash in Jazz Cash and Market Credit** (Rs.). They appear in the Closing register and in the DSR "Daily cash and closing status" table.
@@ -186,3 +193,10 @@ This release is a deployable source package, not a live deployment. Production c
 - Added a salesman-only My Profile & Fieldwork screen with personal sales/target overview, product-wise held stock, profile photo upload, private employee document upload, attendance check-in/check-out, and opt-in GPS customer visit recording.
 - Added `supabase/salesman_self_service.sql`, an additive migration for attendance, employee document metadata, customer visits, private employee storage, and ownership-scoped RLS policies. Apply this migration in Supabase before using the new features.
 - Photo/document upload requires the private `employee-private` storage bucket and migration policies. GPS is requested only when the salesman explicitly chooses Save visit with my location.
+
+## 2026-10-16 — Salesman account linking and dropdowns
+- Creating a login with the `salesman` role now creates and links a salesman profile when an existing salesman was not selected.
+- The Users & Access editor now supports linking an existing unlinked salesman profile or creating a profile for an existing salesman login that was previously unlinked.
+- Saves the salesman profile through the existing admin command path, then refreshes the snapshot so the salesman appears in Salesmen & Targets, stock issue/return selectors, and sales assignment dropdowns.
+- Synchronized root deployment JavaScript with `web/js/app.js` and bumped the service-worker cache version to force updated assets to load.
+- Validation: JavaScript syntax checks passed. Live Supabase and full integration tests were not run in this environment.
