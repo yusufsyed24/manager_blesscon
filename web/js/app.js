@@ -323,7 +323,7 @@ async function hydrateSalesmanProfile() {
     if (!error && data?.signedUrl && avatar.isConnected) avatar.innerHTML = `<img src="${esc(data.signedUrl)}" alt="Your profile photo">`;
   }
   const [attendance, documents, visits] = await Promise.all([
-    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status").eq("salesman_id", seller.id).order("attendance_date", { ascending: false }).limit(30),
+    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", { ascending: false }).limit(30),
     client.from("employee_documents").select("document_type,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", { ascending: false }).limit(50),
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", { ascending: false }).limit(30),
   ]);
@@ -382,7 +382,7 @@ function renderMyProfile() {
     <div class="cards">${card("Today's sales", money(todaySales), "Your confirmed orders today")}${card("Sales this month", money(monthSales), "Your confirmed orders this month")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Boxes across products")}</div>
     <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
     <section class="panel"><h2>My employee documents</h2><p class="muted">Upload an ID or employment document. Files are private and visible only to you and authorized management.</p><div class="grid"><div class="field"><label for="employee-document-type">Document type</label><select id="employee-document-type"><option value="identity">Identity document</option><option value="employment">Employment document</option><option value="other">Other authorized document</option></select></div><div class="field"><label for="employee-document-file">Choose file</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-document-upload">Upload document</button><div id="profile-upload-status" role="status"></div></section>
-    <section class="panel"><h2>Attendance</h2><p>Record your attendance for today. Check-out is available after check-in.</p><div class="actions">${btn("Check in", "attendance-check-in", sid, "", "gold")}${btn("Check out", "attendance-check-out", sid)}</div><p class="muted">Timestamps are recorded by the server when online. Offline attendance is not submitted as verified.</p><div id="my-attendance-history"><p class="muted">Loading your attendance history…</p></div></section>
+    <section class="panel"><h2>Attendance</h2><p>Record your attendance for today. Check-out is available after check-in.</p><div class="actions">${btn("Check in", "attendance-check-in", sid, "", "gold")}${btn("Check out", "attendance-check-out", sid)}</div><p class="muted">Check-in will request GPS permission to record your location when available. If you decline or GPS is unavailable, attendance can still be recorded without coordinates. Timestamps are recorded when online.</p><div id="my-attendance-history"><p class="muted">Loading your attendance history…</p></div></section>
     <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission. Location is collected only when you press the button.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional. Denying GPS will not prevent a normal visit record.</p><div id="my-visit-history"><p class="muted">Loading your visit history…</p></div></section>
     <section class="panel"><h2>My uploaded documents</h2><div id="my-document-history"><p class="muted">Loading your document list…</p></div></section>`;
 }
@@ -1065,7 +1065,7 @@ async function hydrateAdminFieldwork() {
   await hydrateAdminProfilePhoto();
   const [sellers, attendance, documents, visits] = await Promise.all([
     client.from("salesmen").select("id,name,phone,territory,area,photo_path,user_id").order("name"),
-    client.from("attendance_records").select("salesman_id,attendance_date,check_in_at,check_out_at,status").order("attendance_date", { ascending: false }).limit(300),
+    client.from("attendance_records").select("salesman_id,attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").order("attendance_date", { ascending: false }).limit(300),
     client.from("employee_documents").select("salesman_id,document_type,file_path,file_name,mime_type,size_bytes,created_at").order("created_at", { ascending: false }).limit(300),
     client.from("customer_visits").select("salesman_id,customer_label,area,purpose,notes,visited_at,latitude,longitude").order("visited_at", { ascending: false }).limit(300),
   ]);
@@ -1085,7 +1085,7 @@ async function hydrateAdminFieldwork() {
   const photoHtml = photoRows.length
     ? `<div class="profile-photo-grid">${photoRows.map(([x,url,err]) => `<article class="profile-photo-card"><div class="profile-avatar">${url ? `<img src="${esc(url)}" alt="${esc(x.name)} profile photo" loading="lazy">` : `<span class="muted">Photo unavailable</span>`}</div><div><b>${esc(x.name)}</b><p class="muted">${esc(x.phone || "—")} · ${esc(x.territory || x.area || "—")}</p>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">Open full-size photo</a>` : `<small class="muted">${esc(err || "No storage access")}</small>`}</div></article>`).join("")}</div>`
     : `<p class="muted">No profile photos are linked to salesman records yet. The salesman must upload a photo from My profile & fieldwork.</p>`;
-  const attendanceHtml = sectionError("Attendance", attendance) || table(["Salesman","Date","Check-in","Check-out","Status"], (attendance.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status)]), "No attendance records submitted.");
+  const attendanceHtml = sectionError("Attendance", attendance) || table(["Salesman","Date","Check-in","Check-out","Status","Check-in location"], (attendance.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), r.check_in_latitude == null || r.check_in_longitude == null ? "Location not recorded" : `<a href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}" target="_blank" rel="noopener">View check-in map</a><small>${num(r.check_in_latitude).toFixed(5)}, ${num(r.check_in_longitude).toFixed(5)}${r.check_in_location_accuracy_m ? ` · ±${Math.round(num(r.check_in_location_accuracy_m))} m` : ""}</small>`]), "No attendance records submitted.");
   const docRows = documents.error ? [] : await Promise.all((documents.data || []).map(async d => {
     const result = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
     return [esc(names.get(String(d.salesman_id)) || d.salesman_id), esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, result.data?.signedUrl ? `<a href="${esc(result.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>` : esc(result.error?.message || "Unavailable")];
@@ -1106,7 +1106,7 @@ async function openAdminSalesmanProfile(salesmanId) {
   const seller = sellerResult.data;
   if (!seller) { modal("Salesman profile", '<p class="notice">No linked salesman profile was found. Use Edit access to link or create the salesman profile.</p>'); return; }
   const [attendance, documents, visits] = await Promise.all([
-    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status").eq("salesman_id", seller.id).order("attendance_date", {ascending:false}).limit(100),
+    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", {ascending:false}).limit(100),
     client.from("employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", {ascending:false}).limit(100),
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", {ascending:false}).limit(100),
   ]);
@@ -1119,7 +1119,7 @@ async function openAdminSalesmanProfile(salesmanId) {
     const r = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
     return [esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, r.data?.signedUrl ? `<a href="${esc(r.data.signedUrl)}" target="_blank" rel="noopener">Open file</a>` : esc(r.error?.message || "Unavailable")];
   }));
-  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status)]), "No attendance submitted yet.");
+  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status","Check-in location"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), r.check_in_latitude == null || r.check_in_longitude == null ? "Location not recorded" : `<a href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}" target="_blank" rel="noopener">View check-in map</a><small>${num(r.check_in_latitude).toFixed(5)}, ${num(r.check_in_longitude).toFixed(5)}${r.check_in_location_accuracy_m ? ` · ±${Math.round(num(r.check_in_location_accuracy_m))} m` : ""}</small>`]), "No attendance submitted yet.");
   const documentsHtml = sectionError(documents) || table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded yet.");
   const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted yet.");
   const role = S().user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
@@ -2335,8 +2335,12 @@ async function action(act, id, element) {
       if (readErr) throw readErr;
       if (act === "attendance-check-in") {
         if (existing?.check_in_at) throw Error("You have already checked in today.");
-        const { error } = await client.from("attendance_records").insert({salesman_id:seller.id,attendance_date:today(),check_in_at:new Date().toISOString(),status:"present"}); if(error) throw error;
-        toast("Check-in recorded.");
+        let checkInCoords = null;
+        if (navigator.geolocation) {
+          try { checkInCoords = await new Promise((resolve) => navigator.geolocation.getCurrentPosition(pos => resolve({latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy}), () => resolve(null), {enableHighAccuracy:true,timeout:10000,maximumAge:60000})); } catch (_) { checkInCoords = null; }
+        }
+        const { error } = await client.from("attendance_records").insert({salesman_id:seller.id,attendance_date:today(),check_in_at:new Date().toISOString(),status:"present",check_in_latitude:checkInCoords?.latitude ?? null,check_in_longitude:checkInCoords?.longitude ?? null,check_in_location_accuracy_m:checkInCoords?.accuracy ?? null}); if(error) throw error;
+        toast(checkInCoords ? "Check-in recorded with location." : "Check-in recorded. Location was not available or permission was declined.");
       } else {
         if (!existing?.check_in_at) throw Error("Check in before checking out."); if(existing.check_out_at) throw Error("You have already checked out today.");
         const { error } = await client.from("attendance_records").update({check_out_at:new Date().toISOString()}).eq("id",existing.id); if(error) throw error; toast("Check-out recorded.");

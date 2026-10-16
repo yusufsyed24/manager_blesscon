@@ -10,6 +10,9 @@ create table if not exists public.attendance_records (
   attendance_date date not null,
   check_in_at timestamptz,
   check_out_at timestamptz,
+  check_in_latitude double precision,
+  check_in_longitude double precision,
+  check_in_location_accuracy_m double precision,
   status text not null default 'present' check (status in ('present','late','half_day','absent','leave','pending')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -17,6 +20,11 @@ create table if not exists public.attendance_records (
   check (check_out_at is null or check_in_at is not null),
   check (check_out_at is null or check_out_at >= check_in_at)
 );
+-- Add check-in GPS columns safely for installations created before this feature.
+alter table public.attendance_records add column if not exists check_in_latitude double precision;
+alter table public.attendance_records add column if not exists check_in_longitude double precision;
+alter table public.attendance_records add column if not exists check_in_location_accuracy_m double precision;
+
 create table if not exists public.employee_documents (
   id uuid primary key default gen_random_uuid(),
   salesman_id text not null references public.salesmen(id) on delete cascade,

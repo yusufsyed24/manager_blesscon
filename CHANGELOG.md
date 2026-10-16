@@ -251,3 +251,10 @@ This release is a deployable source package, not a live deployment. Production c
 - Saves the private object path in `profiles.avatar_path`, displays a signed preview, and limits profile-row updates through an own-row RLS policy and column-level grant.
 - Added the column to the base schema and to the re-runnable self-service migration; synchronized root/web app files and bumped the service-worker cache namespace.
 - Local JavaScript syntax and archive checks are run for this build; live Supabase permissions/storage are not available for testing here.
+
+
+## 2026-10-17 — Salesman check-in location in admin profile (v14)
+- Salesman check-in requests browser GPS permission and saves coordinates/accuracy when available; attendance can still be recorded if GPS is declined or unavailable.
+- Admin attendance tables and individual salesman profiles show a Google Maps link plus coordinates for check-ins where location was recorded.
+- Added idempotent migration statements for check-in latitude, longitude and accuracy columns; synchronized root/web app and service worker copies.
+- Existing attendance rows and check-ins without GPS remain valid and display “Location not recorded.”
