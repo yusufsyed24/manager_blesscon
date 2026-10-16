@@ -1000,6 +1000,45 @@ export class Store extends EventTarget {
         this.emit();
       }
     }
+    // Stock issues/returns change two linked ledgers. When online, wait for the
+    // database transaction to confirm before the UI closes the form; otherwise
+    // an RPC/RLS/migration error could be swallowed by the generic offline queue.
+    if (["stock.issue", "stock.return"].includes(kind) && this.client && navigator.onLine) {
+      if (this.queue.length) {
+        await this.sync();
+        if (this.queue.length || this.error) {
+          throw Error("A previous change is still pending. Resolve the sync error before changing stock: " + (this.error || "pending changes remain"));
+        }
+      }
+      this.busy = true;
+      this.emit();
+      try {
+        await this.verifyUser();
+        const { data: result, error } = await this.client.rpc("apply_command", {
+          op_id: op.id,
+          kind,
+          data,
+        });
+        if (error) {
+          const message = error.message || String(error);
+          if (/schema cache|could not find the function|function .* does not exist|unknown command/i.test(message)) {
+            throw Error("The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: " + message);
+          }
+          throw error;
+        }
+        try {
+          await this.refresh();
+        } catch (refreshError) {
+          this.error = "Stock operation was accepted by Supabase, but the data refresh failed: " + (refreshError?.message || String(refreshError));
+          this.emit();
+        }
+        this.lastResult = result;
+        return result || { confirmed: true };
+      } finally {
+        this.busy = false;
+        this.emit();
+      }
+    }
     if (
       ["import.batch", "share.create", "share.revoke", "user.update"].includes(
         kind,

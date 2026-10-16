@@ -1849,7 +1849,7 @@ function stockIssueModal() {
   stockIssueLineCount = 1;
   modal(
     "Issue stock to salesman",
-    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active).map((row) => [row.id, row.name]))}${field("Issue date", "date", today(), "date", "required")}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products to issue</h3>${btn("+ Add product", "stock-add-line", "issue", 'type="button"')}</div><div id="stock-issue-lines"></div>${area("Notes", "note")}<p class="muted">All lines are validated and saved together. Cartons use each product's own pack size.</p><button class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
+    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active).map((row) => [row.id, row.name]))}${field("Issue date", "date", today(), "date", "required")}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products to issue</h3>${btn("+ Add product", "stock-add-line", "issue", 'type="button"')}</div><div id="stock-issue-lines"></div>${area("Notes", "note")}<p class="muted">All lines are validated and saved together. Cartons use each product's own pack size.</p><div id="stock-operation-error" class="notice danger" role="alert" style="display:none"></div><button type="submit" class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
   );
   renderStockOperationLines("issue");
 }
@@ -1859,7 +1859,7 @@ function stockReturnModal() {
   const chosen = own()?.id || sellers[0]?.id || "";
   modal(
     "Receive stock return",
-    `<form id="stock-return-form"><div class="grid">${admin() || canStockWrite() ? select("Salesman", "salesman_id", sellers.map((row) => [row.id, row.name]), chosen) : `<input type="hidden" name="salesman_id" value="${esc(chosen)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(chosen))}" readonly></div>`}${field("Return date", "date", today(), "date", "required")}${select("Condition", "condition", [["saleable", "Saleable"], ["damaged", "Damaged"], ["expired", "Expired"], ["unsaleable", "Other unsaleable"]])}${field("Return voucher", "reference", "STR-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products received</h3>${btn("+ Add product", "stock-add-line", "return", 'type="button"')}</div><div id="stock-return-lines"></div>${area("Reason / notes", "note")}<p class="muted">All lines share this return condition and save together. Only saleable returns increase available warehouse stock.</p><button class="gold" style="margin-top:20px">Record stock return</button></form>`,
+    `<form id="stock-return-form"><div class="grid">${admin() || canStockWrite() ? select("Salesman", "salesman_id", sellers.map((row) => [row.id, row.name]), chosen) : `<input type="hidden" name="salesman_id" value="${esc(chosen)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(chosen))}" readonly></div>`}${field("Return date", "date", today(), "date", "required")}${select("Condition", "condition", [["saleable", "Saleable"], ["damaged", "Damaged"], ["expired", "Expired"], ["unsaleable", "Other unsaleable"]])}${field("Return voucher", "reference", "STR-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products received</h3>${btn("+ Add product", "stock-add-line", "return", 'type="button"')}</div><div id="stock-return-lines"></div>${area("Reason / notes", "note")}<p class="muted">All lines share this return condition and save together. Only saleable returns increase available warehouse stock.</p><div id="stock-operation-error" class="notice danger" role="alert" style="display:none"></div><button type="submit" class="gold" style="margin-top:20px">Record stock return</button></form>`,
   );
   renderStockOperationLines("return");
 }
@@ -2934,6 +2934,64 @@ document.addEventListener("click", async (e) => {
     delete form.dataset.saving;
     buttons.forEach((b) => (b.disabled = false));
   }
+}, true);
+
+async function submitStockOperation(form) {
+  if (!form || form.dataset.saving) return;
+  form.dataset.saving = "true";
+  const buttons = [...form.querySelectorAll("button")];
+  buttons.forEach((button) => (button.disabled = true));
+  const errorBox = form.querySelector("#stock-operation-error");
+  if (errorBox) { errorBox.style.display = "none"; errorBox.textContent = ""; }
+  try {
+    const f = Object.fromEntries(new FormData(form));
+    if (form.id === "stock-issue-form") {
+      const items = stockOperationItems(form, "ISSUE-");
+      const saved = await store.run("stock.issue", {
+        items, reference: f.reference, salesman_id: f.salesman_id,
+        date: f.date, note: f.note || "",
+      });
+      if (saved?.error) throw Error(saved.error);
+      if (saved?.queued) throw Error("The stock issue is still pending sync and has not been confirmed by Supabase. Check your connection and pending sync error before retrying.");
+      close(); render();
+      toast("Stock issue voucher recorded");
+    } else {
+      const items = stockOperationItems(form, "RETURN-");
+      const saved = await store.run("stock.return", {
+        items, reference: f.reference, salesman_id: f.salesman_id,
+        date: f.date, condition: f.condition, note: f.note || "",
+      });
+      if (saved?.error) throw Error(saved.error);
+      if (saved?.queued) throw Error("The stock return is still pending sync and has not been confirmed by Supabase. Check your connection and pending sync error before retrying.");
+      close(); render();
+      toast("Stock return voucher recorded");
+    }
+  } catch (err) {
+    const message = err?.message || String(err);
+    toast(message);
+    if (errorBox) {
+      errorBox.textContent = message;
+      errorBox.style.display = "block";
+      errorBox.setAttribute("tabindex", "-1");
+      errorBox.focus({ preventScroll: true });
+    }
+  } finally {
+    delete form.dataset.saving;
+    buttons.forEach((button) => (button.disabled = false));
+  }
+}
+
+// Explicit click handling for stock issue/return dialogs. This makes the primary
+// action reliable in hosted/browser-shell environments where delegated submit
+// events from dialog forms may not fire, and leaves database errors visible.
+document.addEventListener("click", async (e) => {
+  const button = e.target.closest?.('#stock-issue-form button[type="submit"], #stock-return-form button[type="submit"]');
+  if (!button) return;
+  const form = button.closest("form#stock-issue-form, form#stock-return-form");
+  if (!form) return;
+  e.preventDefault();
+  e.stopPropagation();
+  await submitStockOperation(form);
 }, true);
 
 document.addEventListener("submit", async (e) => {

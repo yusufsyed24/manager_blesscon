@@ -1,3 +1,11 @@
+## Stock issue button and confirmed stock transfer (16 October 2026)
+
+- Added explicit click handling for the **Confirm stock issue** and **Record stock return** buttons so the operation does not depend only on a delegated dialog submit event.
+- Stock issue/return forms now keep the dialog open and show the actual validation, permission, warehouse-balance, or Supabase error instead of appearing to do nothing.
+- Online stock issues/returns now wait for the `apply_command` RPC to confirm the database transaction before reporting success; earlier queued changes must sync first. Missing/outdated operational SQL is identified in the error message.
+- Bumped the service-worker cache and synchronized root deployment copies with `web/`.
+- Validation: JavaScript syntax and archive checks passed. Live Supabase transaction behavior remains unverified.
+
 ## Salesman field sales and admin fieldwork visibility (16 October 2026)
 
 - Fixed the My profile & fieldwork navigation guard so a salesman is not silently redirected to the dashboard when their linked salesman row is missing; the page now shows the account-link diagnostic instead. Salesman matching compares IDs as strings to avoid UUID/text representation mismatches.
