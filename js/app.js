@@ -164,6 +164,17 @@ const balance = (id, salesmanId = null) => {
     return movements.reduce((sum, movement) => sum + Number(movement.boxes), 0);
   return Number(S().stock.find((x) => x.product_id === id)?.boxes || 0);
 };
+// Net stock currently held by a salesman: issues add stock, sales and returns
+// reduce it. Keep this separate from warehouse balance and always scope by seller.
+const heldStock = (productId, salesmanId) => {
+  if (!productId || !salesmanId) return 0;
+  return S().salesman_stock_movements
+    .filter((movement) =>
+      String(movement.product_id) === String(productId) &&
+      String(movement.salesman_id) === String(salesmanId),
+    )
+    .reduce((sum, movement) => sum + num(movement.boxes), 0);
+};
 const download = (name, content, type = "application/json") => {
   const a = document.createElement("a"),
     url = URL.createObjectURL(

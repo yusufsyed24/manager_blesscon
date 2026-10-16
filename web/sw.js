@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v12-stock-rpc-routing-20261016";
+const CACHE = "blesscon-static-v13-heldstock-runtime-fix-20261016";
 const ASSETS = [
   "./",
   "./index.html",

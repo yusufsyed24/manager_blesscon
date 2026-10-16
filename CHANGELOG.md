@@ -214,3 +214,10 @@ This release is a deployable source package, not a live deployment. Production c
 - Saves the salesman profile through the existing admin command path, then refreshes the snapshot so the salesman appears in Salesmen & Targets, stock issue/return selectors, and sales assignment dropdowns.
 - Synchronized root deployment JavaScript with `web/js/app.js` and bumped the service-worker cache version to force updated assets to load.
 - Validation: JavaScript syntax checks passed. Live Supabase and full integration tests were not run in this environment.
+
+## 2026-10-16 — Fix salesman login `heldStock is not defined`
+- **Reported symptom:** salesman login crashed while rendering the dashboard/profile/product and stock views with `heldStock is not defined` (JavaScript identifiers are case-sensitive).
+- **Root cause:** several salesman UI views called `heldStock(productId, salesmanId)`, but no helper with that name was declared in `app.js`.
+- **Fix:** added the missing helper to calculate each salesman’s net held boxes from only that salesman’s stock movements for the requested product. It returns zero when the product or salesman ID is unavailable and does not expose warehouse or another salesman’s stock.
+- **Cache/deployment:** synchronized root and `web/` copies and bumped the service-worker cache namespace.
+- **Validation:** `node --check` passed for all JavaScript files under both `js/` and `web/js/`; root and `web/` `app.js` hashes match. Live Supabase login was not available for integration testing.
