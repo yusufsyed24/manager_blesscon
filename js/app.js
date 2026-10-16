@@ -279,7 +279,7 @@ function render() {
   charts.forEach((c) => c.destroy());
   charts = [];
   const s = S();
-  if (page === "myprofile" && !["salesman", "user"].includes(user.role)) page = "dashboard";
+  if (page === "myprofile" && !admin() && !["salesman", "user"].includes(user.role)) page = "dashboard";
   if (!can(page) && page !== "myprofile") page = "dashboard";
   document.querySelectorAll("[data-page]").forEach((b) => {
     b.classList.toggle("active", b.dataset.page === page);
@@ -306,7 +306,8 @@ function render() {
     import: renderImport,
   };
   $("page").innerHTML = methods[page]();
-  if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
+  if (page === "myprofile" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load admin fieldwork: " + e.message));
+  else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
   if (page === "staff" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load salesman fieldwork: " + e.message));
   if (page === "dsr")
     $("page").insertAdjacentHTML("beforeend", dsrClosingSection());
@@ -354,7 +355,16 @@ function renderSalesmanDashboard() {
     <section class="panel"><h2>Fieldwork shortcuts</h2><div class="actions">${btn("Attendance & customer visits","go-myprofile","","","gold")}${btn("Daily closing","go-closing")}${btn("Daily sales report","go-dsr")}</div></section>`;
 }
 
+function renderAdminMyProfile() {
+  const current = user || {};
+  const profile = S().profiles?.find((p) => String(p.id) === String(current.id)) || {};
+  return head("My profile & fieldwork", "Administrator account details and a consolidated view of salesman attendance, documents, customer visits and profile photos.") +
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar">♙</div><div><h2>${esc(current.name || profile.display_name || "Administrator")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Administrator</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><p class="muted">This page displays the signed-in administrator account. Salesman records and photos below are read-only and do not require the administrator to be linked to a salesman record.</p></section>
+    <section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
+}
+
 function renderMyProfile() {
+  if (admin()) return renderAdminMyProfile();
   const seller = own();
   if (!seller) return head("My profile", "Your account is not linked to a salesman record.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
   const s = S(), sid = seller.id;
@@ -1026,11 +1036,11 @@ async function resolveSalesmanPhoto(seller) {
   }
   if (!path) return { url: "", error: "No profile photo uploaded." };
   const result = await bucket.createSignedUrl(path, 3600);
-  return { url: result.data?.signedUrl || "", error: result.error?.message || "" };
+  return { url: result.data?.signedUrl || "", error: result.error?.message || (result.data?.signedUrl ? "" : "Could not create a private photo link.") };
 }
 
 async function hydrateAdminFieldwork() {
-  if (!admin() || !client || page !== "staff") return;
+  if (!admin() || !client || !["staff", "myprofile"].includes(page)) return;
   const root = $("admin-fieldwork-data");
   if (!root) return;
   const [sellers, attendance, documents, visits] = await Promise.all([

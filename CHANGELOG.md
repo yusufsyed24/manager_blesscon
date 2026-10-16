@@ -237,3 +237,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Added responsive layout styling for the admin photo cards.
 - Bumped the service-worker cache namespace and synchronized root/web copies for Netlify's root publish configuration.
 - Local validation covers JavaScript syntax and ZIP integrity; live Supabase permissions and deployed hosting still require verification in the user's environment.
+
+## 2026-10-17 — Fixed v12 admin My Profile & Fieldwork routing
+- Admin users can open My profile & fieldwork without requiring a linked salesman record.
+- Admin page now displays the signed-in administrator identity and a dedicated consolidated salesman fieldwork/profile-photo panel.
+- Admin fieldwork hydration runs on both My Profile & Fieldwork and Salesmen & Targets.
+- Root and web app/service-worker copies are synchronized; cache namespace bumped.
