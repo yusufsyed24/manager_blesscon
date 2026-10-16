@@ -1,3 +1,9 @@
+## Daily closing balances (16 October 2026)
+
+- The daily closing form now records **Cash in Bank, Cash in Hand, Cash in Easypaisa, Cash in Jazz Cash and Market Credit** (Rs.). They appear in the Closing register and in the DSR "Daily cash and closing status" table.
+- These five amounts are recorded with the closing for reference; they do not change expected cash or the cash variance.
+- Run `supabase/closing_balances.sql` once in the Supabase SQL editor (adds five columns to `daily_closings` and patches `apply_operational_command`). Safe to re-run; earlier closings show Rs. 0.00 for the new balances. `operational_modules.sql` includes the same change for fresh installs.
+
 # Changelog — 2.0.0 (14 October 2026)
 
 - Manager role: company monthly target panel, salesman contribution, manager direct sales counted separately (supabase/manager_role.sql).

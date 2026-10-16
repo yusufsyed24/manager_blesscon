@@ -57,6 +57,11 @@ create table if not exists public.daily_closings (
   expected_cash_paisa bigint not null,
   actual_cash_paisa bigint not null check (actual_cash_paisa >= 0),
   cash_variance_paisa bigint not null,
+  cash_in_bank_paisa bigint not null default 0 check (cash_in_bank_paisa >= 0),
+  cash_in_hand_paisa bigint not null default 0 check (cash_in_hand_paisa >= 0),
+  cash_in_easypaisa_paisa bigint not null default 0 check (cash_in_easypaisa_paisa >= 0),
+  cash_in_jazzcash_paisa bigint not null default 0 check (cash_in_jazzcash_paisa >= 0),
+  market_credit_paisa bigint not null default 0 check (market_credit_paisa >= 0),
   expected_stock jsonb not null default '{}',
   actual_stock jsonb not null default '{}',
   stock_variances jsonb not null default '{}',
@@ -71,6 +76,11 @@ create table if not exists public.daily_closings (
   decision_reason text not null default '',
   unique (salesman_id,business_date)
 );
+alter table public.daily_closings add column if not exists cash_in_bank_paisa bigint not null default 0 check (cash_in_bank_paisa >= 0),
+  add column if not exists cash_in_hand_paisa bigint not null default 0 check (cash_in_hand_paisa >= 0),
+  add column if not exists cash_in_easypaisa_paisa bigint not null default 0 check (cash_in_easypaisa_paisa >= 0),
+  add column if not exists cash_in_jazzcash_paisa bigint not null default 0 check (cash_in_jazzcash_paisa >= 0),
+  add column if not exists market_credit_paisa bigint not null default 0 check (market_credit_paisa >= 0);
 create index if not exists daily_closings_date_status on public.daily_closings(business_date,status);
 
 create table if not exists private.operational_commands (
@@ -338,6 +348,7 @@ begin
       handed:=coalesce(nullif(data->>'cash_handed_over_paisa','')::bigint,0);
       actual_cash:=coalesce(nullif(data->>'actual_cash_paisa','')::bigint,0);
       if opening<0 or handed<0 or actual_cash<0 then raise exception 'Cash amounts cannot be negative'; end if;
+      if coalesce(nullif(data->>'cash_in_bank_paisa','')::bigint,0)<0 or coalesce(nullif(data->>'cash_in_hand_paisa','')::bigint,0)<0 or coalesce(nullif(data->>'cash_in_easypaisa_paisa','')::bigint,0)<0 or coalesce(nullif(data->>'cash_in_jazzcash_paisa','')::bigint,0)<0 or coalesce(nullif(data->>'market_credit_paisa','')::bigint,0)<0 then raise exception 'Closing balances cannot be negative'; end if;
       if exists(select 1 from jsonb_each_text(data->'actual_stock') x where x.value !~ '^[0-9]+$') then raise exception 'Counted stock must contain nonnegative whole boxes'; end if;
       if exists(select 1 from jsonb_object_keys(data->'actual_stock') as keys(product_id) where not exists(select 1 from public.products p where p.id=keys.product_id)) then raise exception 'Counted stock contains an unknown product'; end if;
       select actual_cash_paisa into prior_cash from public.daily_closings where salesman_id=sid and business_date<d and status='approved' order by business_date desc limit 1;
@@ -366,10 +377,10 @@ begin
       select * into closing from public.daily_closings where salesman_id=sid and business_date=d for update;
       if found then
         if closing.status not in ('rejected','reopened') or closing.version is distinct from nullif(data->>'expected_version','')::integer then raise exception 'Closing already submitted or changed; reload before retrying'; end if;
-        update public.daily_closings set opening_cash_paisa=opening,cash_handed_over_paisa=handed,cash_received_paisa=cash_in,cash_expenses_paisa=cash_expense,expected_cash_paisa=expected_cash,actual_cash_paisa=actual_cash,cash_variance_paisa=variance,expected_stock=expected_stock,actual_stock=actual_stock,stock_variances=stock_variance,reason=coalesce(data->>'reason',''),notes=coalesce(data->>'notes',''),status='submitted',version=version+1,submitted_by=auth.uid(),submitted_at=now(),approved_by=null,approved_at=null,decision_reason='' where id=closing.id returning to_jsonb(daily_closings.*) into result;
+        update public.daily_closings set opening_cash_paisa=opening,cash_handed_over_paisa=handed,cash_received_paisa=cash_in,cash_expenses_paisa=cash_expense,expected_cash_paisa=expected_cash,actual_cash_paisa=actual_cash,cash_variance_paisa=variance,cash_in_bank_paisa=coalesce(nullif(data->>'cash_in_bank_paisa','')::bigint,0),cash_in_hand_paisa=coalesce(nullif(data->>'cash_in_hand_paisa','')::bigint,0),cash_in_easypaisa_paisa=coalesce(nullif(data->>'cash_in_easypaisa_paisa','')::bigint,0),cash_in_jazzcash_paisa=coalesce(nullif(data->>'cash_in_jazzcash_paisa','')::bigint,0),market_credit_paisa=coalesce(nullif(data->>'market_credit_paisa','')::bigint,0),expected_stock=expected_stock,actual_stock=actual_stock,stock_variances=stock_variance,reason=coalesce(data->>'reason',''),notes=coalesce(data->>'notes',''),status='submitted',version=version+1,submitted_by=auth.uid(),submitted_at=now(),approved_by=null,approved_at=null,decision_reason='' where id=closing.id returning to_jsonb(daily_closings.*) into result;
       else
-        insert into public.daily_closings(salesman_id,business_date,opening_cash_paisa,cash_handed_over_paisa,cash_received_paisa,cash_expenses_paisa,expected_cash_paisa,actual_cash_paisa,cash_variance_paisa,expected_stock,actual_stock,stock_variances,reason,notes,status,submitted_by)
-        values(sid,d,opening,handed,cash_in,cash_expense,expected_cash,actual_cash,variance,expected_stock,actual_stock,stock_variance,coalesce(data->>'reason',''),coalesce(data->>'notes',''),'submitted',auth.uid()) returning to_jsonb(daily_closings.*) into result;
+        insert into public.daily_closings(salesman_id,business_date,opening_cash_paisa,cash_handed_over_paisa,cash_received_paisa,cash_expenses_paisa,expected_cash_paisa,actual_cash_paisa,cash_variance_paisa,cash_in_bank_paisa,cash_in_hand_paisa,cash_in_easypaisa_paisa,cash_in_jazzcash_paisa,market_credit_paisa,expected_stock,actual_stock,stock_variances,reason,notes,status,submitted_by)
+        values(sid,d,opening,handed,cash_in,cash_expense,expected_cash,actual_cash,variance,coalesce(nullif(data->>'cash_in_bank_paisa','')::bigint,0),coalesce(nullif(data->>'cash_in_hand_paisa','')::bigint,0),coalesce(nullif(data->>'cash_in_easypaisa_paisa','')::bigint,0),coalesce(nullif(data->>'cash_in_jazzcash_paisa','')::bigint,0),coalesce(nullif(data->>'market_credit_paisa','')::bigint,0),expected_stock,actual_stock,stock_variance,coalesce(data->>'reason',''),coalesce(data->>'notes',''),'submitted',auth.uid()) returning to_jsonb(daily_closings.*) into result;
       end if;
     when 'closing.approve' then
       if not public.is_admin() then raise exception 'Management approval required'; end if;

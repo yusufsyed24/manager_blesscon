@@ -172,3 +172,10 @@ Primary references used: [Supabase database functions](https://supabase.com/docs
 ## Repair product create/update on an existing Supabase deployment
 
 If the deployed database was created before the product-save fix, run `supabase/fix_product_save.sql` in the Supabase SQL Editor. This replaces `public.apply_command` with the current function while preserving the other command branches, then asks PostgREST to reload its schema cache. Do not run an older copy of this migration from a previous ZIP. Afterward redeploy `web/` and hard-refresh the browser (Ctrl+Shift+R). Preserve the real project URL and publishable/anon key in the deployed `app_config.js`; the repository template intentionally has empty values and cannot connect until configured.
+
+## Manager role (new)
+Run `supabase/manager_role.sql` once in the Supabase SQL editor, then redeploy the `admin-create-user` edge function. Create users with role "manager" under Users & access. Managers see the Company target panel on Overview; their direct sales are counted separately, on top of the company target.
+
+### Daily closing balances
+
+Run `supabase/closing_balances.sql` once in the Supabase SQL editor (after `operational_modules.sql` and `manager_role.sql`). It adds Cash in Bank, Cash in Hand, Cash in Easypaisa, Cash in Jazz Cash and Market Credit to daily closings, is safe to re-run, and patches the existing closing function in place. Then redeploy `web/` and hard-refresh (Ctrl+Shift+R).

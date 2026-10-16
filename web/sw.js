@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v7-dsr-stock-close-20261015";
+const CACHE = "blesscon-static-v8-closing-balances-20261016";
 const ASSETS = [
   "./",
   "./index.html",

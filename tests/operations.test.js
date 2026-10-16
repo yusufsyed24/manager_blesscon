@@ -293,3 +293,51 @@ it("requires a reason for cash or stock discrepancies and blocks salesman approv
   ).rejects.toThrow(/management approval/i);
   await db.close();
 }, 30000);
+
+it("stores the closing balances (bank, hand, Easypaisa, Jazz Cash, market credit) without affecting cash variance", async () => {
+  const db = await database();
+  const run = async (kind, data) =>
+    (
+      await db.query(
+        "select public.apply_operational_command($1,$2,$3) result",
+        [randomUUID(), kind, data],
+      )
+    ).rows[0].result;
+  await db.query(
+    "insert into public.salesmen(id,name,user_id) values('S','Test Seller',$1)",
+    [B],
+  );
+  const base = {
+    salesman_id: "S",
+    date: "2026-10-15",
+    opening_cash_paisa: 0,
+    actual_cash_paisa: 0,
+    actual_stock: {},
+  };
+  await expect(
+    as(db, B, () => run("closing.submit", { ...base, cash_in_bank_paisa: -1 })),
+  ).rejects.toThrow(/cannot be negative/i);
+  const submitted = await as(db, B, () =>
+    run("closing.submit", {
+      ...base,
+      cash_in_bank_paisa: 500_000,
+      cash_in_hand_paisa: 120_000,
+      cash_in_easypaisa_paisa: 30_000,
+      cash_in_jazzcash_paisa: 45_000,
+      market_credit_paisa: 910_000,
+    }),
+  );
+  expect(Number(submitted.cash_in_bank_paisa)).toBe(500_000);
+  expect(Number(submitted.cash_in_hand_paisa)).toBe(120_000);
+  expect(Number(submitted.cash_in_easypaisa_paisa)).toBe(30_000);
+  expect(Number(submitted.cash_in_jazzcash_paisa)).toBe(45_000);
+  expect(Number(submitted.market_credit_paisa)).toBe(910_000);
+  expect(Number(submitted.cash_variance_paisa)).toBe(0);
+  const stored = await db.query(
+    "select cash_in_bank_paisa,market_credit_paisa from public.daily_closings where id=$1",
+    [submitted.id],
+  );
+  expect(Number(stored.rows[0].cash_in_bank_paisa)).toBe(500_000);
+  expect(Number(stored.rows[0].market_credit_paisa)).toBe(910_000);
+  await db.close();
+}, 30000);

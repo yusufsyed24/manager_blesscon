@@ -175,3 +175,7 @@ If the deployed database was created before the product-save fix, run `supabase/
 
 ## Manager role (new)
 Run `supabase/manager_role.sql` once in the Supabase SQL editor, then redeploy the `admin-create-user` edge function. Create users with role "manager" under Users & access. Managers see the Company target panel on Overview; their direct sales are counted separately, on top of the company target.
+
+### Daily closing balances
+
+Run `supabase/closing_balances.sql` once in the Supabase SQL editor (after `operational_modules.sql` and `manager_role.sql`). It adds Cash in Bank, Cash in Hand, Cash in Easypaisa, Cash in Jazz Cash and Market Credit to daily closings, is safe to re-run, and patches the existing closing function in place. Then redeploy `web/` and hard-refresh (Ctrl+Shift+R).

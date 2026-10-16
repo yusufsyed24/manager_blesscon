@@ -664,6 +664,17 @@ export function localApply(base, op, user) {
         cashExpenses -
         Number(d.cash_handed_over_paisa || 0);
       const cashVariance = Number(d.actual_cash_paisa) - expectedCash;
+      const balances = Object.fromEntries(
+        [
+          "cash_in_bank_paisa",
+          "cash_in_hand_paisa",
+          "cash_in_easypaisa_paisa",
+          "cash_in_jazzcash_paisa",
+          "market_credit_paisa",
+        ].map((key) => [key, Number(d[key] || 0)]),
+      );
+      if (Object.values(balances).some((v) => !Number.isFinite(v) || v < 0))
+        throw Error("Closing balances cannot be negative");
       const expectedStock = Object.fromEntries(
         [...new Set(s.salesman_stock_movements.map((row) => row.product_id))]
           .map((productId) => [productId, salesmanStock(productId, d.salesman_id)])
@@ -696,6 +707,7 @@ export function localApply(base, op, user) {
         expected_cash_paisa: expectedCash,
         actual_cash_paisa: Number(d.actual_cash_paisa),
         cash_variance_paisa: cashVariance,
+        ...balances,
         expected_stock: expectedStock,
         actual_stock: d.actual_stock || {},
         stock_variances: stockVariance,

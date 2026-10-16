@@ -588,7 +588,7 @@ function renderDailyClosing() {
       "Reconcile collected cash and salesman-held stock before management approval.",
       admin() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : "",
     ) +
-    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
+    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", ...CLOSING_BALANCE_FIELDS.map(([, label]) => label), "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), ...CLOSING_BALANCE_FIELDS.map(([name]) => money(closing[name + "_paisa"] || 0)), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
   );
 }
 function dsrClosingSection() {
@@ -612,12 +612,15 @@ function dsrClosingSection() {
         closing ? money(closing.expected_cash_paisa) : "—",
         closing ? money(closing.actual_cash_paisa) : "—",
         closing ? money(closing.cash_variance_paisa) : "—",
+        ...CLOSING_BALANCE_FIELDS.map(([name]) =>
+          closing ? money(closing[name + "_paisa"] || 0) : "—",
+        ),
         closing ? Object.keys(closing.stock_variances || {}).length : "—",
         closing ? badge(closing.status) : badge("Not submitted", "amber"),
         esc(closing?.reason || closing?.decision_reason || ""),
       ];
     });
-  return `<section class="panel"><h2>Daily cash and closing status</h2>${table(["Salesman", "Opening cash", "Cash received", "Cash expenses", "Handed over", "Expected", "Counted", "Variance", "Stock variances", "Status", "Reason"], rows, "No salesman records available")}</section>`;
+  return `<section class="panel"><h2>Daily cash and closing status</h2>${table(["Salesman", "Opening cash", "Cash received", "Cash expenses", "Handed over", "Expected", "Counted", "Variance", ...CLOSING_BALANCE_FIELDS.map(([, label]) => label), "Stock variances", "Status", "Reason"], rows, "No salesman records available")}</section>`;
 }
 function stockFamilyName(name) {
   const normalized = String(name || "").trim().replace(/\s+/g, " ");
@@ -1784,6 +1787,19 @@ function openingCashFor(salesmanId, date) {
       ?.actual_cash_paisa || 0,
   );
 }
+const CLOSING_BALANCE_FIELDS = [
+  ["cash_in_bank", "Cash in Bank"],
+  ["cash_in_hand", "Cash in Hand"],
+  ["cash_in_easypaisa", "Cash in Easypaisa"],
+  ["cash_in_jazzcash", "Cash in Jazz Cash"],
+  ["market_credit", "Market Credit"],
+];
+function closingBalanceTotal(closing) {
+  return CLOSING_BALANCE_FIELDS.reduce(
+    (sum, [name]) => sum + Number(closing?.[name + "_paisa"] || 0),
+    0,
+  );
+}
 function closingModal() {
   const sellers = visible(S().salesmen).filter((row) => row.active);
   const salesmanId = own()?.id || sellers[0]?.id || "";
@@ -1793,7 +1809,7 @@ function closingModal() {
   const stockFields = closingStockFields(salesmanId, date);
   modal(
     "Submit daily closing",
-    `<form id="closing-form">${admin() ? select("Salesman", "closing_salesman", sellers.map((row) => [row.id, row.name]), salesmanId) : `<input type="hidden" name="closing_salesman" value="${esc(salesmanId)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(salesmanId))}" readonly></div>`}<div class="grid">${field("Business date", "date", date, "date", 'required data-closing-date')}${field("Opening cash (Rs.)", "opening_cash", opening / 100, "number", 'min="0" step="0.01" required data-closing-cash')}${field("Cash handed over / deposited (Rs.)", "cash_handed_over", "0.00", "number", 'min="0" step="0.01" required data-closing-cash')}${field("Actual cash counted (Rs.)", "actual_cash", (expectedCash / 100).toFixed(2), "number", 'min="0" step="0.01" required data-closing-cash')}</div><div class="notice" id="closing-cash-estimate" aria-live="polite">Expected cash: ${money(expectedCash)}</div><h3>Physical salesman stock count</h3><div id="closing-stock-fields" class="grid">${stockFields || '<p class="muted">No salesman stock movements exist for this account.</p>'}</div>${area("Variance reason (required when cash or stock differs)", "reason")}${area("Closing notes", "notes")}<button class="gold" style="margin-top:20px">Submit for management approval</button></form>`,
+    `<form id="closing-form">${admin() ? select("Salesman", "closing_salesman", sellers.map((row) => [row.id, row.name]), salesmanId) : `<input type="hidden" name="closing_salesman" value="${esc(salesmanId)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(salesmanId))}" readonly></div>`}<div class="grid">${field("Business date", "date", date, "date", 'required data-closing-date')}${field("Opening cash (Rs.)", "opening_cash", opening / 100, "number", 'min="0" step="0.01" required data-closing-cash')}${field("Cash handed over / deposited (Rs.)", "cash_handed_over", "0.00", "number", 'min="0" step="0.01" required data-closing-cash')}${field("Actual cash counted (Rs.)", "actual_cash", (expectedCash / 100).toFixed(2), "number", 'min="0" step="0.01" required data-closing-cash')}</div><div class="notice" id="closing-cash-estimate" aria-live="polite">Expected cash: ${money(expectedCash)}</div><h3>Closing balances</h3><p class="muted">Enter the balance held in each place at the end of the day. These are recorded with the closing and do not affect the cash variance.</p><div class="grid">${CLOSING_BALANCE_FIELDS.map(([name, label]) => field(label + " (Rs.)", name, "0.00", "number", 'min="0" step="0.01" required')).join("")}</div><h3>Physical salesman stock count</h3><div id="closing-stock-fields" class="grid">${stockFields || '<p class="muted">No salesman stock movements exist for this account.</p>'}</div>${area("Variance reason (required when cash or stock differs)", "reason")}${area("Closing notes", "notes")}<button class="gold" style="margin-top:20px">Submit for management approval</button></form>`,
   );
 }
 function targetsModal(id) {
@@ -2864,6 +2880,12 @@ document.addEventListener("submit", async (e) => {
           opening_cash_paisa: paisa(f.opening_cash),
           cash_handed_over_paisa: paisa(f.cash_handed_over),
           actual_cash_paisa: paisa(f.actual_cash),
+          ...Object.fromEntries(
+            CLOSING_BALANCE_FIELDS.map(([name]) => [
+              name + "_paisa",
+              paisa(f[name] || 0),
+            ]),
+          ),
           actual_stock: actualStock,
           reason: f.reason || "",
           notes: f.notes || "",
