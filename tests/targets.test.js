@@ -5,6 +5,7 @@ import {
   salary,
   profitLoss,
   paymentState,
+  targetPerformance,
 } from "../js/domain.js";
 const s = {
   id: "S",
@@ -52,6 +53,42 @@ it("month boundary rolls or resets and optional surplus reduces next target", ()
   expect(roll.at(-1).carried_forward_in).toBe(5);
   expect(reset.at(-1).carried_forward_in).toBe(0);
   expect(salary(s, 130).total).toBe(5500000);
+});
+it("counts salesman sales toward company target and reports manager direct cartons separately", () => {
+  expect(DEFAULTS.company_monthly_target).toBe(2000);
+  const orders = [
+    {
+      id: "SALESMAN-ORDER",
+      salesman_id: "S",
+      created_by: "salesman-user",
+      date: "2026-10-15",
+      status: "confirmed",
+    },
+    {
+      id: "MANAGER-ORDER",
+      salesman_id: null,
+      created_by: "manager-user",
+      date: "2026-10-15",
+      status: "confirmed",
+    },
+  ];
+  const items = [
+    { order_id: "SALESMAN-ORDER", boxes: 3120, boxes_per_carton: 24 },
+    { order_id: "MANAGER-ORDER", boxes: 72, boxes_per_carton: 24 },
+  ];
+  expect(
+    targetPerformance(
+      orders,
+      items,
+      "2026-10-01",
+      "2026-10-31",
+      "manager-user",
+    ),
+  ).toEqual({
+    achieved_cartons: 133,
+    manager_direct_cartons: 3,
+    salesman_cartons: 130,
+  });
 });
 it("payment states and expense deletion change net exactly, cancelled orders excluded", () => {
   expect(paymentState(10000000, 0).status).toBe("UNPAID");

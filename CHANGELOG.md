@@ -1,5 +1,12 @@
 # Changelog — 2.0.0 (14 October 2026)
 
+## Company and manager target attribution (16 October 2026)
+
+- Added a 2,000-carton company target, separate from the existing 130-carton default individual salesman target.
+- Overview company progress sums confirmed order-line quantities for the month, so salesman orders contribute to the company target without changing their individual target calculation.
+- Added an explicit Manager / direct sale attribution for administrator-entered orders. Manager-direct cartons appear as a separate subtotal and are included once in company achievement; sales assigned to a salesman are not classified as manager-direct.
+- Added unit and UI regression coverage for the target calculation and direct-sale selector. Automated tests remain unexecuted where npm is unavailable.
+
 ## Operational DSR, stock accountability and daily closing (15 October 2026)
 
 - **Root cause:** the existing schema had one company-wide `stock_movements` table and invoice-linked payments but no salesman location ledger or closing entity. Dashboard summaries could report total company stock but could not reconcile issued stock, seller-held stock or daily cash/stock variance as one connected source of truth.

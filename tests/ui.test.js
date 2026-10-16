@@ -69,6 +69,8 @@ it("practice workspace navigates every sidebar page without DOM errors", async (
 });
 it("order editor reprices mixed flavours live and has labelled controls", async () => {
   app.openEditor(false);
+  expect(document.querySelector('#document-form [name="salesman_id"]').value).toBe("");
+  expect(document.querySelector('#document-form [name="salesman_id"] option').textContent).toBe("Manager / direct sale");
   document.querySelector('[data-act="add-line"]').click();
   document.querySelector("#line-p-1").value = "DEMO-RANI-2";
   document

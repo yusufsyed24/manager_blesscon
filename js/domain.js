@@ -8,6 +8,8 @@ export const DEFAULTS = {
   bank_details: "",
   terms: "Please pay by the agreed due date.",
   monthly_target: 130,
+  company_monthly_target: 2000,
+  company_monthly_target: 2000,
   boxes_per_carton: 24,
   base_salary_paisa: 4500000,
   working_days: [1, 2, 3, 4, 5, 6],
@@ -239,6 +241,51 @@ export function targetChain(
     carry = out;
   }
   return rows;
+}
+export function targetPerformance(
+  orders,
+  items,
+  from,
+  to,
+  managerUserId = "",
+  managerSalesmanId = "",
+) {
+  const periodOrders = orders.filter(
+    (order) =>
+      order.status === "confirmed" &&
+      !order.deleted_at &&
+      order.date >= from &&
+      order.date <= to,
+  );
+  const cartonsFor = (order) =>
+    items
+      .filter((item) => item.order_id === order.id)
+      .reduce(
+        (sum, item) =>
+          sum + Number(item.boxes || 0) / (Number(item.boxes_per_carton) || 1),
+        0,
+      );
+  const achievedCartons = periodOrders.reduce(
+    (sum, order) => sum + cartonsFor(order),
+    0,
+  );
+  const managerOrders = periodOrders.filter(
+    (order) =>
+      !order.salesman_id ||
+      (managerUserId &&
+        order.created_by === managerUserId &&
+        managerSalesmanId &&
+        order.salesman_id === managerSalesmanId),
+  );
+  const managerDirectCartons = managerOrders.reduce(
+    (sum, order) => sum + cartonsFor(order),
+    0,
+  );
+  return {
+    achieved_cartons: achievedCartons,
+    manager_direct_cartons: managerDirectCartons,
+    salesman_cartons: achievedCartons - managerDirectCartons,
+  };
 }
 export function salary(salesman, achieved, settings = DEFAULTS) {
   const percent = (achieved / salesman.monthly_target) * 100;
