@@ -2916,7 +2916,14 @@ document.addEventListener("submit", async (e) => {
           "admin-create-user",
           { body: { ...f, request_id: uid() } },
         );
-        if (error) throw error;
+        if (error) {
+          let message = error.message;
+          try {
+            const body = await error.context.json();
+            if (body?.error) message = body.error;
+          } catch {}
+          throw Error(message);
+        }
         if (data.error) throw Error(data.error);
         await store.refresh();
         close();
