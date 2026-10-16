@@ -196,3 +196,6 @@ The salesman profile, private document upload, attendance, and optional GPS cust
 
 The dashboard is selected by the `salesman` role and the linked salesman record; running the SQL migration alone does not deploy the frontend.
 
+### Fix admin fieldwork access (existing deployments)
+
+If the admin page reports `permission denied for table salesmen`, rerun the updated `supabase/salesman_self_service.sql` in the Supabase SQL Editor using the project owner/admin SQL role. It restores `SELECT` permission for authenticated users and the admin/self-salesman read policy; it does not delete business data. After it succeeds, sign out and back in to refresh the session.

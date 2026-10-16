@@ -86,6 +86,13 @@ do $$ begin
   end if;
 end $$;
 
+-- Ensure authenticated admins can read salesman records for the admin fieldwork panel.
+-- Some existing deployments revoked table privileges after the base schema was applied.
+grant select on public.salesmen to authenticated;
+drop policy if exists salesman_read on public.salesmen;
+create policy salesman_read on public.salesmen for select to authenticated
+  using (public.is_admin() or public.owns_salesman(id));
+
 -- Permit a linked salesman to change only the profile-photo path; other
 -- employee fields remain writable only through existing authorized workflows.
 grant update (photo_path) on public.salesmen to authenticated;
