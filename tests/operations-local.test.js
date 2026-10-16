@@ -89,3 +89,57 @@ it("keeps warehouse availability stable when an issued salesman sells and return
     state.salesman_stock_movements.reduce((sum, row) => sum + row.boxes, 0),
   ).toBe(120);
 });
+
+it("issues and receives multiple products under one local voucher", () => {
+  let state = empty();
+  const user = { id: uid(), role: "admin", practice: true };
+  state.products.push(
+    { id: "P24", name: "Rani Candy - Orange", active: true, boxes_per_carton: 24, cost_paisa: 0, retail_paisa: 100, wholesale_paisa: 80 },
+    { id: "P12", name: "Sour Chew - Mango", active: true, boxes_per_carton: 12, cost_paisa: 0, retail_paisa: 100, wholesale_paisa: 80 },
+  );
+  state.salesmen.push({ id: "S", name: "Seller", active: true });
+  state.stock_movements.push(
+    { id: uid(), transaction_id: "OPEN-24", product_id: "P24", date: today(), boxes: 240, kind: "opening" },
+    { id: uid(), transaction_id: "OPEN-12", product_id: "P12", date: today(), boxes: 120, kind: "opening" },
+  );
+  state.stock = [
+    { product_id: "P24", boxes: 240 },
+    { product_id: "P12", boxes: 120 },
+  ];
+  const apply = (kind, data) => {
+    state = localApply(state, { id: uid(), kind, data }, user).state;
+  };
+  apply("stock.issue", {
+    reference: "V-100",
+    salesman_id: "S",
+    date: today(),
+    items: [
+      { transaction_id: "I-24", product_id: "P24", boxes: 48 },
+      { transaction_id: "I-12", product_id: "P12", boxes: 24 },
+    ],
+  });
+  expect(state.stock_vouchers).toHaveLength(1);
+  expect(state.stock_vouchers[0].reference).toBe("V-100");
+  expect(state.salesman_stock_movements.filter((row) => row.kind === "issue")).toHaveLength(2);
+  expect(state.stock.map((row) => row.boxes)).toEqual([192, 96]);
+
+  apply("stock.return", {
+    reference: "V-101",
+    salesman_id: "S",
+    date: today(),
+    condition: "saleable",
+    items: [
+      { transaction_id: "R-24", product_id: "P24", boxes: 24 },
+      { transaction_id: "R-12", product_id: "P12", boxes: 12 },
+    ],
+  });
+  expect(state.stock_vouchers).toHaveLength(2);
+  expect(state.stock_vouchers[1].condition).toBe("saleable");
+  expect(state.stock.map((row) => row.boxes)).toEqual([216, 108]);
+  expect(state.salesman_stock_movements.map((row) => row.reference)).toEqual([
+    "V-100",
+    "V-100",
+    "V-101",
+    "V-101",
+  ]);
+});

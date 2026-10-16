@@ -4,11 +4,11 @@ import { A, B, as, database } from "./db-helper.js";
 
 it("reconciles salesman stock issue, sale, saleable return and approved cash closing", async () => {
   const db = await database();
-  const run = async (kind, data, operational = false) =>
+  const run = async (kind, data, operational = false, operationId = randomUUID()) =>
     (
       await db.query(
         `select public.${operational ? "apply_operational_command" : "apply_command"}($1,$2,$3) result`,
-        [randomUUID(), kind, data],
+        [operationId, kind, data],
       )
     ).rows[0].result;
   const date = "2026-10-15";
@@ -24,6 +24,17 @@ it("reconciles salesman stock issue, sale, saleable return and approved cash clo
     },
   });
   await run("master.save", {
+    table: "products",
+    record: {
+      id: "Q",
+      name: "Sour Chew Test Candy",
+      boxes_per_carton: 12,
+      cost_paisa: 10000,
+      retail_paisa: 30000,
+      wholesale_paisa: 25000,
+    },
+  });
+  await run("master.save", {
     table: "salesmen",
     record: { id: "S", name: "Test Seller", user_id: B },
   });
@@ -35,7 +46,7 @@ it("reconciles salesman stock issue, sale, saleable return and approved cash clo
     (await db.query("select public.business_snapshot() snapshot")).rows[0]
       .snapshot,
   );
-  expect(sellerSnapshot.products[0].cost_paisa).toBeUndefined();
+  expect(sellerSnapshot.products.find((product) => product.id === "P").cost_paisa).toBeUndefined();
   expect(sellerSnapshot.salesmen[0].base_salary_paisa).toBeUndefined();
   expect(sellerSnapshot.settings.base_salary_paisa).toBeUndefined();
   expect(sellerSnapshot.settings.incentives).toEqual([]);
@@ -51,7 +62,7 @@ it("reconciles salesman stock issue, sale, saleable return and approved cash clo
     (await db.query("select public.business_snapshot() snapshot")).rows[0]
       .snapshot,
   );
-  expect(Number(adminSnapshot.products[0].cost_paisa)).toBe(20000);
+  expect(Number(adminSnapshot.products.find((product) => product.id === "P").cost_paisa)).toBe(20000);
   expect(Number(adminSnapshot.salesmen[0].base_salary_paisa)).toBe(4_500_000);
   await run("stock.add", {
     transaction_id: "OPEN-P",
@@ -60,23 +71,32 @@ it("reconciles salesman stock issue, sale, saleable return and approved cash clo
     boxes: 1000,
     kind: "opening",
   });
-  const issue = {
-    transaction_id: "ISSUE-S-1",
-    salesman_id: "S",
-    product_id: "P",
+  await run("stock.add", {
+    transaction_id: "OPEN-Q",
+    product_id: "Q",
     date,
-    boxes: 240,
+    boxes: 600,
+    kind: "opening",
+  });
+  const issue = {
+    salesman_id: "S",
+    date,
     reference: "V-001",
+    items: [
+      { transaction_id: "ISSUE-S-1", product_id: "P", boxes: 240 },
+      { transaction_id: "ISSUE-S-2", product_id: "Q", boxes: 120 },
+    ],
   };
-  await run("stock.issue", issue, true);
-  await run("stock.issue", issue, true);
+  const issueOperation = randomUUID();
+  await run("stock.issue", issue, true, issueOperation);
+  await run("stock.issue", issue, true, issueOperation);
   await expect(
     run(
       "stock.issue",
-      { ...issue, transaction_id: "ISSUE-S-OTHER" },
+      { ...issue, reference: "V-001" },
       true,
     ),
-  ).rejects.toThrow();
+  ).rejects.toThrow(/voucher reference already exists/i);
   let balances = await db.query(
     "select * from public.stock_balances() where product_id='P'",
   );
@@ -85,6 +105,14 @@ it("reconciles salesman stock issue, sale, saleable return and approved cash clo
     "select boxes from public.salesman_stock_balances() where product_id='P' and salesman_id='S'",
   );
   expect(Number(balances.rows[0].boxes)).toBe(240);
+  const issuedQ = await db.query(
+    "select boxes from public.salesman_stock_balances() where product_id='Q' and salesman_id='S'",
+  );
+  expect(Number(issuedQ.rows[0].boxes)).toBe(120);
+  const voucherLines = await db.query(
+    "select count(*)::integer n from public.salesman_stock_movements where reference='V-001' and kind='issue'",
+  );
+  expect(voucherLines.rows[0].n).toBe(2);
 
   const order = await run("order.save", {
     id: randomUUID(),
@@ -116,31 +144,38 @@ it("reconciles salesman stock issue, sale, saleable return and approved cash clo
       salesman_id: "S",
     },
   });
+  const returnOperation = randomUUID();
   await run(
     "stock.return",
     {
       transaction_id: "RETURN-S-1",
       salesman_id: "S",
-      product_id: "P",
       date,
-      boxes: 48,
       condition: "saleable",
       reference: "R-001",
+      items: [
+        { transaction_id: "RETURN-S-1", product_id: "P", boxes: 48 },
+        { transaction_id: "RETURN-S-2", product_id: "Q", boxes: 24 },
+      ],
     },
     true,
+    returnOperation,
   );
   await run(
     "stock.return",
     {
       transaction_id: "RETURN-S-1",
       salesman_id: "S",
-      product_id: "P",
       date,
-      boxes: 48,
       condition: "saleable",
       reference: "R-001",
+      items: [
+        { transaction_id: "RETURN-S-1", product_id: "P", boxes: 48 },
+        { transaction_id: "RETURN-S-2", product_id: "Q", boxes: 24 },
+      ],
     },
     true,
+    returnOperation,
   );
   balances = await db.query(
     "select * from public.stock_balances() where product_id='P'",
@@ -181,7 +216,7 @@ it("reconciles salesman stock issue, sale, saleable return and approved cash clo
         opening_cash_paisa: 200_000,
         cash_handed_over_paisa: 700_000,
         actual_cash_paisa: 150_000,
-        actual_stock: { P: 120 },
+        actual_stock: { P: 120, Q: 96 },
         notes: "End of route",
       },
       true,

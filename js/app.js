@@ -40,6 +40,10 @@ let store,
   activeTemplate = "classic",
   charts = [],
   filter = { from: monthStart(today()), to: today(), category: "", search: "" },
+  overviewFrom = monthStart(today()),
+  overviewTo = today(),
+  stockIssueLineCount = 1,
+  stockReturnLineCount = 1,
   reportDate = today(),
   reportSalesman = "";
 const NAV = [
@@ -282,21 +286,63 @@ function targetRows() {
     })
     .sort((a, b) => b.percent - a.percent);
 }
+function overviewReport(state, from, to, salesmanId = "") {
+  const days = [];
+  for (let date = from; date <= to; date = addDays(date, 1))
+    days.push(dailySalesReport(state, date, salesmanId));
+  const sum = (key) => days.reduce((total, report) => total + num(report[key]), 0);
+  const last = days.at(-1) || dailySalesReport(state, to, salesmanId);
+  const stockBySalesman = new Map();
+  for (const report of days) {
+    for (const row of report.stock_by_salesman || []) {
+      const summary = stockBySalesman.get(row.salesman_id) || {
+        salesman_id: row.salesman_id,
+        closing_boxes: 0,
+        issued_boxes: 0,
+        returned_boxes: 0,
+      };
+      summary.issued_boxes += num(row.issued_boxes);
+      summary.returned_boxes += num(row.returned_boxes);
+      stockBySalesman.set(row.salesman_id, summary);
+    }
+  }
+  for (const row of last.stock_by_salesman || []) {
+    const summary = stockBySalesman.get(row.salesman_id);
+    if (summary) summary.closing_boxes = num(row.closing_boxes);
+  }
+  return {
+    days,
+    orders: days.flatMap((report) => report.orders),
+    sales_paisa: sum("sales_paisa"),
+    collected_paisa: sum("collected_paisa"),
+    previous_recovery_paisa: sum("previous_recovery_paisa"),
+    new_credit_paisa: sum("new_credit_paisa"),
+    expense_paisa: sum("expense_paisa"),
+    outstanding_paisa: last.outstanding_paisa,
+    overdue_paisa: last.overdue_paisa,
+    stock_issued_boxes: sum("stock_issued_boxes"),
+    stock_returned_boxes: sum("stock_returned_boxes"),
+    stock_by_salesman: [...stockBySalesman.values()],
+  };
+}
 function renderDashboard() {
   const s = S(),
-    report = dailySalesReport(s, today()),
+    report = overviewReport(
+      s,
+      overviewFrom,
+      overviewTo,
+      admin() ? "" : own()?.id || "",
+    ),
     p = admin() || can("pnl") ? profitLoss(
       s.orders,
       s.order_items,
       s.expenses,
       s.payments,
       s.invoices,
-      monthStart(today()),
-      today(),
+      overviewFrom,
+      overviewTo,
     ) : null;
-  const sales = s.orders
-      .filter((o) => o.date === today() && o.status === "confirmed")
-      .reduce((a, o) => a + num(o.total_paisa), 0),
+  const sales = report.sales_paisa,
     targets = targetRows(),
     targetCartons = targets.reduce((sum, row) => sum + row.achieved, 0),
     monthlyTarget = visible(s.salesmen).reduce(
@@ -331,6 +377,16 @@ function renderDashboard() {
   const exp = visible(s.products).filter((p) =>
     ["Expired", "≤30 days"].includes(expiryStatus(p.expiry_date)),
   );
+  const dailyRows = report.days.map((day) => [
+    esc(day.date),
+    money(day.sales_paisa),
+    money(day.collected_paisa),
+    money(day.previous_recovery_paisa),
+    money(day.new_credit_paisa),
+    money(day.expense_paisa),
+    `${day.stock_issued_boxes} / ${day.stock_returned_boxes} boxes`,
+    btn("Details", "overview-day", day.date),
+  ]);
   return (
     head(
       "Business overview",
@@ -338,31 +394,7 @@ function renderDashboard() {
       btn("New quotation", "new-quote") +
         btn("+ New sale", "new-order", "", "", "gold"),
     ) +
-    `<div class="cards">${card("Today's sales", money(sales), s.orders.filter((o) => o.date === today() && o.status === "confirmed").length + " confirmed orders", true)}${card("Today's collection", money(report.collected_paisa), "Payments received today")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Allocated to older invoices")}${card("New credit issued", money(report.new_credit_paisa), "Today's invoices less same-day payments")}${card("Today's expenses", money(report.expense_paisa), "Recorded expense entries")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + today())}${card("Overdue outstanding", money(report.overdue_paisa), "Past-due invoices")}${card("Stock issued", `${report.stock_issued_boxes} boxes`, "Issued to salesmen today")}${card("Stock returned", `${report.stock_returned_boxes} boxes`, "Returned by salesmen today")}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${card("Monthly target", `${targetCartons.toFixed(2)} / ${monthlyTarget.toFixed(2)} cartons`, "Confirmed sales this month")}${p ? card("Month-to-date profit", money(p.net), "Restricted management figure") : ""}</div><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Last six months</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Monthly revenue, expenses and net profit"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${
-      targets
-        .filter((t) => num(t.day?.shortfall) > 0)
-        .map(
-          (t) =>
-            `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`,
-        )
-        .join("") || '<p class="muted">No target shortfalls recorded.</p>'
-    }</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(
-      [
-        "Salesman",
-        "Today achieved / target",
-        "Month-to-date",
-        "Achievement",
-        ...(admin() || can("pnl") ? ["Projected salary"] : []),
-      ],
-      targets.map((t) => [
-        esc(t.name),
-        `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`,
-        `${t.achieved.toFixed(2)} / ${t.monthly_target}`,
-        `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`,
-        ...(admin() || can("pnl") ? [money(t.total)] : []),
-      ]),
-      "Create your first salesman",
-    )}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued today", "Returned today"], report.stock_by_salesman.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]), "No salesman stock issues recorded")}</section>`
+    `<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${card("Monthly target", `${targetCartons.toFixed(2)} / ${monthlyTarget.toFixed(2)} cartons`, "Confirmed sales this month")}${p ? card("Profit in period", money(p.net), "Restricted management figure") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
   );
 }
 function renderDailyReport() {
@@ -1574,19 +1606,56 @@ function stockModal() {
     )}${field("Boxes", "boxes", 1, "number", 'step="1" required')}${field("Transaction reference", "transaction_id", "ST-" + uid(), "text", "required")}${area("Note", "note")}</div><button class="gold" style="margin-top:20px">Save movement</button></form>`,
   );
 }
+function renderStockOperationLines(type) {
+  const count = type === "issue" ? stockIssueLineCount : stockReturnLineCount;
+  const products = visible(S().products).filter(
+    (product) => type === "return" || product.active,
+  );
+  const lines = Array.from({ length: count }, (_, index) =>
+    `<div class="stock-operation-line" data-stock-line="${index}">${select("Product", `product_id-${index}`, products.map((product) => [product.id, `${product.name} · ${product.boxes_per_carton} boxes/carton`]))}${field("Cartons", `cartons-${index}`, 0, "number", 'min="0" step="1" required')}${field("Loose boxes", `loose_boxes-${index}`, 0, "number", 'min="0" step="1" required')}${count > 1 ? `<button type="button" class="icon-button" aria-label="Remove product line ${index + 1}" data-act="stock-remove-line" data-id="${type}:${index}">×</button>` : ""}</div>`,
+  );
+  $(`stock-${type}-lines`).innerHTML = lines.join("");
+}
+function stockOperationItems(form, prefix) {
+  const combined = new Map();
+  for (const row of form.querySelectorAll("[data-stock-line]")) {
+    const productId = row.querySelector('[name^="product_id-"]')?.value;
+    const cartons = Number(row.querySelector('[name^="cartons-"]')?.value);
+    const loose = Number(row.querySelector('[name^="loose_boxes-"]')?.value);
+    if (!productId) throw Error("Choose a product for each line");
+    if (!Number.isSafeInteger(cartons) || cartons < 0 || !Number.isSafeInteger(loose) || loose < 0)
+      throw Error("Cartons and loose boxes must be whole nonnegative quantities");
+    const product = S().products.find((item) => item.id === productId);
+    if (!product) throw Error("Choose a valid product for each line");
+    const boxes = cartons * Number(product.boxes_per_carton || 0) + loose;
+    if (!Number.isSafeInteger(boxes) || boxes <= 0)
+      throw Error("Enter a positive quantity on each product line");
+    const item = combined.get(productId) || { product_id: productId, boxes };
+    if (combined.has(productId)) item.boxes += boxes;
+    combined.set(productId, item);
+  }
+  return [...combined.values()].map((item) => ({
+    ...item,
+    transaction_id: prefix + uid(),
+  }));
+}
 function stockIssueModal() {
+  stockIssueLineCount = 1;
   modal(
     "Issue stock to salesman",
-    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active).map((row) => [row.id, row.name]))}${select("Product", "product_id", visible(S().products).filter((row) => row.active).map((row) => [row.id, `${row.name} · ${row.boxes_per_carton} boxes/carton`]))}${field("Issue date", "date", today(), "date", "required")}${field("Cartons", "cartons", 1, "number", 'min="0" step="1" required')}${field("Loose boxes", "loose_boxes", 0, "number", 'min="0" step="1" required')}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}${area("Notes", "note")}</div><p class="muted">Stock is stored as whole boxes. Cartons use the selected product's own pack size.</p><button class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
+    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active).map((row) => [row.id, row.name]))}${field("Issue date", "date", today(), "date", "required")}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products to issue</h3>${btn("+ Add product", "stock-add-line", "issue", 'type="button"')}</div><div id="stock-issue-lines"></div>${area("Notes", "note")}<p class="muted">All lines are validated and saved together. Cartons use each product's own pack size.</p><button class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
   );
+  renderStockOperationLines("issue");
 }
 function stockReturnModal() {
+  stockReturnLineCount = 1;
   const sellers = visible(S().salesmen).filter((row) => row.active);
   const chosen = own()?.id || sellers[0]?.id || "";
   modal(
     "Receive stock return",
-    `<form id="stock-return-form"><div class="grid">${admin() || canStockWrite() ? select("Salesman", "salesman_id", sellers.map((row) => [row.id, row.name]), chosen) : `<input type="hidden" name="salesman_id" value="${esc(chosen)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(chosen))}" readonly></div>`}${select("Product", "product_id", visible(S().products).map((row) => [row.id, `${row.name} · ${row.boxes_per_carton} boxes/carton`]))}${field("Return date", "date", today(), "date", "required")}${select("Condition", "condition", [["saleable", "Saleable"], ["damaged", "Damaged"], ["expired", "Expired"], ["unsaleable", "Other unsaleable"]])}${field("Cartons", "cartons", 1, "number", 'min="0" step="1" required')}${field("Loose boxes", "loose_boxes", 0, "number", 'min="0" step="1" required')}${field("Return voucher", "reference", "STR-" + uid(), "text", "required")}${area("Reason / notes", "note")}</div><p class="muted">Only saleable returns increase available warehouse stock. Damaged, expired and unsaleable quantities are removed from inventory.</p><button class="gold" style="margin-top:20px">Record return</button></form>`,
+    `<form id="stock-return-form"><div class="grid">${admin() || canStockWrite() ? select("Salesman", "salesman_id", sellers.map((row) => [row.id, row.name]), chosen) : `<input type="hidden" name="salesman_id" value="${esc(chosen)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(chosen))}" readonly></div>`}${field("Return date", "date", today(), "date", "required")}${select("Condition", "condition", [["saleable", "Saleable"], ["damaged", "Damaged"], ["expired", "Expired"], ["unsaleable", "Other unsaleable"]])}${field("Return voucher", "reference", "STR-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products received</h3>${btn("+ Add product", "stock-add-line", "return", 'type="button"')}</div><div id="stock-return-lines"></div>${area("Reason / notes", "note")}<p class="muted">All lines share this return condition and save together. Only saleable returns increase available warehouse stock.</p><button class="gold" style="margin-top:20px">Record stock return</button></form>`,
   );
+  renderStockOperationLines("return");
 }
 function closingStockFields(salesmanId, date) {
   const expected = expectedClosingStock(salesmanId, date);
@@ -1991,6 +2060,19 @@ async function action(act, id, element) {
     case "stock-return":
       stockReturnModal();
       break;
+    case "stock-add-line":
+      if (id === "issue") stockIssueLineCount++;
+      else stockReturnLineCount++;
+      renderStockOperationLines(id);
+      break;
+    case "stock-remove-line": {
+      const [type] = id.split(":");
+      if (type === "issue")
+        stockIssueLineCount = Math.max(1, stockIssueLineCount - 1);
+      else stockReturnLineCount = Math.max(1, stockReturnLineCount - 1);
+      renderStockOperationLines(type);
+      break;
+    }
     case "new-closing":
       closingModal();
       break;
@@ -2210,6 +2292,26 @@ async function action(act, id, element) {
       filter.category = $("f-category")?.value || "";
       if (filter.from > filter.to)
         throw Error("From date must precede To date");
+      render();
+      break;
+    case "apply-overview-range": {
+      const from = $("f-overview-from").value;
+      const to = $("f-overview-to").value;
+      if (!from || !to || from > to)
+        throw Error("Choose a valid date range: From must be on or before To");
+      const days =
+        (new Date(to + "T12:00:00Z") - new Date(from + "T12:00:00Z")) /
+          86400000 +
+        1;
+      if (days > 366) throw Error("Overview date range cannot exceed 366 days");
+      overviewFrom = from;
+      overviewTo = to;
+      render();
+      break;
+    }
+    case "overview-day":
+      reportDate = id;
+      page = "dsr";
       render();
       break;
     case "this-month":
@@ -2606,46 +2708,32 @@ document.addEventListener("submit", async (e) => {
         toast("Stock updated");
         break;
       case "stock-issue-form": {
-        const product = S().products.find((row) => row.id === f.product_id);
-        const boxes =
-          num(f.cartons) * Number(product?.boxes_per_carton || 0) +
-          num(f.loose_boxes);
-        if (!Number.isSafeInteger(boxes) || boxes <= 0)
-          throw Error("Enter a positive whole-box issue quantity");
+        const items = stockOperationItems(form, "ISSUE-");
         const saved = await store.run("stock.issue", {
-          transaction_id: "ISSUE-" + uid(),
+          items,
           reference: f.reference,
           salesman_id: f.salesman_id,
-          product_id: f.product_id,
           date: f.date,
-          boxes,
           note: f.note || "",
         });
         close();
         render();
-        toast(saved?.queued ? "Issue saved on this device; pending sync" : "Stock issued");
+        toast(saved?.queued ? "Multi-product issue saved on this device; pending sync" : "Stock issue voucher recorded");
         break;
       }
       case "stock-return-form": {
-        const product = S().products.find((row) => row.id === f.product_id);
-        const boxes =
-          num(f.cartons) * Number(product?.boxes_per_carton || 0) +
-          num(f.loose_boxes);
-        if (!Number.isSafeInteger(boxes) || boxes <= 0)
-          throw Error("Enter a positive whole-box return quantity");
+        const items = stockOperationItems(form, "RETURN-");
         const saved = await store.run("stock.return", {
-          transaction_id: "RETURN-" + uid(),
+          items,
           reference: f.reference,
           salesman_id: f.salesman_id,
-          product_id: f.product_id,
           date: f.date,
-          boxes,
           condition: f.condition,
           note: f.note || "",
         });
         close();
         render();
-        toast(saved?.queued ? "Return saved on this device; pending sync" : "Stock return recorded");
+        toast(saved?.queued ? "Multi-product return saved on this device; pending sync" : "Stock return voucher recorded");
         break;
       }
       case "closing-form": {

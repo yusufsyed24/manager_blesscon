@@ -17,8 +17,34 @@ create table if not exists public.salesman_stock_movements (
 );
 create index if not exists salesman_stock_product_date on public.salesman_stock_movements(product_id,salesman_id,date);
 create index if not exists salesman_stock_date on public.salesman_stock_movements(salesman_id,date);
-create unique index if not exists salesman_stock_voucher_unique on public.salesman_stock_movements(reference)
-where reference<>'' and kind in ('issue','return_saleable','return_damaged','return_expired','return_unsaleable');
+drop index if exists public.salesman_stock_voucher_unique;
+create table if not exists public.stock_vouchers (
+  id uuid primary key default gen_random_uuid(),
+  reference text not null unique,
+  kind text not null check(kind in ('issue','return')),
+  salesman_id text not null references public.salesmen(id),
+  date date not null,
+  condition text check(condition is null or condition in ('saleable','damaged','expired','unsaleable')),
+  note text not null default '',
+  created_by uuid,
+  created_at timestamptz not null default now()
+);
+alter table public.salesman_stock_movements add column if not exists voucher_id uuid references public.stock_vouchers(id);
+insert into public.stock_vouchers(reference,kind,salesman_id,date,condition,note,created_by)
+select reference,
+  case when kind='issue' then 'issue' else 'return' end,
+  salesman_id,date,
+  case when kind like 'return_%' then substring(kind from 8) else null end,
+  max(note),min(created_by::text)::uuid
+from public.salesman_stock_movements
+where reference<>'' and kind in ('issue','return_saleable','return_damaged','return_expired','return_unsaleable')
+group by reference,kind,salesman_id,date
+on conflict(reference) do nothing;
+update public.salesman_stock_movements movement
+set voucher_id=voucher.id
+from public.stock_vouchers voucher
+where movement.reference=voucher.reference and movement.voucher_id is null
+  and movement.kind in ('issue','return_saleable','return_damaged','return_expired','return_unsaleable');
 
 create table if not exists public.daily_closings (
   id uuid primary key default gen_random_uuid(),
@@ -57,11 +83,16 @@ create table if not exists private.operational_commands (
 revoke all on private.operational_commands from public,anon,authenticated;
 
 alter table public.salesman_stock_movements enable row level security;
+alter table public.stock_vouchers enable row level security;
 alter table public.daily_closings enable row level security;
-revoke all on public.salesman_stock_movements,public.daily_closings from anon,authenticated;
-grant select on public.salesman_stock_movements,public.daily_closings to authenticated;
+revoke all on public.salesman_stock_movements,public.stock_vouchers,public.daily_closings from anon,authenticated;
+grant select on public.salesman_stock_movements,public.stock_vouchers,public.daily_closings to authenticated;
 drop policy if exists salesman_stock_read on public.salesman_stock_movements;
 create policy salesman_stock_read on public.salesman_stock_movements for select to authenticated using (
+  public.is_admin() or public.owns_salesman(salesman_id) or public.has_permission('stock')
+);
+drop policy if exists stock_voucher_read on public.stock_vouchers;
+create policy stock_voucher_read on public.stock_vouchers for select to authenticated using (
   public.is_admin() or public.owns_salesman(salesman_id) or public.has_permission('stock')
 );
 drop policy if exists daily_closing_read on public.daily_closings;
@@ -201,7 +232,7 @@ do $$declare t text; begin
 end $$;
 
 do $$declare t text; begin
-  foreach t in array array['salesman_stock_movements','daily_closings'] loop
+  foreach t in array array['salesman_stock_movements','stock_vouchers','daily_closings'] loop
     execute format('drop trigger if exists audit_change on public.%I',t);
     execute format('create trigger audit_change after insert or update or delete on public.%I for each row execute function private.audit_change()',t);
   end loop;
@@ -213,7 +244,10 @@ as $$
 declare
   cached private.operational_commands;
   prior public.salesman_stock_movements;
+  voucher public.stock_vouchers;
   closing public.daily_closings;
+  item jsonb; lines jsonb; line_result jsonb; items_result jsonb:='[]'::jsonb;
+  stock_row record; line_pid text; line_tx text; voucher_ref text; voucher_id uuid;
   sid text; pid text; tx text; condition text; qty integer; d date;
   warehouse_qty bigint; salesman_qty bigint; cash_in bigint; cash_expense bigint;
   opening bigint; handed bigint; expected_cash bigint; actual_cash bigint;
@@ -239,44 +273,63 @@ begin
   case kind
     when 'stock.issue' then
       if not(public.is_admin() or public.has_permission('stock','create')) then raise exception 'Stock issue permission required'; end if;
-      if sid is null or pid is null or tx is null or d is null or qty is null or qty<=0 then raise exception 'Salesman, product, date, reference and positive boxes are required'; end if;
+      lines:=case when jsonb_typeof(data->'items')='array' then data->'items' else jsonb_build_array(jsonb_build_object('transaction_id',tx,'product_id',pid,'boxes',qty)) end;
+      voucher_ref:=coalesce(nullif(trim(data->>'reference'),''),tx);
+      if sid is null or voucher_ref is null or d is null or jsonb_array_length(lines) not between 1 and 100 then raise exception 'Salesman, date, voucher reference and 1 to 100 product lines are required'; end if;
+      if exists(select 1 from public.stock_vouchers where reference=voucher_ref) then raise exception 'Stock voucher reference already exists'; end if;
       perform 1 from public.salesmen where id=sid and active and deleted_at is null for update;
       if not found then raise exception 'Active salesman required'; end if;
-      perform 1 from public.products where id=pid and active and deleted_at is null for update;
-      if not found then raise exception 'Active product required'; end if;
-      select * into prior from public.salesman_stock_movements where transaction_id=tx;
-      if found then
-        if prior.kind='issue' and prior.salesman_id=sid and prior.product_id=pid and prior.boxes=qty and prior.date=d then result:=to_jsonb(prior);
-        else raise exception 'Stock reference already exists with different details'; end if;
-      else
-        select coalesce(sum(boxes),0) into warehouse_qty from public.stock_movements where product_id=pid;
-        select coalesce(sum(boxes),0) into salesman_qty from public.salesman_stock_movements where product_id=pid;
-        if warehouse_qty-salesman_qty<qty then raise exception 'Insufficient warehouse stock: % boxes available',warehouse_qty-salesman_qty; end if;
-        insert into public.salesman_stock_movements(transaction_id,product_id,salesman_id,date,boxes,kind,reference,note,created_by)
-        values(tx,pid,sid,d,qty,'issue',coalesce(data->>'reference',tx),coalesce(data->>'note',''),auth.uid()) returning to_jsonb(salesman_stock_movements.*) into result;
-      end if;
+      if exists(select 1 from jsonb_array_elements(lines) x where nullif(trim(x->>'transaction_id'),'') is null or nullif(trim(x->>'product_id'),'') is null or coalesce((x->>'boxes')::bigint,0)<=0) then raise exception 'Every issue line needs a transaction ID, product and positive whole-box quantity'; end if;
+      if exists(select 1 from jsonb_array_elements(lines) x group by x->>'transaction_id' having count(*)>1) then raise exception 'Duplicate transaction ID in issue voucher'; end if;
+      if exists(select 1 from jsonb_array_elements(lines) x join public.salesman_stock_movements m on m.transaction_id=x->>'transaction_id') then raise exception 'Stock movement transaction ID already exists'; end if;
+      for stock_row in select x->>'product_id' product_id,sum((x->>'boxes')::bigint) boxes from jsonb_array_elements(lines) x group by x->>'product_id' loop
+        perform 1 from public.products where id=stock_row.product_id and active and deleted_at is null for update;
+        if not found then raise exception 'Active product required: %',stock_row.product_id; end if;
+        select coalesce(sum(boxes),0) into warehouse_qty from public.stock_movements where product_id=stock_row.product_id;
+        select coalesce(sum(boxes),0) into salesman_qty from public.salesman_stock_movements where product_id=stock_row.product_id;
+        if warehouse_qty-salesman_qty<stock_row.boxes then raise exception 'Insufficient warehouse stock for %: % boxes available',stock_row.product_id,warehouse_qty-salesman_qty; end if;
+      end loop;
+      insert into public.stock_vouchers(reference,kind,salesman_id,date,note,created_by)
+      values(voucher_ref,'issue',sid,d,coalesce(data->>'note',''),auth.uid()) returning id into voucher_id;
+      for item in select value from jsonb_array_elements(lines) loop
+        insert into public.salesman_stock_movements(transaction_id,product_id,salesman_id,date,boxes,kind,reference,voucher_id,note,created_by)
+        values(item->>'transaction_id',item->>'product_id',sid,d,(item->>'boxes')::integer,'issue',voucher_ref,voucher_id,coalesce(data->>'note',''),auth.uid())
+        returning to_jsonb(salesman_stock_movements.*) into line_result;
+        items_result:=items_result||jsonb_build_array(line_result);
+      end loop;
+      result:=jsonb_build_object('reference',voucher_ref,'voucher_id',voucher_id,'items',items_result);
     when 'stock.return' then
       condition:=coalesce(data->>'condition','saleable');
       if not(public.is_admin() or public.owns_salesman(sid) or public.has_permission('stock','create')) then raise exception 'Stock return permission required'; end if;
-      if sid is null or pid is null or tx is null or d is null or qty is null or qty<=0 or condition not in ('saleable','damaged','expired','unsaleable') then raise exception 'Valid salesman, product, date, return condition and positive boxes are required'; end if;
+      lines:=case when jsonb_typeof(data->'items')='array' then data->'items' else jsonb_build_array(jsonb_build_object('transaction_id',tx,'product_id',pid,'boxes',qty)) end;
+      voucher_ref:=coalesce(nullif(trim(data->>'reference'),''),tx);
+      if sid is null or voucher_ref is null or d is null or jsonb_array_length(lines) not between 1 and 100 or condition not in ('saleable','damaged','expired','unsaleable') then raise exception 'Valid salesman, date, voucher, condition and 1 to 100 product lines are required'; end if;
+      if exists(select 1 from public.stock_vouchers where reference=voucher_ref) then raise exception 'Stock voucher reference already exists'; end if;
       perform 1 from public.salesmen where id=sid and active and deleted_at is null for update;
       if not found then raise exception 'Active salesman required'; end if;
-      perform 1 from public.products where id=pid for update;
-      if not found then raise exception 'Product required'; end if;
-      select * into prior from public.salesman_stock_movements where transaction_id=tx;
-      if found then
-        if prior.kind=('return_'||condition) and prior.salesman_id=sid and prior.product_id=pid and prior.boxes=-qty and prior.date=d then result:=to_jsonb(prior);
-        else raise exception 'Stock reference already exists with different details'; end if;
-      else
-        select coalesce(sum(boxes),0) into salesman_qty from public.salesman_stock_movements where product_id=pid and salesman_id=sid;
-        if salesman_qty<qty then raise exception 'Insufficient salesman stock: % boxes available',salesman_qty; end if;
-        insert into public.salesman_stock_movements(transaction_id,product_id,salesman_id,date,boxes,kind,reference,note,created_by)
-        values(tx,pid,sid,d,-qty,'return_'||condition,coalesce(data->>'reference',tx),coalesce(data->>'note',''),auth.uid()) returning to_jsonb(salesman_stock_movements.*) into result;
+      if exists(select 1 from jsonb_array_elements(lines) x where nullif(trim(x->>'transaction_id'),'') is null or nullif(trim(x->>'product_id'),'') is null or coalesce((x->>'boxes')::bigint,0)<=0) then raise exception 'Every return line needs a transaction ID, product and positive whole-box quantity'; end if;
+      if exists(select 1 from jsonb_array_elements(lines) x group by x->>'transaction_id' having count(*)>1) then raise exception 'Duplicate transaction ID in return voucher'; end if;
+      if exists(select 1 from jsonb_array_elements(lines) x join public.salesman_stock_movements m on m.transaction_id=x->>'transaction_id') then raise exception 'Stock movement transaction ID already exists'; end if;
+      for stock_row in select x->>'product_id' product_id,sum((x->>'boxes')::bigint) boxes from jsonb_array_elements(lines) x group by x->>'product_id' loop
+        perform 1 from public.products where id=stock_row.product_id for update;
+        if not found then raise exception 'Product required: %',stock_row.product_id; end if;
+        select coalesce(sum(boxes),0) into salesman_qty from public.salesman_stock_movements where product_id=stock_row.product_id and salesman_id=sid;
+        if salesman_qty<stock_row.boxes then raise exception 'Insufficient salesman stock for %: % boxes available',stock_row.product_id,salesman_qty; end if;
+      end loop;
+      insert into public.stock_vouchers(reference,kind,salesman_id,date,condition,note,created_by)
+      values(voucher_ref,'return',sid,d,condition,coalesce(data->>'note',''),auth.uid()) returning id into voucher_id;
+      for item in select value from jsonb_array_elements(lines) loop
+        line_tx:=item->>'transaction_id';
+        insert into public.salesman_stock_movements(transaction_id,product_id,salesman_id,date,boxes,kind,reference,voucher_id,note,created_by)
+        values(line_tx,item->>'product_id',sid,d,-(item->>'boxes')::integer,'return_'||condition,voucher_ref,voucher_id,coalesce(data->>'note',''),auth.uid())
+        returning to_jsonb(salesman_stock_movements.*) into line_result;
+        items_result:=items_result||jsonb_build_array(line_result);
         if condition<>'saleable' then
           insert into public.stock_movements(transaction_id,product_id,date,boxes,kind,note,created_by)
-          values('return-loss:'||tx,pid,d,-qty,'damage','Salesman return marked '||condition||': '||coalesce(data->>'note',''),auth.uid());
+          values('return-loss:'||line_tx,item->>'product_id',d,-(item->>'boxes')::integer,'damage','Salesman return marked '||condition||': '||coalesce(data->>'note',''),auth.uid());
         end if;
-      end if;
+      end loop;
+      result:=jsonb_build_object('reference',voucher_ref,'voucher_id',voucher_id,'items',items_result);
     when 'closing.submit' then
       if not(public.is_admin() or public.owns_salesman(sid)) then raise exception 'Only the assigned salesman or management may submit this closing'; end if;
       if sid is null or d is null or coalesce(jsonb_typeof(data->'actual_stock'),'')<>'object' then raise exception 'Salesman, business date and counted stock are required'; end if;
@@ -358,6 +411,7 @@ begin
     'payments',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.payments x join public.invoices i on i.id=x.invoice_id join public.orders o on o.id=i.order_id where public.can_document(o.salesman_id,'invoices')),
     'stock_movements',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.stock_movements x where public.is_admin() or public.has_permission('stock')),
     'salesman_stock_movements',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.salesman_stock_movements x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('stock')),
+    'stock_vouchers',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.stock_vouchers x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('stock')),
     'daily_closings',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.daily_closings x where public.is_admin() or public.owns_salesman(x.salesman_id) or public.has_permission('closing')),
     'expenses',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.expenses x where public.is_admin() or public.has_permission('expenses') or public.owns_salesman(x.salesman_id)),
     'audit_log',(select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) from public.audit_log x where public.is_admin()),
