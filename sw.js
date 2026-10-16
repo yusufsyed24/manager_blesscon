@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v17-salesman-checkin-location-20261017";
+const CACHE = "blesscon-static-v18-admin-avatar-path-fix-20261017";
 const ASSETS = [
   "./",
   "./index.html",

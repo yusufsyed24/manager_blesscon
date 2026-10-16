@@ -258,3 +258,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Admin attendance tables and individual salesman profiles show a Google Maps link plus coordinates for check-ins where location was recorded.
 - Added idempotent migration statements for check-in latitude, longitude and accuracy columns; synchronized root/web app and service worker copies.
 - Existing attendance rows and check-ins without GPS remain valid and display “Location not recorded.”
+
+
+## 2026-10-17 — Admin avatar schema-cache migration (v15)
+- Added a standalone, idempotent `supabase/fix_admin_avatar_path.sql` migration for deployments whose live `profiles` table or PostgREST schema cache does not yet expose `avatar_path`.
+- Migration ensures the column and scoped own-row update policy exist, grants the required column privileges, and requests a PostgREST schema reload.
+- Updated service-worker cache namespace and synchronized root/web copies. Live Supabase schema changes must still be applied by the project owner.
