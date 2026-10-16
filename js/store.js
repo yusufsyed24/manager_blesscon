@@ -27,6 +27,9 @@ export const TABLES = [
   "profiles",
   "user_roles",
   "user_permissions",
+  "attendance_records",
+  "employee_documents",
+  "customer_visits",
 ];
 const commandRpc = (kind) =>
   kind.startsWith("closing.")

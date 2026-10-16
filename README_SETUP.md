@@ -179,3 +179,8 @@ Run `supabase/manager_role.sql` once in the Supabase SQL editor, then redeploy t
 ### Daily closing balances
 
 Run `supabase/closing_balances.sql` once in the Supabase SQL editor (after `operational_modules.sql` and `manager_role.sql`). It adds Cash in Bank, Cash in Hand, Cash in Easypaisa, Cash in Jazz Cash and Market Credit to daily closings, is safe to re-run, and patches the existing closing function in place. Then redeploy `web/` and hard-refresh (Ctrl+Shift+R).
+
+
+## Salesman self-service portal update
+
+The salesman profile, private document upload, attendance, and optional GPS customer-visit features require the additive SQL migration `supabase/salesman_self_service.sql`. Back up the database first, then run this migration in the Supabase SQL Editor. Do not paste the filename itself—open the SQL file and paste its SQL contents. The migration preserves existing records. Confirm that Storage is enabled and that the private `employee-private` bucket and RLS policies were created successfully before using uploads.

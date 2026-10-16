@@ -49,6 +49,7 @@ let store,
   reportSalesman = "";
 const NAV = [
   ["dashboard", "Overview", "◫"],
+  ["myprofile", "My profile & fieldwork", "♙"],
   ["dsr", "Daily sales report", "▤"],
   ["closing", "Daily closing", "✓"],
   ["orders", "Sales orders", "↗"],
@@ -87,6 +88,7 @@ const canViewAllClosings = () =>
       permission.can_view,
   );
 const can = (p) =>
+  (user?.role === "salesman" && ["dashboard","myprofile","dsr","closing","orders","invoices","quotes","ledger","stock","products"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
     ([
@@ -266,14 +268,16 @@ function render() {
   charts.forEach((c) => c.destroy());
   charts = [];
   const s = S();
-  if (!can(page)) page = "dashboard";
+  if (page === "myprofile" && (!own() || !["salesman", "user"].includes(user.role))) page = "dashboard";
+  if (!can(page) && page !== "myprofile") page = "dashboard";
   document.querySelectorAll("[data-page]").forEach((b) => {
     b.classList.toggle("active", b.dataset.page === page);
     if (b.dataset.page === page) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
   const methods = {
-    dashboard: renderDashboard,
+    dashboard: user.role === "salesman" ? renderSalesmanDashboard : renderDashboard,
+    myprofile: renderMyProfile,
     dsr: renderDailyReport,
     closing: renderDailyClosing,
     orders: () => renderDocs(false),
@@ -296,6 +300,46 @@ function render() {
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
 }
+function renderSalesmanDashboard() {
+  const seller = own(), s = S();
+  if (!seller) return head("My overview", "Your login is not linked to a salesman profile.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
+  const sid = seller.id, orders = s.orders.filter(o => o.salesman_id === sid && o.status !== "cancelled" && !o.deleted_at);
+  const todays = orders.filter(o => o.date === today()), month = orders.filter(o => String(o.date || "").startsWith(today().slice(0,7)));
+  const movements = s.salesman_stock_movements.filter(m => m.salesman_id === sid);
+  const held = visible(s.products).map(p => ({name:p.name, qty:movements.filter(m=>m.product_id===p.id).reduce((n,m)=>n+num(m.boxes),0)})).filter(x=>x.qty!==0);
+  const collection = s.payments.filter(p => { const inv=s.invoices.find(i=>i.id===p.invoice_id); const order=inv&&s.orders.find(o=>o.id===inv.order_id); return order?.salesman_id===sid && (p.date===today() || p.created_at?.slice(0,10)===today()); }).reduce((n,p)=>n+num(p.amount_paisa),0);
+  const target = targetRows().find(t=>t.id===sid);
+  const ownCustomerIds = new Set(s.customers.filter(c=>c.salesman_id===sid).map(c=>c.id));
+  const ownOutstanding = s.invoices.filter(i=>{const o=s.orders.find(x=>x.id===i.order_id);return o?.salesman_id===sid;}).reduce((n,i)=>n+Math.max(0,num(i.total_paisa)-s.payments.filter(p=>p.invoice_id===i.id).reduce((a,p)=>a+num(p.amount_paisa),0)),0);
+  return head("My overview", `Welcome, ${seller.name}. This dashboard shows your own activity only.`, btn("Open my profile", "go-myprofile", "", "", "gold")) +
+    `<div class="cards">${card("Today's sales",money(todays.reduce((n,o)=>n+num(o.total_paisa),0)),`${todays.length} order(s)`,true)}${card("This month's sales",money(month.reduce((n,o)=>n+num(o.total_paisa),0)),`${month.length} order(s)`)}${card("Today's collection",money(collection),"Payments linked to your sales")}${card("My customer outstanding",money(ownOutstanding),"Open invoice balances assigned to you")}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Boxes currently recorded against you")}${card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}</div>
+    <section class="panel"><div class="panel-heading"><h2>My stock in hand</h2>${btn("View stock details","go-stock")}</div>${table(["Product","Balance (boxes)"],held.map(x=>[esc(x.name),x.qty.toFixed(2)]),"No stock currently recorded against your account.")}</section>
+    <section class="panel"><div class="panel-heading"><h2>My latest sales</h2>${btn("View sales","go-myorders")}</div>${table(["Order","Date","Customer","Amount"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.number),esc(o.date),esc(s.customers.find(c=>c.id===o.customer_id)?.name||"Customer"),money(o.total_paisa)]),"No sales recorded yet.")}</section>
+    <section class="panel"><h2>Fieldwork shortcuts</h2><div class="actions">${btn("Attendance & customer visits","go-myprofile","","","gold")}${btn("Daily closing","go-closing")}${btn("Daily sales report","go-dsr")}</div></section>`;
+}
+
+function renderMyProfile() {
+  const seller = own();
+  if (!seller) return head("My profile", "Your account is not linked to a salesman record.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
+  const s = S(), sid = seller.id;
+  const movements = s.salesman_stock_movements.filter(m => m.salesman_id === sid);
+  const productRows = visible(s.products).map(p => {
+    const qty = movements.filter(m => m.product_id === p.id).reduce((n,m) => n + num(m.boxes), 0);
+    return qty ? [esc(p.name), qty.toFixed(2), esc(p.unit || "boxes")] : null;
+  }).filter(Boolean);
+  const orders = s.orders.filter(o => o.salesman_id === sid && o.status !== "cancelled" && !o.deleted_at);
+  const todaySales = orders.filter(o => o.date === today()).reduce((n,o) => n + num(o.total_paisa), 0);
+  const monthSales = orders.filter(o => String(o.date || "").startsWith(today().slice(0,7))).reduce((n,o) => n + num(o.total_paisa), 0);
+  const target = targetRows().find(t => t.id === sid);
+  return head("My profile & fieldwork", "Your personal performance, stock, attendance and customer visits.") +
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="Your profile photo">` : "♙"}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div><div class="grid"><div class="field"><label for="profile-photo">Update profile photograph</label><input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="profile-photo-upload">Upload photo</button></div><p class="muted">Only your own profile can be updated. Documents are stored privately.</p></section>
+    <div class="cards">${card("Today's sales", money(todaySales), "Your confirmed orders today")}${card("Sales this month", money(monthSales), "Your confirmed orders this month")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Boxes across products")}</div>
+    <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
+    <section class="panel"><h2>My employee documents</h2><p class="muted">Upload an ID or employment document. Files are private and visible only to you and authorized management.</p><div class="grid"><div class="field"><label for="employee-document-type">Document type</label><select id="employee-document-type"><option value="identity">Identity document</option><option value="employment">Employment document</option><option value="other">Other authorized document</option></select></div><div class="field"><label for="employee-document-file">Choose file</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-document-upload">Upload document</button><div id="profile-upload-status" role="status"></div></section>
+    <section class="panel"><h2>Attendance</h2><p>Record your attendance for today. Check-out is available after check-in.</p><div class="actions">${btn("Check in", "attendance-check-in", sid, "", "gold")}${btn("Check out", "attendance-check-out", sid)}</div><p class="muted">Timestamps are recorded by the server when online. Offline attendance is not submitted as verified.</p></section>
+    <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission. Location is collected only when you press the button.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional. Denying GPS will not prevent a normal visit record.</p></section>`;
+}
+
 function targetRows() {
   const s = S(),
     start = monthStart(today());
@@ -2079,6 +2123,54 @@ async function action(act, id, element) {
     case "menu":
       $("sidebar").classList.toggle("open");
       break;
+    case "profile-photo-upload": {
+      const seller = own(), file = $("profile-photo")?.files?.[0];
+      if (!seller) throw Error("Your login is not linked to a salesman profile.");
+      if (!file) throw Error("Choose a photo first.");
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 5*1024*1024) throw Error("Use a JPG, PNG or WebP image up to 5 MB.");
+      const path = `${user.id}/profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const up = await client.storage.from("employee-private").upload(path,file,{contentType:file.type,upsert:false});
+      if (up.error) throw up.error;
+      const { data: signed, error: signErr } = await client.storage.from("employee-private").createSignedUrl(path,3600);
+      if (signErr) throw signErr;
+      const { error } = await client.from("salesmen").update({photo_path:path}).eq("id",seller.id);
+      if (error) throw error;
+      seller.photo_url = signed.signedUrl; seller.photo_path = path; render(); toast("Profile photo uploaded."); break;
+    }
+    case "employee-document-upload": {
+      const seller = own(), file = $("employee-document-file")?.files?.[0], type = $("employee-document-type")?.value || "other";
+      if (!seller) throw Error("Your login is not linked to a salesman profile.");
+      if (!file) throw Error("Choose a document first.");
+      if (!(file.type === "application/pdf" || /^image\/(jpeg|png|webp)$/.test(file.type)) || file.size > 10*1024*1024) throw Error("Use PDF, JPG, PNG or WebP up to 10 MB.");
+      const path = `${user.id}/documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const up = await client.storage.from("employee-private").upload(path,file,{contentType:file.type,upsert:false});
+      if (up.error) throw up.error;
+      const { error } = await client.from("employee_documents").insert({salesman_id:seller.id,document_type:type,file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size});
+      if (error) { await client.storage.from("employee-private").remove([path]); throw error; }
+      toast("Document uploaded securely."); $("employee-document-file").value=""; break;
+    }
+    case "attendance-check-in":
+    case "attendance-check-out": {
+      const seller = own(); if (!seller || seller.id !== id) throw Error("You can only record your own attendance.");
+      const { data: existing, error: readErr } = await client.from("attendance_records").select("*").eq("salesman_id",seller.id).eq("attendance_date",today()).maybeSingle();
+      if (readErr) throw readErr;
+      if (act === "attendance-check-in") {
+        if (existing?.check_in_at) throw Error("You have already checked in today.");
+        const { error } = await client.from("attendance_records").insert({salesman_id:seller.id,attendance_date:today(),check_in_at:new Date().toISOString(),status:"present"}); if(error) throw error;
+        toast("Check-in recorded.");
+      } else {
+        if (!existing?.check_in_at) throw Error("Check in before checking out."); if(existing.check_out_at) throw Error("You have already checked out today.");
+        const { error } = await client.from("attendance_records").update({check_out_at:new Date().toISOString()}).eq("id",existing.id); if(error) throw error; toast("Check-out recorded.");
+      }
+      break;
+    }
+    case "visit-save":
+    case "visit-save-location": {
+      const seller = own(); if (!seller || seller.id !== id) throw Error("You can only record your own visits.");
+      const save = async (coords=null) => { const customer = $("f-visit-customer")?.value.trim() || ""; const areaName = $("f-visit-area")?.value.trim() || ""; if(!customer && !areaName) throw Error("Enter a customer name/ID or area."); const {error}=await client.from("customer_visits").insert({salesman_id:seller.id,customer_label:customer,area:areaName,purpose:$("f-visit-purpose")?.value || "Sales visit",notes:$("f-visit-notes")?.value || "",latitude:coords?.latitude ?? null,longitude:coords?.longitude ?? null,location_accuracy_m:coords?.accuracy ?? null,visited_at:new Date().toISOString()}); if(error) throw error; toast("Customer visit recorded."); $("f-visit-notes").value=""; };
+      if(act === "visit-save-location") { if(!navigator.geolocation) throw Error("This device does not support GPS. Save the visit without location instead."); await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(async pos=>{try{await save(pos.coords);resolve();}catch(err){reject(err);}},()=>reject(Error("Location permission was denied or unavailable. You can save the visit without GPS.")),{enableHighAccuracy:true,timeout:12000,maximumAge:60000})); } else await save();
+      break;
+    }
     case "new-order":
       openEditor(false);
       break;
@@ -2101,6 +2193,9 @@ async function action(act, id, element) {
       page = "stock";
       render();
       break;
+    case "go-myprofile": page = "myprofile"; render(); break;
+    case "go-myorders": page = "orders"; render(); break;
+    case "go-closing": page = "closing"; render(); break;
     case "go-dsr":
       page = "dsr";
       render();

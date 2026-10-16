@@ -181,3 +181,8 @@ This release is a deployable source package, not a live deployment. Production c
 - **Root cause addressed:** the product form was relying exclusively on delegated native `submit` handling for a dynamically-created modal form. In deployments where that submit event does not fire as expected, the save routine is never invoked.
 - **Fix:** added a capture-phase click handler specifically for `#master-form button[type=submit]`; it prevents duplicate native submission, calls `saveMaster()` directly, disables the button while saving, and displays “Saving…” plus any error in the form. The existing submit path remains for keyboard/form submission.
 - **Validation:** `node --check js/app.js` and `node --check web/js/app.js` pass; `scripts/release.mjs` regenerated `web/` and `cmp` confirmed the copies match. This is not a live Supabase integration test; deploy and verify in the target environment.
+
+## Salesman self-service portal (2026-10-16)
+- Added a salesman-only My Profile & Fieldwork screen with personal sales/target overview, product-wise held stock, profile photo upload, private employee document upload, attendance check-in/check-out, and opt-in GPS customer visit recording.
+- Added `supabase/salesman_self_service.sql`, an additive migration for attendance, employee document metadata, customer visits, private employee storage, and ownership-scoped RLS policies. Apply this migration in Supabase before using the new features.
+- Photo/document upload requires the private `employee-private` storage bucket and migration policies. GPS is requested only when the salesman explicitly chooses Save visit with my location.
