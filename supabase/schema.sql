@@ -3,7 +3,8 @@
 create schema if not exists private;
 revoke all on schema private from public;
 create or replace function private.business_today() returns date language sql stable set search_path='' as $$select (now() at time zone 'Asia/Karachi')::date$$;
-create table if not exists public.profiles(id uuid primary key references auth.users on delete cascade,display_name text not null default '',active boolean not null default true,created_at timestamptz not null default now(),updated_at timestamptz not null default now());
+create table if not exists public.profiles(id uuid primary key references auth.users on delete cascade,display_name text not null default '',avatar_path text,active boolean not null default true,created_at timestamptz not null default now(),updated_at timestamptz not null default now());
+alter table public.profiles add column if not exists avatar_path text;
 create table if not exists public.user_roles(user_id uuid primary key references auth.users on delete cascade,role text not null default 'salesman',updated_at timestamptz not null default now());
 alter table public.user_roles drop constraint if exists user_roles_role_check;
 alter table public.user_roles add constraint user_roles_role_check check(role in ('admin','user','salesman'));

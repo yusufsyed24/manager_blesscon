@@ -114,3 +114,14 @@ drop policy if exists customer_visits_self_select on public.customer_visits;
 create policy customer_visits_self_select on public.customer_visits for select to authenticated
   using (public.is_admin() or public.owns_salesman(salesman_id));
 notify pgrst, 'reload schema';
+
+
+-- Administrator profile picture support. Each administrator may update only their own profile row.
+alter table public.profiles add column if not exists avatar_path text;
+alter table public.profiles enable row level security;
+grant select on public.profiles to authenticated;
+grant update (avatar_path, updated_at) on public.profiles to authenticated;
+drop policy if exists profile_avatar_update_self on public.profiles;
+create policy profile_avatar_update_self on public.profiles for update to authenticated
+  using (id = auth.uid()) with check (id = auth.uid());
+notify pgrst, 'reload schema';

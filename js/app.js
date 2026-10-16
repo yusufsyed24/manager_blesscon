@@ -359,7 +359,7 @@ function renderAdminMyProfile() {
   const current = user || {};
   const profile = S().profiles?.find((p) => String(p.id) === String(current.id)) || {};
   return head("My profile & fieldwork", "Administrator account details and a consolidated view of salesman attendance, documents, customer visits and profile photos.") +
-    `<section class="panel"><div class="profile-hero"><div class="profile-avatar">♙</div><div><h2>${esc(current.name || profile.display_name || "Administrator")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Administrator</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><p class="muted">This page displays the signed-in administrator account. Salesman records and photos below are read-only and do not require the administrator to be linked to a salesman record.</p></section>
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="admin-profile-avatar">♙</div><div><h2>${esc(current.name || profile.display_name || "Administrator")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Administrator</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="admin-profile-photo">Upload / change administrator profile picture</label><input id="admin-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="admin-profile-photo-upload">Upload profile picture</button></div><p class="muted">Use a JPG, PNG or WebP image up to 5 MB. Your picture is private and visible to authorized users.</p><p class="muted">This page displays the signed-in administrator account. Salesman records and photos below are read-only and do not require the administrator to be linked to a salesman record.</p></section>
     <section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
 }
 
@@ -1039,10 +1039,30 @@ async function resolveSalesmanPhoto(seller) {
   return { url: result.data?.signedUrl || "", error: result.error?.message || (result.data?.signedUrl ? "" : "Could not create a private photo link.") };
 }
 
+async function hydrateAdminProfilePhoto() {
+  if (!admin() || !client || !user?.id) return;
+  const avatar = $("admin-profile-avatar");
+  if (!avatar) return;
+  const result = await client.from("profiles").select("avatar_path").eq("id", user.id).maybeSingle();
+  if (result.error) {
+    avatar.title = "Could not load profile picture: " + result.error.message;
+    return;
+  }
+  const path = result.data?.avatar_path;
+  if (!path) return;
+  const signed = await client.storage.from("employee-private").createSignedUrl(path, 3600);
+  if (!signed.error && signed.data?.signedUrl && avatar.isConnected) {
+    avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="Administrator profile photo">`;
+  } else if (avatar.isConnected) {
+    avatar.title = "Could not display profile picture: " + (signed.error?.message || "Private photo URL unavailable");
+  }
+}
+
 async function hydrateAdminFieldwork() {
   if (!admin() || !client || !["staff", "myprofile"].includes(page)) return;
   const root = $("admin-fieldwork-data");
   if (!root) return;
+  await hydrateAdminProfilePhoto();
   const [sellers, attendance, documents, visits] = await Promise.all([
     client.from("salesmen").select("id,name,phone,territory,area,photo_path,user_id").order("name"),
     client.from("attendance_records").select("salesman_id,attendance_date,check_in_at,check_out_at,status").order("attendance_date", { ascending: false }).limit(300),
@@ -2262,6 +2282,26 @@ async function action(act, id, element) {
     case "menu":
       $("sidebar").classList.toggle("open");
       break;
+    case "admin-profile-photo-upload": {
+      if (!admin()) throw Error("Only an administrator can update this profile picture.");
+      const file = $("admin-profile-photo")?.files?.[0];
+      if (!file) throw Error("Choose a photo first.");
+      if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 5*1024*1024) throw Error("Use a JPG, PNG or WebP image up to 5 MB.");
+      const path = `${user.id}/admin-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const bucket = client.storage.from("employee-private");
+      const uploaded = await bucket.upload(path, file, {contentType:file.type, upsert:false});
+      if (uploaded.error) throw uploaded.error;
+      const saved = await client.from("profiles").update({avatar_path:path, updated_at:new Date().toISOString()}).eq("id", user.id);
+      if (saved.error) { await bucket.remove([path]); throw saved.error; }
+      const signed = await bucket.createSignedUrl(path, 3600);
+      if (signed.error) throw signed.error;
+      const avatar = $("admin-profile-avatar");
+      if (avatar && signed.data?.signedUrl) avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="Administrator profile photo">`;
+      const profile = S().profiles?.find((p) => String(p.id) === String(user.id));
+      if (profile) profile.avatar_path = path;
+      toast("Administrator profile picture uploaded.");
+      break;
+    }
     case "profile-photo-upload": {
       const seller = own(), file = $("profile-photo")?.files?.[0];
       if (!seller) throw Error("Your login is not linked to a salesman profile.");

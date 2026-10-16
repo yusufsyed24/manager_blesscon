@@ -243,3 +243,11 @@ This release is a deployable source package, not a live deployment. Production c
 - Admin page now displays the signed-in administrator identity and a dedicated consolidated salesman fieldwork/profile-photo panel.
 - Admin fieldwork hydration runs on both My Profile & Fieldwork and Salesmen & Targets.
 - Root and web app/service-worker copies are synchronized; cache namespace bumped.
+
+
+## 2026-10-17 — Administrator profile picture upload (v13)
+- Added a profile-picture upload control to the administrator's My Profile & Fieldwork page.
+- Uploads JPG, PNG, and WebP files up to 5 MB to the private `employee-private` bucket under the signed-in admin's own user-ID folder.
+- Saves the private object path in `profiles.avatar_path`, displays a signed preview, and limits profile-row updates through an own-row RLS policy and column-level grant.
+- Added the column to the base schema and to the re-runnable self-service migration; synchronized root/web app files and bumped the service-worker cache namespace.
+- Local JavaScript syntax and archive checks are run for this build; live Supabase permissions/storage are not available for testing here.
