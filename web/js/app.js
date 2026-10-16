@@ -1013,31 +1013,55 @@ function renderStaff() {
     )}</section>${admin() ? `<section class="panel"><div class="panel-heading"><h2>Salesman profile & fieldwork records</h2><span class="muted">Admin-only view of submitted records and private uploads</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>` : ""}`
   );
 }
+async function resolveSalesmanPhoto(seller) {
+  const bucket = client.storage.from("employee-private");
+  let path = seller.photo_path || "";
+  // Compatibility fallback for profile photos uploaded before photo_path was saved.
+  if (!path && seller.user_id) {
+    const listed = await bucket.list(String(seller.user_id), { search: "profile-", limit: 100, sortBy: { column: "created_at", order: "desc" } });
+    if (!listed.error) {
+      const file = (listed.data || []).filter(x => /^profile-/i.test(x.name)).sort((a,b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+      if (file) path = `${seller.user_id}/${file.name}`;
+    }
+  }
+  if (!path) return { url: "", error: "No profile photo uploaded." };
+  const result = await bucket.createSignedUrl(path, 3600);
+  return { url: result.data?.signedUrl || "", error: result.error?.message || "" };
+}
+
 async function hydrateAdminFieldwork() {
   if (!admin() || !client || page !== "staff") return;
   const root = $("admin-fieldwork-data");
   if (!root) return;
   const [sellers, attendance, documents, visits] = await Promise.all([
-    client.from("salesmen").select("id,name,phone,territory,area,photo_path").order("name"),
+    client.from("salesmen").select("id,name,phone,territory,area,photo_path,user_id").order("name"),
     client.from("attendance_records").select("salesman_id,attendance_date,check_in_at,check_out_at,status").order("attendance_date", { ascending: false }).limit(300),
     client.from("employee_documents").select("salesman_id,document_type,file_path,file_name,mime_type,size_bytes,created_at").order("created_at", { ascending: false }).limit(300),
     client.from("customer_visits").select("salesman_id,customer_label,area,purpose,notes,visited_at,latitude,longitude").order("visited_at", { ascending: false }).limit(300),
   ]);
-  const errors = [sellers, attendance, documents, visits].filter(r => r.error).map(r => r.error.message);
-  if (errors.length) { root.innerHTML = `<p class="notice danger">Some admin fieldwork records could not be loaded: ${esc(errors.join(" · "))}. Check that supabase/salesman_self_service.sql has been applied and admin RLS policies are active.</p>`; return; }
-  const sellerRows = sellers.data || [], names = new Map(sellerRows.map(x => [String(x.id), x.name]));
-  const photoRows = await Promise.all(sellerRows.filter(x => x.photo_path).map(async x => {
-    const result = await client.storage.from("employee-private").createSignedUrl(x.photo_path, 3600);
-    return [x, result.data?.signedUrl || "", result.error?.message || ""];
-  }));
-  const docRows = await Promise.all((documents.data || []).map(async d => {
+  const sectionError = (label, result) => result.error
+    ? `<p class="notice danger">${esc(label)} could not be loaded: ${esc(result.error.message)}. Check the salesman self-service SQL migration and table permissions.</p>`
+    : "";
+  if (sellers.error) {
+    root.innerHTML = sectionError("Salesman profiles", sellers);
+    return;
+  }
+  const sellerRows = sellers.data || [];
+  const names = new Map(sellerRows.map(x => [String(x.id), x.name]));
+  const photoRows = await Promise.all(sellerRows.map(async x => {
+    const result = await resolveSalesmanPhoto(x);
+    return [x, result.url, result.error];
+  })).then(rows => rows.filter(([x,url]) => Boolean(url) || Boolean(x.photo_path)));
+  const photoHtml = photoRows.length
+    ? `<div class="profile-photo-grid">${photoRows.map(([x,url,err]) => `<article class="profile-photo-card"><div class="profile-avatar">${url ? `<img src="${esc(url)}" alt="${esc(x.name)} profile photo" loading="lazy">` : `<span class="muted">Photo unavailable</span>`}</div><div><b>${esc(x.name)}</b><p class="muted">${esc(x.phone || "—")} · ${esc(x.territory || x.area || "—")}</p>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">Open full-size photo</a>` : `<small class="muted">${esc(err || "No storage access")}</small>`}</div></article>`).join("")}</div>`
+    : `<p class="muted">No profile photos are linked to salesman records yet. The salesman must upload a photo from My profile & fieldwork.</p>`;
+  const attendanceHtml = sectionError("Attendance", attendance) || table(["Salesman","Date","Check-in","Check-out","Status"], (attendance.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status)]), "No attendance records submitted.");
+  const docRows = documents.error ? [] : await Promise.all((documents.data || []).map(async d => {
     const result = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
-    return [d, result.data?.signedUrl || "", result.error?.message || ""];
+    return [esc(names.get(String(d.salesman_id)) || d.salesman_id), esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, result.data?.signedUrl ? `<a href="${esc(result.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>` : esc(result.error?.message || "Unavailable")];
   }));
-  const photoHtml = photoRows.length ? `<div class="table-wrap"><table><thead><tr><th>Salesman</th><th>Contact / territory</th><th>Profile photo</th></tr></thead><tbody>${photoRows.map(([x,url,err]) => `<tr><td>${esc(x.name)}</td><td>${esc(x.phone || "—")} · ${esc(x.territory || x.area || "—")}</td><td>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener">View photo</a>` : esc(err || "Unavailable")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No profile photos uploaded.</p>`;
-  const attendanceHtml = table(["Salesman","Date","Check-in","Check-out","Status"], (attendance.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status)]), "No attendance records submitted.");
-  const documentsHtml = table(["Salesman","Document","Type","Uploaded","Size","File"], docRows.map(([d,url,err]) => [esc(names.get(String(d.salesman_id)) || d.salesman_id), esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, url ? `<a href="${esc(url)}" target="_blank" rel="noopener">Open private file</a>` : esc(err || "Unavailable")]), "No employee documents uploaded.");
-  const visitsHtml = table(["Salesman","Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted.");
+  const documentsHtml = sectionError("Employee documents", documents) || table(["Salesman","Document","Type","Uploaded","Size","File"], docRows, "No employee documents uploaded.");
+  const visitsHtml = sectionError("Customer visits", visits) || table(["Salesman","Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted.");
   root.innerHTML = `<h3>Employee profile photos</h3>${photoHtml}<h3>Attendance</h3>${attendanceHtml}<h3>Uploaded employee documents</h3><p class="muted">Private links expire after one hour.</p>${documentsHtml}<h3>Customer visits & optional GPS</h3>${visitsHtml}`;
 }
 async function openAdminSalesmanProfile(salesmanId) {
@@ -1057,11 +1081,10 @@ async function openAdminSalesmanProfile(salesmanId) {
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", {ascending:false}).limit(100),
   ]);
   const sectionError = (r) => r.error ? `<p class="notice danger">Could not load this section: ${esc(r.error.message)}</p>` : "";
-  let photo = '<span class="muted">No profile photo uploaded.</span>';
-  if (seller.photo_path) {
-    const r = await client.storage.from("employee-private").createSignedUrl(seller.photo_path, 3600);
-    photo = r.data?.signedUrl ? `<a href="${esc(r.data.signedUrl)}" target="_blank" rel="noopener">View profile photo</a>` : `<span class="muted">Photo unavailable: ${esc(r.error?.message || "No access")}</span>`;
-  }
+  const photoResult = await resolveSalesmanPhoto(seller);
+  const photo = photoResult.url
+    ? `<a href="${esc(photoResult.url)}" target="_blank" rel="noopener" title="Open full-size profile photo"><img src="${esc(photoResult.url)}" alt="${esc(seller.name)} profile photo" style="width:120px;height:120px;object-fit:cover;border-radius:50%"></a>`
+    : `<span class="muted">${esc(photoResult.error || "No profile photo uploaded.")}</span>`;
   const docRows = await Promise.all((documents.data || []).map(async d => {
     const r = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
     return [esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, r.data?.signedUrl ? `<a href="${esc(r.data.signedUrl)}" target="_blank" rel="noopener">Open file</a>` : esc(r.error?.message || "Unavailable")];

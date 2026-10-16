@@ -229,3 +229,11 @@ This release is a deployable source package, not a live deployment. Production c
 - **Database migration:** reasserts authenticated SELECT grants and admin/owner-scoped read policies for `salesmen`, `attendance_records`, `employee_documents`, and `customer_visits`, then asks PostgREST to reload its schema cache. This migration is additive and safe to rerun.
 - **Deployment/cache:** synchronized root and `web/` app files and bumped the service-worker cache namespace.
 - **Validation:** `node --check` passed for all JavaScript files in `js/` and `web/js/`; full tests/live Supabase access remain unverified in this environment.
+
+
+## 2026-10-17 — Admin profile and fieldwork reliability (v11)
+- Fixed the admin fieldwork panel so a failure in attendance, documents, or customer visits no longer hides every other section. Each failing section now reports its own error while available sections remain visible.
+- Profile photos now display as actual image previews in the admin fieldwork panel and in the individual salesman profile modal, with a full-size link. Added a fallback to locate older `profile-*` uploads in the employee-private bucket when a salesman record has no saved `photo_path`.
+- Added responsive layout styling for the admin photo cards.
+- Bumped the service-worker cache namespace and synchronized root/web copies for Netlify's root publish configuration.
+- Local validation covers JavaScript syntax and ZIP integrity; live Supabase permissions and deployed hosting still require verification in the user's environment.
