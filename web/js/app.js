@@ -295,11 +295,35 @@ function render() {
     import: renderImport,
   };
   $("page").innerHTML = methods[page]();
+  if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
   if (page === "dsr")
     $("page").insertAdjacentHTML("beforeend", dsrClosingSection());
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
 }
+async function hydrateSalesmanProfile() {
+  const seller = own();
+  if (!seller || !client || page !== "myprofile") return;
+  const avatar = $("profile-avatar");
+  if (seller.photo_path && avatar) {
+    const { data, error } = await client.storage.from("employee-private").createSignedUrl(seller.photo_path, 3600);
+    if (!error && data?.signedUrl && avatar.isConnected) avatar.innerHTML = `<img src="${esc(data.signedUrl)}" alt="Your profile photo">`;
+  }
+  const [attendance, documents, visits] = await Promise.all([
+    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status").eq("salesman_id", seller.id).order("attendance_date", { ascending: false }).limit(30),
+    client.from("employee_documents").select("document_type,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", { ascending: false }).limit(50),
+    client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", { ascending: false }).limit(30),
+  ]);
+  const history = (id, result, headers, rows, emptyText) => {
+    const el = $(id); if (!el || !el.isConnected) return;
+    if (result.error) { el.innerHTML = `<p class="notice">Unable to load records: ${esc(result.error.message)}</p>`; return; }
+    el.innerHTML = table(headers, result.data.map(rows), emptyText);
+  };
+  history("my-attendance-history", attendance, ["Date","Check-in","Check-out","Status"], r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleTimeString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleTimeString() : "—"), esc(r.status)], "No attendance records yet.");
+  history("my-document-history", documents, ["Document","Type","Uploaded","Size"], r => [esc(r.file_name), esc(r.document_type), esc(new Date(r.created_at).toLocaleDateString()), `${Math.ceil(num(r.size_bytes)/1024)} KB`], "No documents uploaded yet.");
+  history("my-visit-history", visits, ["Visited","Customer","Area","Purpose","Location"], r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(4)}, ${num(r.longitude).toFixed(4)}`], "No customer visits recorded yet.");
+}
+
 function renderSalesmanDashboard() {
   const seller = own(), s = S();
   if (!seller) return head("My overview", "Your login is not linked to a salesman profile.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
@@ -332,12 +356,13 @@ function renderMyProfile() {
   const monthSales = orders.filter(o => String(o.date || "").startsWith(today().slice(0,7))).reduce((n,o) => n + num(o.total_paisa), 0);
   const target = targetRows().find(t => t.id === sid);
   return head("My profile & fieldwork", "Your personal performance, stock, attendance and customer visits.") +
-    `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="Your profile photo">` : "♙"}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div><div class="grid"><div class="field"><label for="profile-photo">Update profile photograph</label><input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="profile-photo-upload">Upload photo</button></div><p class="muted">Only your own profile can be updated. Documents are stored privately.</p></section>
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="Your profile photo">` : "♙"}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div><div class="grid"><div class="field"><label for="profile-photo">Update profile photograph</label><input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="profile-photo-upload">Upload photo</button></div><p class="muted">Only your own profile can be updated. Documents are stored privately.</p></section>
     <div class="cards">${card("Today's sales", money(todaySales), "Your confirmed orders today")}${card("Sales this month", money(monthSales), "Your confirmed orders this month")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Boxes across products")}</div>
     <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
     <section class="panel"><h2>My employee documents</h2><p class="muted">Upload an ID or employment document. Files are private and visible only to you and authorized management.</p><div class="grid"><div class="field"><label for="employee-document-type">Document type</label><select id="employee-document-type"><option value="identity">Identity document</option><option value="employment">Employment document</option><option value="other">Other authorized document</option></select></div><div class="field"><label for="employee-document-file">Choose file</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-document-upload">Upload document</button><div id="profile-upload-status" role="status"></div></section>
-    <section class="panel"><h2>Attendance</h2><p>Record your attendance for today. Check-out is available after check-in.</p><div class="actions">${btn("Check in", "attendance-check-in", sid, "", "gold")}${btn("Check out", "attendance-check-out", sid)}</div><p class="muted">Timestamps are recorded by the server when online. Offline attendance is not submitted as verified.</p></section>
-    <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission. Location is collected only when you press the button.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional. Denying GPS will not prevent a normal visit record.</p></section>`;
+    <section class="panel"><h2>Attendance</h2><p>Record your attendance for today. Check-out is available after check-in.</p><div class="actions">${btn("Check in", "attendance-check-in", sid, "", "gold")}${btn("Check out", "attendance-check-out", sid)}</div><p class="muted">Timestamps are recorded by the server when online. Offline attendance is not submitted as verified.</p><div id="my-attendance-history"><p class="muted">Loading your attendance history…</p></div></section>
+    <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission. Location is collected only when you press the button.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional. Denying GPS will not prevent a normal visit record.</p><div id="my-visit-history"><p class="muted">Loading your visit history…</p></div></section>
+    <section class="panel"><h2>My uploaded documents</h2><div id="my-document-history"><p class="muted">Loading your document list…</p></div></section>`;
 }
 
 function targetRows() {
