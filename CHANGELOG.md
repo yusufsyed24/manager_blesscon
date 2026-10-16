@@ -5,7 +5,6 @@
 - Added a 2,000-carton company target, separate from the existing 130-carton default individual salesman target.
 - Overview company progress sums confirmed order-line quantities for the month, so salesman orders contribute to the company target without changing their individual target calculation.
 - Added an explicit Manager / direct sale attribution for administrator-entered orders. Manager-direct cartons appear as a separate subtotal and are included once in company achievement; sales assigned to a salesman are not classified as manager-direct.
-- Added a distinct Manager role with company sales/customer/target snapshot access and closing approval, without granting admin cost, payroll or configuration access. Managers can create company customers, manager-direct orders and payments against those orders.
 - Added unit and UI regression coverage for the target calculation and direct-sale selector. Automated tests remain unexecuted where npm is unavailable.
 
 ## Operational DSR, stock accountability and daily closing (15 October 2026)

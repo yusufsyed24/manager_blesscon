@@ -6,7 +6,7 @@ create or replace function private.business_today() returns date language sql st
 create table if not exists public.profiles(id uuid primary key references auth.users on delete cascade,display_name text not null default '',active boolean not null default true,created_at timestamptz not null default now(),updated_at timestamptz not null default now());
 create table if not exists public.user_roles(user_id uuid primary key references auth.users on delete cascade,role text not null default 'salesman',updated_at timestamptz not null default now());
 alter table public.user_roles drop constraint if exists user_roles_role_check;
-alter table public.user_roles add constraint user_roles_role_check check(role in ('admin','manager','user','salesman'));
+alter table public.user_roles add constraint user_roles_role_check check(role in ('admin','user','salesman'));
 create table if not exists public.user_permissions(user_id uuid references auth.users on delete cascade,section text not null,can_view boolean default false,can_create boolean default false,can_edit boolean default false,can_delete boolean default false,can_export boolean default false,can_share boolean default false,updated_at timestamptz default now(),primary key(user_id,section));
 alter table public.user_permissions drop constraint if exists user_permissions_section_check;
 create table if not exists public.settings(id text primary key default 'business',value jsonb not null default '{}',version integer not null default 1,updated_at timestamptz default now(),updated_by uuid);
@@ -38,26 +38,25 @@ create index if not exists orders_salesman_date on public.orders(salesman_id,dat
 create index if not exists movements_product on public.stock_movements(product_id);
 create index if not exists payments_invoice on public.payments(invoice_id);
 create or replace function public.is_admin() returns boolean language sql stable security definer set search_path='' as $$select exists(select 1 from public.user_roles r join public.profiles p on p.id=r.user_id and p.active where r.user_id=auth.uid() and r.role='admin')$$;
-create or replace function public.is_manager() returns boolean language sql stable security definer set search_path='' as $$select exists(select 1 from public.user_roles r join public.profiles p on p.id=r.user_id and p.active where r.user_id=auth.uid() and r.role='manager')$$;
 create or replace function public.has_permission(p_section text,p_action text default 'view') returns boolean language sql stable security definer set search_path='' as $$select public.is_admin() or exists(select 1 from public.user_permissions p join public.profiles pr on pr.id=p.user_id and pr.active where p.user_id=auth.uid() and p.section=p_section and case p_action when 'view' then p.can_view when 'create' then p.can_create when 'edit' then p.can_edit when 'delete' then p.can_delete when 'export' then p.can_export when 'share' then p.can_share else false end)$$;
 create or replace function public.owns_salesman(sid text) returns boolean language sql stable security definer set search_path='' as $$select exists(select 1 from public.salesmen s join public.profiles p on p.id=s.user_id and p.active where s.id=sid and s.user_id=auth.uid() and s.active and s.deleted_at is null)$$;
-create or replace function public.can_document(sid text,section text,action text default 'view') returns boolean language sql stable security definer set search_path='' as $$select public.is_admin() or (public.is_manager() and section in ('dashboard','dsr','closing','orders','invoices','quotes','ledger') and action in ('view','create','edit','share','export')) or (public.owns_salesman(sid) and action in ('view','create','edit','share','export') and (exists(select 1 from public.user_roles where user_id=auth.uid() and role='salesman') or public.has_permission(section,action)))$$;
+create or replace function public.can_document(sid text,section text,action text default 'view') returns boolean language sql stable security definer set search_path='' as $$select public.is_admin() or (public.owns_salesman(sid) and action in ('view','create','edit','share','export') and (exists(select 1 from public.user_roles where user_id=auth.uid() and role='salesman') or public.has_permission(section,action)))$$;
 -- Remove legacy policies before defining the complete policy set.
 do $$ declare t text; p record; begin foreach t in array array['profiles','user_roles','user_permissions','products','price_tiers','customers','salesmen','salesman_daily_targets','quotations','quotation_items','orders','order_items','invoices','payments','stock_movements','expenses','settings','audit_log'] loop execute format('alter table public.%I enable row level security',t); for p in select policyname from pg_policies where schemaname='public' and tablename=t loop execute format('drop policy %I on public.%I',p.policyname,t); end loop; execute format('revoke all on public.%I from anon, authenticated',t); execute format('grant select on public.%I to authenticated',t); end loop; end $$;
 create policy profile_read on public.profiles for select to authenticated using(id=auth.uid() or public.is_admin());
 create policy roles_read on public.user_roles for select to authenticated using(user_id=auth.uid() or public.is_admin());
 create policy permissions_read on public.user_permissions for select to authenticated using(user_id=auth.uid() or public.is_admin());
-create policy product_read on public.products for select to authenticated using(public.is_admin() or public.is_manager() or public.has_permission('products') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active));
+create policy product_read on public.products for select to authenticated using(public.is_admin() or public.has_permission('products') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active));
 create policy tiers_read on public.price_tiers for select to authenticated using(exists(select 1 from public.products p where p.id=product_id));
-create policy salesman_read on public.salesmen for select to authenticated using(public.is_admin() or public.is_manager() or public.owns_salesman(id));
-create policy customer_read on public.customers for select to authenticated using(public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or (created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active)));
+create policy salesman_read on public.salesmen for select to authenticated using(public.is_admin() or public.owns_salesman(id));
+create policy customer_read on public.customers for select to authenticated using(public.is_admin() or public.owns_salesman(salesman_id) or (created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active)));
 create policy orders_read on public.orders for select to authenticated using(public.can_document(salesman_id,'orders'));
 create policy quotes_read on public.quotations for select to authenticated using(public.can_document(salesman_id,'quotes'));
 create policy order_items_read on public.order_items for select to authenticated using(exists(select 1 from public.orders o where o.id=order_id));
 create policy quote_items_read on public.quotation_items for select to authenticated using(exists(select 1 from public.quotations q where q.id=quotation_id));
 create policy invoice_read on public.invoices for select to authenticated using(exists(select 1 from public.orders o where o.id=order_id));
 create policy payment_read on public.payments for select to authenticated using(exists(select 1 from public.invoices i where i.id=invoice_id));
-create policy target_read on public.salesman_daily_targets for select to authenticated using(public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id));
+create policy target_read on public.salesman_daily_targets for select to authenticated using(public.is_admin() or public.owns_salesman(salesman_id));
 create policy stock_admin on public.stock_movements for select to authenticated using(public.is_admin() or public.has_permission('stock'));
 create policy expense_admin on public.expenses for select to authenticated using(public.is_admin() or public.has_permission('expenses'));
 create policy settings_admin on public.settings for select to authenticated using(public.is_admin());
@@ -83,7 +82,7 @@ if rid is null or length(rid)>180 then raise exception 'Valid record ID required
 execute format('select to_jsonb(x) from public.%I x where id=$1 for update',t) into old using rid;
 if old is not null and expected is distinct from (old->>'version')::integer then raise exception 'CONFLICT: Record changed; refresh and review before saving'; end if;
 if not adm and old is not null and old->>'created_by'<>auth.uid()::text then raise exception 'Cannot edit another user record'; end if;
-if t='customers' and not adm and not public.is_manager() then select id into k from public.salesmen where user_id=auth.uid() and active and deleted_at is null; if k is null then raise exception 'Active salesman required'; end if; r:=r||jsonb_build_object('salesman_id',k); end if;
+if t='customers' and not adm then select id into k from public.salesmen where user_id=auth.uid() and active and deleted_at is null; if k is null then raise exception 'Active salesman required'; end if; r:=r||jsonb_build_object('salesman_id',k); end if;
 if t='salesmen' and (r->>'joining_date')::date < date '2000-01-01' then raise exception 'Joining date before 2000 is not supported'; end if;
 if t='settings' then
  if rid<>'business' or jsonb_typeof(r->'value')<>'object' or jsonb_array_length(r->'value'->'working_days')=0 or jsonb_array_length(r->'value'->'tiers')=0 then raise exception 'Settings require working days and tiers'; end if;
@@ -114,7 +113,7 @@ end if;
 if not public.can_document(sid,case when is_quote then 'quotes' else 'orders' end,case when old is null then 'create' else 'edit' end) then raise exception 'Cannot use this salesman'; end if;
 if sid is not null then select * into s from public.salesmen where id=sid and active and deleted_at is null; if not found then raise exception 'Inactive or unknown salesman'; end if; end if;
 select * into c from public.customers where id=d->>'customer_id' and deleted_at is null;
-if not found or (not public.is_admin() and not public.is_manager() and not(public.owns_salesman(c.salesman_id) or c.created_by=auth.uid())) then raise exception 'Customer not available'; end if;
+if not found or (not public.is_admin() and not(public.owns_salesman(c.salesman_id) or c.created_by=auth.uid())) then raise exception 'Customer not available'; end if;
 select value into conf from public.settings where id='business';
 if exists(select 1 from jsonb_array_elements(d->'items') x group by x->>'product_id' having count(*)>1) then raise exception 'Combine duplicate product lines'; end if;
 for l in select value from jsonb_array_elements(d->'items') loop
@@ -177,7 +176,7 @@ create or replace function private.add_payment(d jsonb,imported boolean default 
  select * into i from public.invoices where id=nullif(d->>'invoice_id','')::uuid or number=d->>'invoice_number' for update;
  if not found then raise exception 'Invoice not found'; end if; select * into strict o from public.orders where id=i.order_id;
  if o.status<>'confirmed' then raise exception 'Cannot receive payment on cancelled invoice'; end if;
- if not public.is_admin() and not public.is_manager() and not(public.owns_salesman(o.salesman_id) and public.has_permission('invoices','create')) then raise exception 'Payment permission required'; end if;
+ if not public.is_admin() and not(public.owns_salesman(o.salesman_id) and public.has_permission('invoices','create')) then raise exception 'Payment permission required'; end if;
  if n is null or n<=0 or d->>'received_by' is null or length(trim(d->>'received_by'))=0 then raise exception 'Positive amount and receiver required'; end if;
  select * into old from public.payments where transaction_id=d->>'transaction_id';
  if old.id is not null and not imported then
@@ -366,7 +365,7 @@ declare cached private.commands; result jsonb; o public.orders; q public.quotati
   result:=jsonb_build_object('imported',true,'products',jsonb_array_length(data->'products'),'orders',jsonb_array_length(data->'orders'));
  when 'user.provision' then
   if not public.is_admin() then raise exception 'Admin required';end if;
-  if data->>'role' not in ('admin','manager','salesman','user') or length(trim(data->>'display_name'))<2 then raise exception 'Invalid user fields';end if;
+  if data->>'role' not in ('admin','salesman','user') or length(trim(data->>'display_name'))<2 then raise exception 'Invalid user fields';end if;
   if not exists(select 1 from auth.users where id=(data->>'user_id')::uuid) then raise exception 'Auth user missing';end if;
   insert into public.profiles(id,display_name,active) values((data->>'user_id')::uuid,data->>'display_name',true);
   insert into public.user_roles(user_id,role) values((data->>'user_id')::uuid,data->>'role');
@@ -402,7 +401,7 @@ create or replace function public.shared_document(token uuid) returns jsonb lang
 end $$;
 revoke all on all functions in schema private from public,anon,authenticated;
 revoke all on function public.apply_command(uuid,text,jsonb),public.recalculate_targets(date),public.app_settings(),public.stock_balances(),public.shared_document(uuid),public.is_admin(),public.has_permission(text,text),public.owns_salesman(text),public.can_document(text,text,text) from public,anon;
-grant execute on function public.apply_command(uuid,text,jsonb),public.recalculate_targets(date),public.app_settings(),public.stock_balances(),public.is_admin(),public.is_manager(),public.has_permission(text,text),public.owns_salesman(text),public.can_document(text,text,text) to authenticated;
+grant execute on function public.apply_command(uuid,text,jsonb),public.recalculate_targets(date),public.app_settings(),public.stock_balances(),public.is_admin(),public.has_permission(text,text),public.owns_salesman(text),public.can_document(text,text,text) to authenticated;
 grant execute on function public.shared_document(uuid) to anon,authenticated;
 -- Legacy storage is kept read-only for migration/backup and no longer exposed to browser users.
 do $$begin if to_regclass('public.business_sections') is not null then revoke all on public.business_sections from authenticated,anon;end if;end $$;
