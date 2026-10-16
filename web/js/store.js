@@ -32,7 +32,7 @@ export const TABLES = [
   "customer_visits",
 ];
 const commandRpc = (kind) =>
-  kind.startsWith("closing.")
+  kind.startsWith("closing.") || ["stock.issue", "stock.return"].includes(kind)
     ? "apply_operational_command"
     : "apply_command";
 export function empty() {
@@ -1014,7 +1014,7 @@ export class Store extends EventTarget {
       this.emit();
       try {
         await this.verifyUser();
-        const { data: result, error } = await this.client.rpc("apply_command", {
+        const { data: result, error } = await this.client.rpc(commandRpc(kind), {
           op_id: op.id,
           kind,
           data,

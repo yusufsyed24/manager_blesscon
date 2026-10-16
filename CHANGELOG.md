@@ -1,3 +1,9 @@
+## Stock issue RPC routing fix (16 October 2026)
+
+- **Root cause:** stock issue and stock return commands were sent to `public.apply_command`, but their SQL handlers are implemented in `public.apply_operational_command`. The older RPC returned `Unknown command`, which was incorrectly described only as a missing migration.
+- **Fix:** route both online stock operations and queued/offline sync through `apply_operational_command`, alongside daily closing commands. Other command types continue to use `apply_command`.
+- **Validation:** JavaScript syntax and source-copy parity checks run for this build; live Supabase execution still requires deployment and a database smoke test.
+
 ## Stock issue button and confirmed stock transfer (16 October 2026)
 
 - Added explicit click handling for the **Confirm stock issue** and **Record stock return** buttons so the operation does not depend only on a delegated dialog submit event.
