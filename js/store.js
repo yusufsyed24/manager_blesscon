@@ -29,7 +29,6 @@ export const TABLES = [
   "user_permissions",
 ];
 const commandRpc = (kind) =>
-  "stock_vouchers",
   kind.startsWith("closing.")
     ? "apply_operational_command"
     : "apply_command";
