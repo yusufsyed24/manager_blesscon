@@ -221,3 +221,11 @@ This release is a deployable source package, not a live deployment. Production c
 - **Fix:** added the missing helper to calculate each salesman’s net held boxes from only that salesman’s stock movements for the requested product. It returns zero when the product or salesman ID is unavailable and does not expose warehouse or another salesman’s stock.
 - **Cache/deployment:** synchronized root and `web/` copies and bumped the service-worker cache namespace.
 - **Validation:** `node --check` passed for all JavaScript files under both `js/` and `web/js/`; root and `web/` `app.js` hashes match. Live Supabase login was not available for integration testing.
+
+## 2026-10-17 — Admin one-click salesman profiles and fieldwork access
+- **Reported symptom:** the admin-side profile/fieldwork panel did not load reliably, and admins needed to open a salesman profile directly from Users & Access.
+- **UI change:** added a `Profile` action beside `Edit access` for linked salesman logins. It opens a persistent-in-database view of the salesman profile, profile photo, attendance history, uploaded documents (signed private links), customer visits, notes, area and optional GPS details. The view is available again any time from Users & Access.
+- **Error handling:** the profile view reports which section failed instead of hiding all other details when one table fails; missing salesman links direct the admin to Edit access.
+- **Database migration:** reasserts authenticated SELECT grants and admin/owner-scoped read policies for `salesmen`, `attendance_records`, `employee_documents`, and `customer_visits`, then asks PostgREST to reload its schema cache. This migration is additive and safe to rerun.
+- **Deployment/cache:** synchronized root and `web/` app files and bumped the service-worker cache namespace.
+- **Validation:** `node --check` passed for all JavaScript files in `js/` and `web/js/`; full tests/live Supabase access remain unverified in this environment.

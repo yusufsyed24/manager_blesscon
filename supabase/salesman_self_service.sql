@@ -99,3 +99,18 @@ grant update (photo_path) on public.salesmen to authenticated;
 drop policy if exists salesman_photo_self_update on public.salesmen;
 create policy salesman_photo_self_update on public.salesmen for update to authenticated
   using (public.owns_salesman(id)) with check (public.owns_salesman(id));
+
+
+-- Re-assert admin read permissions for the one-click employee profile and fieldwork view.
+-- Safe to rerun; policies still scope ordinary salesman access to their own records.
+grant select on public.salesmen, public.attendance_records, public.employee_documents, public.customer_visits to authenticated;
+drop policy if exists attendance_self_select on public.attendance_records;
+create policy attendance_self_select on public.attendance_records for select to authenticated
+  using (public.is_admin() or public.owns_salesman(salesman_id));
+drop policy if exists employee_documents_self_select on public.employee_documents;
+create policy employee_documents_self_select on public.employee_documents for select to authenticated
+  using (public.is_admin() or public.owns_salesman(salesman_id));
+drop policy if exists customer_visits_self_select on public.customer_visits;
+create policy customer_visits_self_select on public.customer_visits for select to authenticated
+  using (public.is_admin() or public.owns_salesman(salesman_id));
+notify pgrst, 'reload schema';

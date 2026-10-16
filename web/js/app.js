@@ -1040,6 +1040,39 @@ async function hydrateAdminFieldwork() {
   const visitsHtml = table(["Salesman","Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted.");
   root.innerHTML = `<h3>Employee profile photos</h3>${photoHtml}<h3>Attendance</h3>${attendanceHtml}<h3>Uploaded employee documents</h3><p class="muted">Private links expire after one hour.</p>${documentsHtml}<h3>Customer visits & optional GPS</h3>${visitsHtml}`;
 }
+async function openAdminSalesmanProfile(salesmanId) {
+  if (!admin()) throw Error("Administrator access is required to view employee profiles.");
+  if (!client) throw Error("Employee profiles require a connected Supabase session.");
+  modal("Salesman profile", '<p class="muted">Loading saved profile and fieldwork details…</p>');
+  const sellerResult = await client.from("salesmen").select("id,name,phone,territory,area,photo_path,user_id,joining_date,active").eq("id", salesmanId).maybeSingle();
+  if (sellerResult.error) {
+    modal("Salesman profile", `<p class="notice danger">Unable to load salesman profile: ${esc(sellerResult.error.message)}. Apply the updated <code>supabase/salesman_self_service.sql</code> migration and confirm the current login has the admin role.</p>`);
+    return;
+  }
+  const seller = sellerResult.data;
+  if (!seller) { modal("Salesman profile", '<p class="notice">No linked salesman profile was found. Use Edit access to link or create the salesman profile.</p>'); return; }
+  const [attendance, documents, visits] = await Promise.all([
+    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status").eq("salesman_id", seller.id).order("attendance_date", {ascending:false}).limit(100),
+    client.from("employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", {ascending:false}).limit(100),
+    client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", {ascending:false}).limit(100),
+  ]);
+  const sectionError = (r) => r.error ? `<p class="notice danger">Could not load this section: ${esc(r.error.message)}</p>` : "";
+  let photo = '<span class="muted">No profile photo uploaded.</span>';
+  if (seller.photo_path) {
+    const r = await client.storage.from("employee-private").createSignedUrl(seller.photo_path, 3600);
+    photo = r.data?.signedUrl ? `<a href="${esc(r.data.signedUrl)}" target="_blank" rel="noopener">View profile photo</a>` : `<span class="muted">Photo unavailable: ${esc(r.error?.message || "No access")}</span>`;
+  }
+  const docRows = await Promise.all((documents.data || []).map(async d => {
+    const r = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
+    return [esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, r.data?.signedUrl ? `<a href="${esc(r.data.signedUrl)}" target="_blank" rel="noopener">Open file</a>` : esc(r.error?.message || "Unavailable")];
+  }));
+  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status)]), "No attendance submitted yet.");
+  const documentsHtml = sectionError(documents) || table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded yet.");
+  const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted yet.");
+  const role = S().user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
+  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+}
+
 function filters(category = false) {
   return `<div class="filters">${field("From", "from", filter.from, "date", 'data-filter="from"')}${field("To", "to", filter.to, "date", 'data-filter="to"')}${category ? select("Category", "category", ["All categories", ...new Set(S().expenses.map((e) => e.category))], filter.category || "All categories") : ""}${btn("Apply", "apply-filters")}${btn("This month", "this-month")}${btn("This year", "this-year")}</div>`;
 }
@@ -1360,7 +1393,7 @@ function renderUsers() {
         badge(p.active ? "Active" : "Inactive"),
         p.id === user.id
           ? "Current user"
-          : btn("Edit access", "edit-user", p.id),
+          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
       ]),
     )}</section>`
   );
@@ -2565,6 +2598,9 @@ async function action(act, id, element) {
       break;
     case "edit-user":
       userModal(id);
+      break;
+    case "salesman-profile":
+      await openAdminSalesmanProfile(id);
       break;
     case "audit-detail": {
       const a = S().audit_log.find((a) => String(a.id) === id);
