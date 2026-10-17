@@ -197,6 +197,7 @@ function modal(title, html) {
   $("modal-title").textContent = title;
   $("modal-body").innerHTML = html;
   if (!$("modal").open) $("modal").showModal();
+  if ($("stock-form")) refreshStockMovementPreview($("stock-form"));
   $("minimize-modal").hidden = !(draft && $("document-form"));
   setTimeout(
     () => $("modal-body").querySelector("input,select,button")?.focus(),
@@ -237,6 +238,7 @@ function restoreModal() {
   $("modal-body").replaceChildren(m.frag);
   $("minimize-modal").hidden = false;
   if (!$("modal").open) $("modal").showModal();
+  if ($("stock-form")) refreshStockMovementPreview($("stock-form"));
   updatePill();
   calcEditor();
 }
@@ -2007,6 +2009,22 @@ function paymentModal(id) {
     `<div class="notice"><b>Invoice:</b> ${esc(i.number)} · <b>Customer:</b> ${esc(customerName(S().orders.find(o=>o.id===i.order_id)?.customer_id))}<br><b>Total:</b> ${money(i.total_paisa)} · <b>Already paid:</b> ${money(p.paid)} · <b>Balance due:</b> ${money(p.balance)} · ${badge(p.status)}</div><form id="payment-form" data-id="${id}"><div class="grid">${field("Date", "date", today(), "date", "required")}${field("Amount received now (Rs.)", "amount", p.balance / 100, "number", 'min="0.01" step="0.01" required')}<button type="button" class="secondary" data-act="pay-full-balance" data-id="${id}">Pay full balance</button>${select("Method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${cashbookPaymentAccountField()}${field("Reference", "reference")}${field("Received by", "received_by", user.name || user.email || "Owner", "text", "required")}</div><button class="gold" style="margin-top:20px">Record payment</button></form>`,
   );
 }
+function refreshStockMovementPreview(form) {
+  if (!form || form.id !== "stock-form") return;
+  const productId = form.elements.namedItem("product_id")?.value || "";
+  const product = S().products.find((item) => String(item.id) === String(productId));
+  const packOutput = form.querySelector("#stock-pack-size");
+  const totalOutput = form.querySelector("#stock-quantity-preview");
+  const cartonsInput = form.elements.namedItem("cartons");
+  const looseInput = form.elements.namedItem("loose_boxes");
+  const per = Number(product?.boxes_per_carton || 0);
+  if (packOutput) packOutput.textContent = product && Number.isSafeInteger(per) && per > 0 ? `${per} boxes per carton` : "Select a product";
+  const cartons = Number(cartonsInput?.value || 0);
+  const loose = Number(looseInput?.value || 0);
+  const valid = product && Number.isSafeInteger(per) && per > 0 && Number.isSafeInteger(cartons) && cartons >= 0 && Number.isSafeInteger(loose) && loose >= 0;
+  const total = valid ? cartons * per + loose : 0;
+  if (totalOutput) totalOutput.textContent = `Total: ${Number.isSafeInteger(total) ? total.toLocaleString() : "0"} boxes`;
+}
 function stockModal() {
   modal(
     "Stock movement",
@@ -3108,6 +3126,8 @@ document.addEventListener("click", async (e) => {
 });
 document.addEventListener("input", (e) => {
   const input = e.target;
+  const stockForm = input.closest?.("#stock-form");
+  if (stockForm && ["cartons", "loose_boxes"].includes(input.name)) refreshStockMovementPreview(stockForm);
   const masterForm = input.closest?.("#master-form");
   if (masterForm) {
     const error = masterForm.querySelector("#master-form-error");
@@ -3164,6 +3184,8 @@ document.addEventListener("input", (e) => {
     refreshClosingEstimate(closingForm);
 });
 document.addEventListener("change", async (e) => {
+  const stockForm = e.target.closest?.("#stock-form");
+  if (stockForm && ["product_id", "cartons", "loose_boxes"].includes(e.target.name)) refreshStockMovementPreview(stockForm);
   if (e.target.matches?.("[data-cashbook-date]")) { cashbookDate = e.target.value || today(); render(); return; }
   try {
     const closingForm = e.target.closest("#closing-form");

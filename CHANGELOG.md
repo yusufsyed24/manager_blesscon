@@ -315,3 +315,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Warehouse Movement now accepts Cartons and Loose boxes, calculates total boxes using the selected product's `boxes_per_carton`, validates whole nonnegative inputs, and records the combined movement in the existing box-based stock ledger.
 - Rebuilt `web/` using `scripts/release.mjs` so deployment JS matches the root app.
 - Validation: JavaScript syntax checks passed. Full automated suite not run.
+
+## v23 — Warehouse carton conversion live update
+- Fixed warehouse movement preview so selecting a product immediately displays its configured boxes-per-carton value.
+- Carton and loose-box input changes now refresh the total movement preview; the modal initializes the preview on open.
+- Kept the database movement quantity in boxes and retained existing save validation.
+- Validation: `node --check app.js` and `node --check js/app.js` pass. Full checks could not run because the TypeScript dependency is not installed in this environment.
