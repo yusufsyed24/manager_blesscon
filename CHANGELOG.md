@@ -379,3 +379,10 @@ This release is a deployable source package, not a live deployment. Production c
 - The action invokes the existing `admin-reset-user-password` Edge Function, validates passwords (12–128 characters), handles function errors, and reminds Admin to share the password securely.
 - Synced root, `js/`, and `web/js/` app copies to keep deployment variants consistent.
 - Validation: `node --check` passed for all three updated app.js copies; ZIP integrity checked after packaging. Live Supabase function deployment/permissions are not verified here.
+
+## v37 candidate — Manager daily closing permission
+- Fixed the daily-closing submit guard so a Manager can submit a closing for an active salesman assigned to that Manager (`salesmen.manager_user_id = auth.uid()`).
+- Updated the closing form so Manager, like Admin, can select an active visible salesman instead of defaulting to the empty `own()` salesman identity.
+- Updated the Supabase `closing.submit` RPC authorization in both `supabase/operational_modules.sql` and its `web/` copy. The server-side check permits Admin, the assigned salesman, or the Manager explicitly assigned to that salesman; it does not permit a Manager to submit closings for unrelated salesmen.
+- Requires applying the updated `supabase/operational_modules.sql` to the Supabase project before live Manager submissions will work.
+- Validation performed: `node --check` passed for JavaScript files under `js/`, `web/js/`, and `tests/`; live Supabase RPC/RLS behavior not tested.

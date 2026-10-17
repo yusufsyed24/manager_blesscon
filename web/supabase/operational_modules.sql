@@ -341,7 +341,7 @@ begin
       end loop;
       result:=jsonb_build_object('reference',voucher_ref,'voucher_id',voucher_id,'items',items_result);
     when 'closing.submit' then
-      if not(public.is_admin() or public.owns_salesman(sid)) then raise exception 'Only the assigned salesman or management may submit this closing'; end if;
+      if not(public.is_admin() or public.owns_salesman(sid) or (public.is_manager() and exists(select 1 from public.salesmen sm where sm.id=sid and sm.manager_user_id=auth.uid() and sm.active and sm.deleted_at is null))) then raise exception 'Only the assigned salesman, their manager, or Admin may submit this closing'; end if;
       if sid is null or d is null or coalesce(jsonb_typeof(data->'actual_stock'),'')<>'object' then raise exception 'Salesman, business date and counted stock are required'; end if;
       if d>private.business_today() then raise exception 'A closing cannot be submitted for a future business date'; end if;
       opening:=coalesce(nullif(data->>'opening_cash_paisa','')::bigint,0);
