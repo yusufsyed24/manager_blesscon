@@ -78,7 +78,7 @@ case t
  when 'expenses' then allowed:=array['id','date','category','description','amount_paisa','method','attachment_path','salesman_id','salary_period'];
  when 'settings' then allowed:=array['id','value'];
  else raise exception 'Unsupported table'; end case;
-if not adm and not(t='customers' or (t='expenses' and public.has_permission('expenses','create'))) then raise exception 'Admin required'; end if;
+if not adm and not ((t in ('products','price_tiers') and public.has_permission('products','edit')) or t='customers' or (t='expenses' and public.has_permission('expenses','create'))) then raise exception 'Admin or product-edit permission required'; end if;
 if rid is null or length(rid)>180 then raise exception 'Valid record ID required'; end if;
 execute format('select to_jsonb(x) from public.%I x where id=$1 for update',t) into old using rid;
 if old is not null and expected is distinct from (old->>'version')::integer then raise exception 'CONFLICT: Record changed; refresh and review before saving'; end if;
@@ -191,7 +191,7 @@ create or replace function private.add_payment(d jsonb,imported boolean default 
  insert into public.payments(id,transaction_id,invoice_id,date,amount_paisa,method,reference,received_by,created_by) values(coalesce(old.id,gen_random_uuid()),d->>'transaction_id',i.id,(d->>'date')::date,n,d->>'method',coalesce(d->>'reference',''),d->>'received_by',auth.uid()) on conflict(transaction_id) do update set date=excluded.date,amount_paisa=excluded.amount_paisa,method=excluded.method,reference=excluded.reference,received_by=excluded.received_by,voided_at=null,void_reason=null returning to_jsonb(payments.*) into result;
  return result; end $$;
 create or replace function private.stock_entry(d jsonb,imported boolean default false) returns jsonb language plpgsql set search_path='' as $$declare old public.stock_movements; delta integer:=(d->>'boxes')::integer; result jsonb; tx text:=nullif(trim(d->>'transaction_id'),''); movement_date date:=(d->>'date')::date; movement_kind text:=d->>'kind'; movement_note text:=coalesce(d->>'note',''); begin
- if not public.is_admin() then raise exception 'Admin required'; end if;
+ if not public.is_admin() and not (public.has_permission('stock','create') or public.has_permission('stock','edit')) then raise exception 'Admin or stock-edit permission required'; end if;
  if tx is null then raise exception 'A unique stock transaction reference is required'; end if;
  perform 1 from public.products where id=d->>'product_id' for update; if not found then raise exception 'Unknown product'; end if;
  if delta is null or (delta=0 and not imported) then raise exception 'Nonzero whole boxes required'; end if;

@@ -354,3 +354,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Added a Clone action to daily closing rows. It opens a new closing form with copied values and today's date; it does not copy a closing ID or approval state.
 - Added a reminder to verify manager role/RLS permissions in the deployed Supabase project before production use.
 - Validation note: `scripts/check.mjs` could not run in this environment because the `typescript` npm dependency is not installed. JavaScript syntax checks were run separately; full integration and Supabase RLS tests remain outstanding.
+
+## Manager product, pricing, stock and expiry access
+- Added `supabase/manager_product_stock_access.sql` to grant the designated Manager product/price-tier editing and stock movement permissions while keeping delete disabled.
+- Updated `schema.sql` save-master and stock-entry authorization to honor the explicit product-edit and stock-create/edit permissions.
+- Product expiry dates are part of the product record and can be edited through the existing Product Edit form.
+- Apply the migration in Supabase SQL Editor for an already-deployed database; changing local files alone does not change live Supabase permissions.
