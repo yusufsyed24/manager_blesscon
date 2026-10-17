@@ -1596,7 +1596,7 @@ function renderUsers() {
         badge(p.active ? "Active" : "Inactive"),
         p.id === user.id
           ? "Current user"
-          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id)}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
       ]),
     )}</section>`
   );
@@ -2904,6 +2904,15 @@ async function action(act, id, element) {
     case "edit-user":
       userModal(id);
       break;
+    case "reset-user-password": {
+      if (!admin()) throw Error("Only an active Admin can reset user passwords");
+      if (id === user.id) throw Error("Use the account recovery process for your own Admin account");
+      const target = S().profiles.find((p) => p.id === id);
+      if (!target) throw Error("User profile not found");
+      modal("Reset password · " + (target.display_name || target.email || "User"),
+        `<form id="admin-reset-password-form" data-id="${esc(id)}">${field("New temporary password (12–128 characters)", "temporary_password", "", "password", 'minlength="12" maxlength="128" autocomplete="new-password" required')}<p class="muted">The password will be set by the Admin. Share it securely with the user; do not send it through an unsecured channel.</p><button class="gold">Reset password</button></form>`);
+      break;
+    }
     case "salesman-profile":
       await openAdminSalesmanProfile(id);
       break;
@@ -3115,12 +3124,15 @@ async function action(act, id, element) {
         render();
       }
       break;
-    case "account":
+    case "account": {
+      const role = user.role || "user";
+      const restricted = ["manager", "salesman"].includes(role);
       modal(
         "Your account",
-        `<p>${esc(user.email || "Practice account")}</p>${user.practice ? "<p>Practice mode has no login password.</p>" : `<form id="password-form">${field("New password", "password", "", "password", 'minlength="12" required autocomplete="new-password"')}<button style="margin-top:15px">Change password</button></form>`}`,
+        `<p>${esc(user.email || "Practice account")}</p>${user.practice ? "<p>Practice mode has no login password.</p>" : restricted ? "<p>Password changes are disabled for Manager and Salesman accounts. Please contact the Admin if you need a password reset.</p>" : role === "admin" ? "<p>Admin passwords are managed through the approved account recovery process. Use Users & access to reset other users’ passwords.</p>" : `<form id="password-form">${field("New password", "password", "", "password", 'minlength="12" required autocomplete="new-password"')}<button style="margin-top:15px">Change password</button></form>`}`,
       );
       break;
+    }
     case "logout":
       minimized = null;
       updatePill();
@@ -3637,6 +3649,24 @@ document.addEventListener("submit", async (e) => {
         close();
         render();
         toast("Access and salesman link saved");
+        break;
+      }
+      case "admin-reset-password-form": {
+        if (!admin()) throw Error("Only an active Admin can reset user passwords");
+        const targetUserId = form.dataset.id;
+        if (!targetUserId || targetUserId === user.id) throw Error("You can reset passwords only for other users");
+        if (String(f.temporary_password || "").length < 12 || String(f.temporary_password || "").length > 128) throw Error("Password must be 12–128 characters");
+        const { data, error } = await client.functions.invoke("admin-reset-user-password", {
+          body: { user_id: targetUserId, temporary_password: f.temporary_password },
+        });
+        if (error) {
+          let message = error.message;
+          try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
+          throw Error(message);
+        }
+        if (data?.error) throw Error(data.error);
+        close();
+        toast("Password reset successfully. Share the temporary password securely.");
         break;
       }
       case "password-form": {

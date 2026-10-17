@@ -3237,7 +3237,7 @@ async function action(act, id, element) {
     case "account":
       modal(
         "Your account",
-        `<p>${esc(user.email || "Practice account")}</p>${user.practice ? "<p>Practice mode has no login password.</p>" : `<form id="password-form">${field("New password", "password", "", "password", 'minlength="12" required autocomplete="new-password"')}<button style="margin-top:15px">Change password</button></form>`}`,
+        `<p>${esc(user.email || "Practice account")}</p>${user.practice ? "<p>Practice mode has no login password.</p>" : admin() ? `<p>You can change your own password here. Use at least 12 characters.</p><form id="password-form">${field("New password", "password", "", "password", 'minlength="12" required autocomplete="new-password"')}<button style="margin-top:15px">Change my password</button></form>` : `<p>Password changes are managed by your Admin. Please contact the Admin to request a password reset.</p>`}`,
       );
       break;
     case "logout":

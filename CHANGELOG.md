@@ -367,3 +367,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Added Admin visibility for the Manager's profile photo, attendance, uploaded documents and fieldwork visits.
 - Added additive Supabase migration `supabase/manager_profile_fieldwork.sql`; apply it after the existing Manager role and salesman self-service migrations.
 - This build's database behavior still requires validation against the target Supabase project; tests could not run because `vitest` is not installed in this environment.
+
+## v34 — Admin self-service password change
+- Updated the Account modal so Admin users can change their own password.
+- Manager, Salesman, and other non-admin users see a message to contact Admin instead of a self-service password form.
+- This is UI-level enforcement only; Supabase Auth may still permit direct password updates outside the app unless separately constrained.
+- Validation: `node --check js/app.js` and `node --check web/js/app.js` passed.
