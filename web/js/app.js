@@ -2024,7 +2024,7 @@ function stockModal() {
         ["adjustment", "Adjustment (signed boxes)"],
         ["opening", "Opening stock"],
       ],
-    )}${field("Boxes", "boxes", 1, "number", 'step="1" required')}${field("Transaction reference", "transaction_id", "ST-" + uid(), "text", "required")}${area("Note", "note")}</div><button class="gold" style="margin-top:20px">Save movement</button></form>`,
+    )}${field("Cartons", "cartons", 0, "number", 'min="0" step="1" required')}${field("Loose boxes", "loose_boxes", 0, "number", 'min="0" step="1" required')}<div class="field"><label for="stock-pack-size">Boxes per carton</label><output id="stock-pack-size">Select a product</output></div><div class="field"><label for="stock-quantity-preview">Total movement</label><output id="stock-quantity-preview">Total: 0 boxes</output></div>${field("Transaction reference", "transaction_id", "ST-" + uid(), "text", "required")}${area("Note", "note")}</div><p class="muted">Enter cartons and any extra loose boxes. The total is converted to boxes automatically.</p><button class="gold" style="margin-top:20px">Save movement</button></form>`, 
   );
 }
 function renderStockOperationLines(type) {
@@ -3359,11 +3359,19 @@ document.addEventListener("submit", async (e) => {
         toast("Payment recorded");
         break;
       case "stock-form": {
+        const product = S().products.find((p) => p.id === f.product_id);
+        if (!product) throw Error("Choose a valid product");
+        const cartons = Number(f.cartons);
+        const looseBoxes = Number(f.loose_boxes);
+        if (!Number.isSafeInteger(cartons) || cartons < 0 || !Number.isSafeInteger(looseBoxes) || looseBoxes < 0)
+          throw Error("Cartons and loose boxes must be whole nonnegative quantities");
+        const quantity = cartons * Number(product.boxes_per_carton || 0) + looseBoxes;
+        if (!Number.isSafeInteger(quantity) || quantity <= 0)
+          throw Error("Enter a positive quantity in cartons and/or loose boxes");
+        const signedQuantity = ["out", "damage"].includes(f.kind) ? -quantity : f.kind === "adjustment" ? quantity : quantity;
         const saved = await store.run("stock.add", {
           ...f,
-          boxes: ["out", "damage"].includes(f.kind)
-            ? -Math.abs(num(f.boxes))
-            : num(f.boxes),
+          boxes: signedQuantity,
         });
         close();
         render();

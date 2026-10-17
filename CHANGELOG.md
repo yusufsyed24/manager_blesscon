@@ -309,3 +309,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Stock out and damaged movements apply a negative sign to the combined quantity; stock received/opening/adjustment movements add the combined quantity.
 - Synced the root and `web/js/app.js` copies.
 - Validation: JavaScript syntax checks passed for both app copies. Full test suite not run because dependencies are not installed in this workspace.
+
+## v22 — Corrected live Warehouse Movement form
+- Fixed the actual application entry point (`js/app.js`), which the previous build had left with the old single “Boxes” input even though a separate source copy contained carton fields.
+- Warehouse Movement now accepts Cartons and Loose boxes, calculates total boxes using the selected product's `boxes_per_carton`, validates whole nonnegative inputs, and records the combined movement in the existing box-based stock ledger.
+- Rebuilt `web/` using `scripts/release.mjs` so deployment JS matches the root app.
+- Validation: JavaScript syntax checks passed. Full automated suite not run.
