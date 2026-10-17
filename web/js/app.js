@@ -3358,8 +3358,8 @@ document.addEventListener("submit", async (e) => {
         render();
         toast("Payment recorded");
         break;
-      case "stock-form":
-        await store.run("stock.add", {
+      case "stock-form": {
+        const saved = await store.run("stock.add", {
           ...f,
           boxes: ["out", "damage"].includes(f.kind)
             ? -Math.abs(num(f.boxes))
@@ -3367,8 +3367,9 @@ document.addEventListener("submit", async (e) => {
         });
         close();
         render();
-        toast("Stock updated");
+        toast(saved?.queued ? "Stock entry saved on this device; pending sync. It is not available to online sales until sync succeeds." : "Stock movement confirmed");
         break;
+      }
       case "stock-issue-form": {
         const items = stockOperationItems(form, "ISSUE-");
         const saved = await store.run("stock.issue", {

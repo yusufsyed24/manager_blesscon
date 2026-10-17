@@ -1,3 +1,10 @@
+## Stock-in confirmation and duplicate-reference fix (17 October 2026)
+
+- Root cause addressed: the stock-entry RPC previously returned an existing stock movement for any reused transaction reference, even when the new quantity/product/date differed. The UI could therefore report success while the ledger remained unchanged.
+- Fix: exact retries remain idempotent; reused references with different movement details now return a visible error and do not alter existing stock. Online stock-in now waits for Supabase confirmation and surfaces database errors. Offline entries are explicitly labelled pending sync instead of “Stock updated.”
+- Added `supabase/fix_stock_entry_idempotency.sql` for already-deployed projects and a regression test. No existing stock or sales rows are changed by the migration.
+- Validation: source syntax and release-copy checks to be run; live Supabase behavior still requires applying the migration and testing one stock-in/order in the target project.
+
 ## Cash & Bank Book ledger (17 October 2026)
 
 - Added the mobile-friendly **5. Cash & Bank Book** navigation page for Admin, Manager and Salesman roles. It shows date-based opening and expected closing balances by account, daily receipts/payments/transfers, salesman-held collection accounts, Market Credit receivables, transaction references, CSV export and print.
@@ -281,3 +288,11 @@ This release is a deployable source package, not a live deployment. Production c
 - Added the Cash & Bank Book page to the sidebar navigation regression test and asserted that it renders the expected heading.
 - Bumped the service-worker cache namespace so deployed browsers fetch the corrected app code.
 - Live deployment and live Supabase access remain unverified.
+
+
+## v18 — Salesman profile & fieldwork permission fix
+
+- Fixed a migration-order conflict: `operational_modules.sql` revoked `SELECT` on `public.salesmen` after the self-service migration granted it, causing `permission denied for table salesmen` in the admin profile/fieldwork panel.
+- Kept direct `salesmen` SELECT available to authenticated sessions while relying on RLS policies to restrict rows to admins and the linked salesman. Product and line-item reads remain scoped through RPCs.
+- Added `supabase/salesman_self_service_permissions_fix.sql` for existing deployments; run it after the other migrations.
+- Updated setup instructions. No live Supabase database was modified by this package change.

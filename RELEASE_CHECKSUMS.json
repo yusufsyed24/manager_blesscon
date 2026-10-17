@@ -1,95 +1,446 @@
-{
-  ".gitignore": "2bc1aa56bd60443cf71060125a2f84aefb42b7ebec34e8d53d24af4beef74550",
-  "CHANGELOG.md": "b4288cfaf9c9c0308b4ce4c080cf43d3073583e2e3fecfcd42b0791932522059",
-  "README_SETUP.md": "18af51e91fca3338fa55dcb1f0580f2b02a9283b282b2d4d1037d89ab0241159",
-  "TESTING.md": "b59b9e498c6f604880a8a457c2fde8d29fe5a8ce6f82fe59f49db151f12d24da",
-  "TEST_OUTPUT.txt": "723f4c4814ad97224d6ae185253b33e4c90c99c71da6ec96712cdb4bcc72c515",
-  "THIRD_PARTY_NOTICES.md": "b8b280919297268759d7ac357714dab5f27595a33ba57f2f5a81039f34520fe1",
-  "app_config.js": "3a6726832e4a9bbdcc6b7ab4c7be603bff97fbb3352f5e1999de47fe52ffab39",
-  "assets/document-font.ttf": "8a2654350d2a1d72958875490ce582fe10ac21231d900848d6b8f5ce01e81567",
-  "assets/logo-square.png": "f41ba2ae7c2559850dc416d03f33f2780f5464a8d0ca3dd75b7c26bcec1d4c50",
-  "assets/logo.jpeg": "7735d42ee020dc25fcd2d680eecb875db123fcd44ca4adf23c699f2f062958de",
-  "css/app.css": "4e70faeb9bd82b507c43a15930bb4b9f69d4b248c4478f3077012958717c7b12",
-  "docs/OWNER_GUIDE.md": "948af4e632fdd406898ada46045bd3def3a257965cbb3e83cdba4b44fd0b9fc9",
-  "docs/SALESMAN_GUIDE.md": "d5ecac2feb565ea415c05d704b5278d50de3b0b39a50db15fa93e8cdbff8f19f",
-  "index.html": "90d96e84423acc5a100b3ba213bb255169518a547ffabf31751158acb89b979e",
-  "js/app.js": "e4fff8d7b6f3372b905008be3fa20a209aa9ccefa8db78074b5d8f106c315428",
-  "js/brand.js": "3b57533ecab90756481f261399e21ca051a4703aa0dcf60dd7ad9f495d5b15a6",
-  "js/documents.js": "367a3779be919710170cdd4e3b6c4ea0011413ff0aca39d7b91de1c1b379141d",
-  "js/domain.js": "32abc6fca7c6b09bac17d6dfd0573a6952c609171a2fc5f034ed886e0eae3796",
-  "js/exporter.js": "4dd8c8e7f173d5ad8961a1ffedaf8e20eb359e575612ece2c40eac791ee736e6",
-  "js/importer.js": "6ea1729c265718c995a66b804ae8d22c272972107ccaa642981354dde3af6cc2",
-  "js/pdf-font.js": "a4adf332fa4e68b9e41ef20ddfa8959e6d680e77f561ad4dddf93956087e1b01",
-  "js/store.js": "a68432c34a5f1582208df687edeb4ed178b8935e0285144e7a5e72ac357078b3",
-  "manifest.json": "2413c623f14c854c71bc01de23bfb6cbf55ee3aaea9818e46cf534adfb4a2c36",
-  "netlify.toml": "8b6e86effc21f5c3a63c949d2701cb21b202e1a1638aab536e12f6ed6559fc11",
-  "package-lock.json": "52feebd01c168badd74855c76881e9a5098762d58d832c63bd5c73893d398746",
-  "package.json": "c2f4804ab49cc500e0be136c544339d1276262bfb31fd18cb823be804ae522e9",
-  "scripts/check.mjs": "bb9a4d06ea12a051af7271c063bf30b6b5dad2ccf2deb54b86580d8020f084b1",
-  "scripts/release.mjs": "ed8136b6d12804726b069c1ce7cd7bfd385907f1c9307759defe3cc4fda1dc63",
-  "supabase/config.toml": "ff44493d5af92177f79d37813843849a98d2f33246d5d57d28b7077c46cbc15e",
-  "supabase/first_admin.sql": "8390d6c5e024e088afa846ee4f7d8df0f0fed7507719068f1f14a4804c19728e",
-  "supabase/fix_product_save.sql": "bce46854462d9f8005e41c800827921f6c48dcf24930ed5edee20a35f8dc4e47",
-  "supabase/functions/admin-create-user/index.ts": "a1b7ac3a9fe6ab282268d48621732f7c5d55ce2b621e97990192d45b36f801a9",
-  "supabase/migration_from_blob.sql": "e3da660877e7a4e8c8e8039382855c3190192462d617d9dc445edea92c6519f8",
-  "supabase/schema.sql": "80ddd093ed9e0f4fdc38beb19d40ea6ffd78377449638bfd0f66c0500cc1b4a8",
-  "supabase/verify.sql": "894a1cecef584d45c1a8f88686928c43ca98a77c55a9de076295a0bcd4487ea2",
-  "sw.js": "9894e0615e365b536c0c41c019b1a6e5e54aee585b29075294e2fb993bff4082",
-  "tests/db-helper.js": "0c3bf23d750657576e10f627a07313e9a6fa75a6661f439ec11ccadb50febf97",
-  "tests/documents.test.js": "f87322874abe19ae38870973cd992b73fdda063741c618f65d14b40e10fa708c",
-  "tests/edge.test.js": "fbdbfdd4c0002b357b5802d43c30a3ba03cd93ae62381a2386edc463df48bd6d",
-  "tests/export.test.js": "499332d528ddde20e9475aa546d3148e13181bb436b270dea6d8e04c2d7e3ed2",
-  "tests/import-db.test.js": "23d07e548f4815683143d8597bb2ca8bb1a90732dc52a27952b9421976e86f4b",
-  "tests/import.test.js": "d8c26a7a18522ed9f37b01d2b78e3d1f8d3c1defb17ebb1d6f340e31adea6885",
-  "tests/migration.test.js": "890d4199200a4ac644d078fe972a068452c62dad4ab9bc300b870de0c7ff7d2b",
-  "tests/offline.test.js": "6309085c13be6eab163db5ad7922bf21626ba8b5c193fbe6d13869d2cdcb41ec",
-  "tests/payment-on-order.test.js": "6ee809643ce9af77a43cbead1bded5467c1e4ee5c75f20a2e3c515b1ec5879bc",
-  "tests/pricing.test.js": "11694135a1bc5bf67212a08af084bad88bdb3f69e2030a23671ceb45fca0bba6",
-  "tests/results.json": "d96fc6d46b151e1ec9d73c7df82f2d388c37a3a13924c2177b2fa0a4d9e37246",
-  "tests/schema.test.js": "177c075987628e5df415a9bbbe1464e5e4e06e5659e46ffbd81a7ef67e65a43c",
-  "tests/targets-db.test.js": "a5110fbeb271761d421caaf3056bafaddb76ce09822f8f675aed8e0f5d91b976",
-  "tests/targets.test.js": "f024037e773977804bc82866f74f676d4ea7cba79abb072ec8db61113fc5dab0",
-  "tests/transactions.test.js": "5762a35b4a2ce714370b00ee8b4a960a40fe3c19ca374041196de9bda25ff32e",
-  "tests/ui.test.js": "7d72130ad34fc8f954811a3aa7439a2400c7c74cc3f633c040e6cfa02477d2fe",
-  "vendor/chart.umd.js": "ecc3cd1eeb8c34d2178e3f59fd63ec5a3d84358c11730af0b9958dc886d7652a",
-  "vendor/html2canvas.min.js": "e87e550794322e574a1fda0c1549a3c70dae5a93d9113417a429016838eab8cb",
-  "vendor/jspdf.umd.min.js": "e6551fcdc32f09d6853b2c5126d18d01d9447e0da618a41a11ebeee0f6c20d54",
-  "vendor/licenses/Chartjs-LICENSE.md": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce",
-  "vendor/licenses/DejaVu-copyright": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9",
-  "vendor/licenses/SheetJS-LICENSE": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64",
-  "vendor/licenses/Supabase-LICENSE": "334dd6820e2eaeab2064e7c59001b810566728a28a41a7c1dbf69bbee17d0936",
-  "vendor/licenses/html2canvas-LICENSE": "86200ce4e92d9a22c41c8647a55f7a5fddff304ff89b4d36ecc699ed8c123d2c",
-  "vendor/licenses/jsPDF-LICENSE": "dc388ec35ff463288cdde3588a36fd4ed12a45deff053243b37309acc9ef583b",
-  "vendor/supabase.js": "d6a5c4414a5d4ce646d9c1de223aa7067d3ff664c15394ffeb7fcffc763354a3",
-  "vendor/xlsx.full.min.js": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41",
-  "web/README_SETUP.md": "18af51e91fca3338fa55dcb1f0580f2b02a9283b282b2d4d1037d89ab0241159",
-  "web/app_config.js": "3a6726832e4a9bbdcc6b7ab4c7be603bff97fbb3352f5e1999de47fe52ffab39",
-  "web/assets/document-font.ttf": "8a2654350d2a1d72958875490ce582fe10ac21231d900848d6b8f5ce01e81567",
-  "web/assets/logo-square.png": "f41ba2ae7c2559850dc416d03f33f2780f5464a8d0ca3dd75b7c26bcec1d4c50",
-  "web/assets/logo.jpeg": "7735d42ee020dc25fcd2d680eecb875db123fcd44ca4adf23c699f2f062958de",
-  "web/css/app.css": "4e70faeb9bd82b507c43a15930bb4b9f69d4b248c4478f3077012958717c7b12",
-  "web/index.html": "90d96e84423acc5a100b3ba213bb255169518a547ffabf31751158acb89b979e",
-  "web/js/app.js": "e4fff8d7b6f3372b905008be3fa20a209aa9ccefa8db78074b5d8f106c315428",
-  "web/js/brand.js": "3b57533ecab90756481f261399e21ca051a4703aa0dcf60dd7ad9f495d5b15a6",
-  "web/js/documents.js": "367a3779be919710170cdd4e3b6c4ea0011413ff0aca39d7b91de1c1b379141d",
-  "web/js/domain.js": "32abc6fca7c6b09bac17d6dfd0573a6952c609171a2fc5f034ed886e0eae3796",
-  "web/js/exporter.js": "4dd8c8e7f173d5ad8961a1ffedaf8e20eb359e575612ece2c40eac791ee736e6",
-  "web/js/importer.js": "6ea1729c265718c995a66b804ae8d22c272972107ccaa642981354dde3af6cc2",
-  "web/js/pdf-font.js": "a4adf332fa4e68b9e41ef20ddfa8959e6d680e77f561ad4dddf93956087e1b01",
-  "web/js/store.js": "a68432c34a5f1582208df687edeb4ed178b8935e0285144e7a5e72ac357078b3",
-  "web/manifest.json": "2413c623f14c854c71bc01de23bfb6cbf55ee3aaea9818e46cf534adfb4a2c36",
-  "web/netlify.toml": "8b6e86effc21f5c3a63c949d2701cb21b202e1a1638aab536e12f6ed6559fc11",
-  "web/sw.js": "9894e0615e365b536c0c41c019b1a6e5e54aee585b29075294e2fb993bff4082",
-  "web/vendor/chart.umd.js": "ecc3cd1eeb8c34d2178e3f59fd63ec5a3d84358c11730af0b9958dc886d7652a",
-  "web/vendor/html2canvas.min.js": "e87e550794322e574a1fda0c1549a3c70dae5a93d9113417a429016838eab8cb",
-  "web/vendor/jspdf.umd.min.js": "e6551fcdc32f09d6853b2c5126d18d01d9447e0da618a41a11ebeee0f6c20d54",
-  "web/vendor/licenses/Chartjs-LICENSE.md": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce",
-  "web/vendor/licenses/DejaVu-copyright": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9",
-  "web/vendor/licenses/SheetJS-LICENSE": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64",
-  "web/vendor/licenses/Supabase-LICENSE": "334dd6820e2eaeab2064e7c59001b810566728a28a41a7c1dbf69bbee17d0936",
-  "web/vendor/licenses/html2canvas-LICENSE": "86200ce4e92d9a22c41c8647a55f7a5fddff304ff89b4d36ecc699ed8c123d2c",
-  "web/vendor/licenses/jsPDF-LICENSE": "dc388ec35ff463288cdde3588a36fd4ed12a45deff053243b37309acc9ef583b",
-  "web/vendor/supabase.js": "d6a5c4414a5d4ce646d9c1de223aa7067d3ff664c15394ffeb7fcffc763354a3",
-  "web/vendor/xlsx.full.min.js": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41",
-  "supabase/closing_balances.sql": "74f5a80ce38e6cc40a88d2f5a33c4a66c088df92a619e99bbe32c30110c55b95"
-}
+[
+  {
+    "path": ".gitignore",
+    "sha256": "2bc1aa56bd60443cf71060125a2f84aefb42b7ebec34e8d53d24af4beef74550"
+  },
+  {
+    "path": "CHANGELOG.md",
+    "sha256": "75eb6dbdc5a86194d99957738b06d696f0ddec9f6ee048ac5f23f412344e79c0"
+  },
+  {
+    "path": "README.md",
+    "sha256": "2142603f41a869239c2b167ba15b19ca51641d88a33cf4886e6d682d1a91a8c1"
+  },
+  {
+    "path": "README_SETUP.md",
+    "sha256": "b065ae9e668b2101a9c7d3c89648e22348f24fcbbeeced1161df3116bb198187"
+  },
+  {
+    "path": "TESTING.md",
+    "sha256": "b59b9e498c6f604880a8a457c2fde8d29fe5a8ce6f82fe59f49db151f12d24da"
+  },
+  {
+    "path": "TEST_OUTPUT.txt",
+    "sha256": "723f4c4814ad97224d6ae185253b33e4c90c99c71da6ec96712cdb4bcc72c515"
+  },
+  {
+    "path": "THIRD_PARTY_NOTICES.md",
+    "sha256": "b8b280919297268759d7ac357714dab5f27595a33ba57f2f5a81039f34520fe1"
+  },
+  {
+    "path": "app.js",
+    "sha256": "89990be0aeede5a023cc5bcb15ff20a6180e0a232e89a10ecf8f080d098a1a52"
+  },
+  {
+    "path": "app_config.js",
+    "sha256": "3a6726832e4a9bbdcc6b7ab4c7be603bff97fbb3352f5e1999de47fe52ffab39"
+  },
+  {
+    "path": "assets/document-font.ttf",
+    "sha256": "8a2654350d2a1d72958875490ce582fe10ac21231d900848d6b8f5ce01e81567"
+  },
+  {
+    "path": "assets/logo-square.png",
+    "sha256": "f41ba2ae7c2559850dc416d03f33f2780f5464a8d0ca3dd75b7c26bcec1d4c50"
+  },
+  {
+    "path": "assets/logo.jpeg",
+    "sha256": "7735d42ee020dc25fcd2d680eecb875db123fcd44ca4adf23c699f2f062958de"
+  },
+  {
+    "path": "css/app.css",
+    "sha256": "4e70faeb9bd82b507c43a15930bb4b9f69d4b248c4478f3077012958717c7b12"
+  },
+  {
+    "path": "docs/OWNER_GUIDE.md",
+    "sha256": "948af4e632fdd406898ada46045bd3def3a257965cbb3e83cdba4b44fd0b9fc9"
+  },
+  {
+    "path": "docs/SALESMAN_GUIDE.md",
+    "sha256": "d5ecac2feb565ea415c05d704b5278d50de3b0b39a50db15fa93e8cdbff8f19f"
+  },
+  {
+    "path": "index.html",
+    "sha256": "90d96e84423acc5a100b3ba213bb255169518a547ffabf31751158acb89b979e"
+  },
+  {
+    "path": "js/app.js",
+    "sha256": "e4fff8d7b6f3372b905008be3fa20a209aa9ccefa8db78074b5d8f106c315428"
+  },
+  {
+    "path": "js/brand.js",
+    "sha256": "3b57533ecab90756481f261399e21ca051a4703aa0dcf60dd7ad9f495d5b15a6"
+  },
+  {
+    "path": "js/documents.js",
+    "sha256": "367a3779be919710170cdd4e3b6c4ea0011413ff0aca39d7b91de1c1b379141d"
+  },
+  {
+    "path": "js/domain.js",
+    "sha256": "32abc6fca7c6b09bac17d6dfd0573a6952c609171a2fc5f034ed886e0eae3796"
+  },
+  {
+    "path": "js/exporter.js",
+    "sha256": "4dd8c8e7f173d5ad8961a1ffedaf8e20eb359e575612ece2c40eac791ee736e6"
+  },
+  {
+    "path": "js/importer.js",
+    "sha256": "6ea1729c265718c995a66b804ae8d22c272972107ccaa642981354dde3af6cc2"
+  },
+  {
+    "path": "js/pdf-font.js",
+    "sha256": "a4adf332fa4e68b9e41ef20ddfa8959e6d680e77f561ad4dddf93956087e1b01"
+  },
+  {
+    "path": "js/reports.js",
+    "sha256": "3646d9160a4b031dd4a90060d73df3ca066640fff114e1f00047fa7b1b705e43"
+  },
+  {
+    "path": "js/store.js",
+    "sha256": "a68432c34a5f1582208df687edeb4ed178b8935e0285144e7a5e72ac357078b3"
+  },
+  {
+    "path": "manifest.json",
+    "sha256": "2413c623f14c854c71bc01de23bfb6cbf55ee3aaea9818e46cf534adfb4a2c36"
+  },
+  {
+    "path": "netlify.toml",
+    "sha256": "8b6e86effc21f5c3a63c949d2701cb21b202e1a1638aab536e12f6ed6559fc11"
+  },
+  {
+    "path": "package-lock.json",
+    "sha256": "52feebd01c168badd74855c76881e9a5098762d58d832c63bd5c73893d398746"
+  },
+  {
+    "path": "package.json",
+    "sha256": "c2f4804ab49cc500e0be136c544339d1276262bfb31fd18cb823be804ae522e9"
+  },
+  {
+    "path": "scripts/check.mjs",
+    "sha256": "bb9a4d06ea12a051af7271c063bf30b6b5dad2ccf2deb54b86580d8020f084b1"
+  },
+  {
+    "path": "scripts/release.mjs",
+    "sha256": "ed8136b6d12804726b069c1ce7cd7bfd385907f1c9307759defe3cc4fda1dc63"
+  },
+  {
+    "path": "supabase/cash_bank_book.sql",
+    "sha256": "bef4d88bd236d68777bb03095101d9ddb2300177534410d54cf7438e5808efd4"
+  },
+  {
+    "path": "supabase/closing_balances.sql",
+    "sha256": "74f5a80ce38e6cc40a88d2f5a33c4a66c088df92a619e99bbe32c30110c55b95"
+  },
+  {
+    "path": "supabase/config.toml",
+    "sha256": "ff44493d5af92177f79d37813843849a98d2f33246d5d57d28b7077c46cbc15e"
+  },
+  {
+    "path": "supabase/first_admin.sql",
+    "sha256": "8390d6c5e024e088afa846ee4f7d8df0f0fed7507719068f1f14a4804c19728e"
+  },
+  {
+    "path": "supabase/fix_admin_avatar_path.sql",
+    "sha256": "5543d6cd2a887ceb55093b17b1ab9d5e078d8fbb5d61eb1741cb6dba93f78d5a"
+  },
+  {
+    "path": "supabase/fix_product_save.sql",
+    "sha256": "bce46854462d9f8005e41c800827921f6c48dcf24930ed5edee20a35f8dc4e47"
+  },
+  {
+    "path": "supabase/functions/admin-create-user/index.ts",
+    "sha256": "a1b7ac3a9fe6ab282268d48621732f7c5d55ce2b621e97990192d45b36f801a9"
+  },
+  {
+    "path": "supabase/manager_role.sql",
+    "sha256": "29a25744913a398ea89262bfbc4d9654a5f3cfd8645b32d3748cd24b54dbba8a"
+  },
+  {
+    "path": "supabase/migration_from_blob.sql",
+    "sha256": "e3da660877e7a4e8c8e8039382855c3190192462d617d9dc445edea92c6519f8"
+  },
+  {
+    "path": "supabase/operational_modules.sql",
+    "sha256": "8731ccedabdca068cb90995f6c82c2ec3b956225595154c290abf0815eb71796"
+  },
+  {
+    "path": "supabase/salesman_self_service.sql",
+    "sha256": "511115e81a6a8f7419ea796aa46e9fc8f0648c146d780477adcb2eb4dc1cec24"
+  },
+  {
+    "path": "supabase/salesman_self_service_permissions_fix.sql",
+    "sha256": "037cef5cae7f4abea948083d8104bc13f20661f3476b60fb5e6ab9ce8a82673a"
+  },
+  {
+    "path": "supabase/schema.sql",
+    "sha256": "80ddd093ed9e0f4fdc38beb19d40ea6ffd78377449638bfd0f66c0500cc1b4a8"
+  },
+  {
+    "path": "supabase/verify.sql",
+    "sha256": "894a1cecef584d45c1a8f88686928c43ca98a77c55a9de076295a0bcd4487ea2"
+  },
+  {
+    "path": "sw.js",
+    "sha256": "9894e0615e365b536c0c41c019b1a6e5e54aee585b29075294e2fb993bff4082"
+  },
+  {
+    "path": "tests/cashbook.test.js",
+    "sha256": "4d186739a2cd3fc257244f263225bafa3266b4d49e0e60d300c32318fa8ee7a8"
+  },
+  {
+    "path": "tests/db-helper.js",
+    "sha256": "0c3bf23d750657576e10f627a07313e9a6fa75a6661f439ec11ccadb50febf97"
+  },
+  {
+    "path": "tests/documents.test.js",
+    "sha256": "f87322874abe19ae38870973cd992b73fdda063741c618f65d14b40e10fa708c"
+  },
+  {
+    "path": "tests/edge.test.js",
+    "sha256": "fbdbfdd4c0002b357b5802d43c30a3ba03cd93ae62381a2386edc463df48bd6d"
+  },
+  {
+    "path": "tests/export.test.js",
+    "sha256": "499332d528ddde20e9475aa546d3148e13181bb436b270dea6d8e04c2d7e3ed2"
+  },
+  {
+    "path": "tests/import-db.test.js",
+    "sha256": "23d07e548f4815683143d8597bb2ca8bb1a90732dc52a27952b9421976e86f4b"
+  },
+  {
+    "path": "tests/import.test.js",
+    "sha256": "d8c26a7a18522ed9f37b01d2b78e3d1f8d3c1defb17ebb1d6f340e31adea6885"
+  },
+  {
+    "path": "tests/migration.test.js",
+    "sha256": "890d4199200a4ac644d078fe972a068452c62dad4ab9bc300b870de0c7ff7d2b"
+  },
+  {
+    "path": "tests/offline.test.js",
+    "sha256": "6309085c13be6eab163db5ad7922bf21626ba8b5c193fbe6d13869d2cdcb41ec"
+  },
+  {
+    "path": "tests/operations-local.test.js",
+    "sha256": "10dd9f6c3dce2147b7250bf9936ac0caa7668ad5f978648e55025ea53d9c449c"
+  },
+  {
+    "path": "tests/operations.test.js",
+    "sha256": "9cf28abaf73f890036d817530a082e14ebdffff9c373cf63731e32e2d2f9c6a9"
+  },
+  {
+    "path": "tests/payment-on-order.test.js",
+    "sha256": "6ee809643ce9af77a43cbead1bded5467c1e4ee5c75f20a2e3c515b1ec5879bc"
+  },
+  {
+    "path": "tests/pricing.test.js",
+    "sha256": "11694135a1bc5bf67212a08af084bad88bdb3f69e2030a23671ceb45fca0bba6"
+  },
+  {
+    "path": "tests/product-save-fallback.test.js",
+    "sha256": "dec8c3b95ed42077af4d28ae8edd28f5d61c90dc5441c4d24e58f2f1152a6327"
+  },
+  {
+    "path": "tests/reports.test.js",
+    "sha256": "19cc36d46158ef5f2000a868f255d7d5162086d42f599421c40f3d614968a643"
+  },
+  {
+    "path": "tests/results.json",
+    "sha256": "d96fc6d46b151e1ec9d73c7df82f2d388c37a3a13924c2177b2fa0a4d9e37246"
+  },
+  {
+    "path": "tests/schema.test.js",
+    "sha256": "177c075987628e5df415a9bbbe1464e5e4e06e5659e46ffbd81a7ef67e65a43c"
+  },
+  {
+    "path": "tests/targets-db.test.js",
+    "sha256": "a5110fbeb271761d421caaf3056bafaddb76ce09822f8f675aed8e0f5d91b976"
+  },
+  {
+    "path": "tests/targets.test.js",
+    "sha256": "f024037e773977804bc82866f74f676d4ea7cba79abb072ec8db61113fc5dab0"
+  },
+  {
+    "path": "tests/transactions.test.js",
+    "sha256": "5762a35b4a2ce714370b00ee8b4a960a40fe3c19ca374041196de9bda25ff32e"
+  },
+  {
+    "path": "tests/ui.test.js",
+    "sha256": "7d72130ad34fc8f954811a3aa7439a2400c7c74cc3f633c040e6cfa02477d2fe"
+  },
+  {
+    "path": "vendor/chart.umd.js",
+    "sha256": "ecc3cd1eeb8c34d2178e3f59fd63ec5a3d84358c11730af0b9958dc886d7652a"
+  },
+  {
+    "path": "vendor/html2canvas.min.js",
+    "sha256": "e87e550794322e574a1fda0c1549a3c70dae5a93d9113417a429016838eab8cb"
+  },
+  {
+    "path": "vendor/jspdf.umd.min.js",
+    "sha256": "e6551fcdc32f09d6853b2c5126d18d01d9447e0da618a41a11ebeee0f6c20d54"
+  },
+  {
+    "path": "vendor/licenses/Chartjs-LICENSE.md",
+    "sha256": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce"
+  },
+  {
+    "path": "vendor/licenses/DejaVu-copyright",
+    "sha256": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9"
+  },
+  {
+    "path": "vendor/licenses/SheetJS-LICENSE",
+    "sha256": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64"
+  },
+  {
+    "path": "vendor/licenses/Supabase-LICENSE",
+    "sha256": "334dd6820e2eaeab2064e7c59001b810566728a28a41a7c1dbf69bbee17d0936"
+  },
+  {
+    "path": "vendor/licenses/html2canvas-LICENSE",
+    "sha256": "86200ce4e92d9a22c41c8647a55f7a5fddff304ff89b4d36ecc699ed8c123d2c"
+  },
+  {
+    "path": "vendor/licenses/jsPDF-LICENSE",
+    "sha256": "dc388ec35ff463288cdde3588a36fd4ed12a45deff053243b37309acc9ef583b"
+  },
+  {
+    "path": "vendor/supabase.js",
+    "sha256": "d6a5c4414a5d4ce646d9c1de223aa7067d3ff664c15394ffeb7fcffc763354a3"
+  },
+  {
+    "path": "vendor/xlsx.full.min.js",
+    "sha256": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41"
+  },
+  {
+    "path": "web/CHANGELOG.md",
+    "sha256": "75eb6dbdc5a86194d99957738b06d696f0ddec9f6ee048ac5f23f412344e79c0"
+  },
+  {
+    "path": "web/README_SETUP.md",
+    "sha256": "b065ae9e668b2101a9c7d3c89648e22348f24fcbbeeced1161df3116bb198187"
+  },
+  {
+    "path": "web/app_config.js",
+    "sha256": "3a6726832e4a9bbdcc6b7ab4c7be603bff97fbb3352f5e1999de47fe52ffab39"
+  },
+  {
+    "path": "web/assets/document-font.ttf",
+    "sha256": "8a2654350d2a1d72958875490ce582fe10ac21231d900848d6b8f5ce01e81567"
+  },
+  {
+    "path": "web/assets/logo-square.png",
+    "sha256": "f41ba2ae7c2559850dc416d03f33f2780f5464a8d0ca3dd75b7c26bcec1d4c50"
+  },
+  {
+    "path": "web/assets/logo.jpeg",
+    "sha256": "7735d42ee020dc25fcd2d680eecb875db123fcd44ca4adf23c699f2f062958de"
+  },
+  {
+    "path": "web/css/app.css",
+    "sha256": "4e70faeb9bd82b507c43a15930bb4b9f69d4b248c4478f3077012958717c7b12"
+  },
+  {
+    "path": "web/index.html",
+    "sha256": "90d96e84423acc5a100b3ba213bb255169518a547ffabf31751158acb89b979e"
+  },
+  {
+    "path": "web/js/app.js",
+    "sha256": "e4fff8d7b6f3372b905008be3fa20a209aa9ccefa8db78074b5d8f106c315428"
+  },
+  {
+    "path": "web/js/brand.js",
+    "sha256": "3b57533ecab90756481f261399e21ca051a4703aa0dcf60dd7ad9f495d5b15a6"
+  },
+  {
+    "path": "web/js/documents.js",
+    "sha256": "367a3779be919710170cdd4e3b6c4ea0011413ff0aca39d7b91de1c1b379141d"
+  },
+  {
+    "path": "web/js/domain.js",
+    "sha256": "32abc6fca7c6b09bac17d6dfd0573a6952c609171a2fc5f034ed886e0eae3796"
+  },
+  {
+    "path": "web/js/exporter.js",
+    "sha256": "4dd8c8e7f173d5ad8961a1ffedaf8e20eb359e575612ece2c40eac791ee736e6"
+  },
+  {
+    "path": "web/js/importer.js",
+    "sha256": "6ea1729c265718c995a66b804ae8d22c272972107ccaa642981354dde3af6cc2"
+  },
+  {
+    "path": "web/js/pdf-font.js",
+    "sha256": "a4adf332fa4e68b9e41ef20ddfa8959e6d680e77f561ad4dddf93956087e1b01"
+  },
+  {
+    "path": "web/js/reports.js",
+    "sha256": "3646d9160a4b031dd4a90060d73df3ca066640fff114e1f00047fa7b1b705e43"
+  },
+  {
+    "path": "web/js/store.js",
+    "sha256": "a68432c34a5f1582208df687edeb4ed178b8935e0285144e7a5e72ac357078b3"
+  },
+  {
+    "path": "web/manifest.json",
+    "sha256": "2413c623f14c854c71bc01de23bfb6cbf55ee3aaea9818e46cf534adfb4a2c36"
+  },
+  {
+    "path": "web/netlify.toml",
+    "sha256": "8b6e86effc21f5c3a63c949d2701cb21b202e1a1638aab536e12f6ed6559fc11"
+  },
+  {
+    "path": "web/supabase/operational_modules.sql",
+    "sha256": "8731ccedabdca068cb90995f6c82c2ec3b956225595154c290abf0815eb71796"
+  },
+  {
+    "path": "web/supabase/salesman_self_service_permissions_fix.sql",
+    "sha256": "037cef5cae7f4abea948083d8104bc13f20661f3476b60fb5e6ab9ce8a82673a"
+  },
+  {
+    "path": "web/sw.js",
+    "sha256": "9894e0615e365b536c0c41c019b1a6e5e54aee585b29075294e2fb993bff4082"
+  },
+  {
+    "path": "web/vendor/chart.umd.js",
+    "sha256": "ecc3cd1eeb8c34d2178e3f59fd63ec5a3d84358c11730af0b9958dc886d7652a"
+  },
+  {
+    "path": "web/vendor/html2canvas.min.js",
+    "sha256": "e87e550794322e574a1fda0c1549a3c70dae5a93d9113417a429016838eab8cb"
+  },
+  {
+    "path": "web/vendor/jspdf.umd.min.js",
+    "sha256": "e6551fcdc32f09d6853b2c5126d18d01d9447e0da618a41a11ebeee0f6c20d54"
+  },
+  {
+    "path": "web/vendor/licenses/Chartjs-LICENSE.md",
+    "sha256": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce"
+  },
+  {
+    "path": "web/vendor/licenses/DejaVu-copyright",
+    "sha256": "63d3ba759d12804c5b31a9d5940d855c1820d1f5999e6b0872eb1c7ff045fbc9"
+  },
+  {
+    "path": "web/vendor/licenses/SheetJS-LICENSE",
+    "sha256": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64"
+  },
+  {
+    "path": "web/vendor/licenses/Supabase-LICENSE",
+    "sha256": "334dd6820e2eaeab2064e7c59001b810566728a28a41a7c1dbf69bbee17d0936"
+  },
+  {
+    "path": "web/vendor/licenses/html2canvas-LICENSE",
+    "sha256": "86200ce4e92d9a22c41c8647a55f7a5fddff304ff89b4d36ecc699ed8c123d2c"
+  },
+  {
+    "path": "web/vendor/licenses/jsPDF-LICENSE",
+    "sha256": "dc388ec35ff463288cdde3588a36fd4ed12a45deff053243b37309acc9ef583b"
+  },
+  {
+    "path": "web/vendor/supabase.js",
+    "sha256": "d6a5c4414a5d4ce646d9c1de223aa7067d3ff664c15394ffeb7fcffc763354a3"
+  },
+  {
+    "path": "web/vendor/xlsx.full.min.js",
+    "sha256": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41"
+  }
+]

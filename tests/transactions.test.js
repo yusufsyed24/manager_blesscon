@@ -101,6 +101,28 @@ it("order confirms atomically, retries deduct once, stale edit fails, cancellati
       .rows[0].status,
   ).toBe("cancelled");
 });
+it("stock transaction references are idempotent only for identical retries", async () => {
+  const movement = {
+    transaction_id: "STOCK-REFERENCE-GUARD-TEST",
+    product_id: "P1",
+    date: day,
+    boxes: 7,
+    kind: "in",
+    note: "regression test",
+  };
+  const first = await cmd("stock.add", movement);
+  const retry = await cmd("stock.add", movement);
+  expect(retry.transaction_id).toBe(first.transaction_id);
+  await expect(cmd("stock.add", { ...movement, boxes: 70 })).rejects.toThrow(
+    /Duplicate stock transaction reference with different details/i,
+  );
+  const rows = await db.query(
+    "select boxes from public.stock_movements where transaction_id=$1",
+    [movement.transaction_id],
+  );
+  expect(rows.rows).toHaveLength(1);
+  expect(rows.rows[0].boxes).toBe(7);
+});
 it("stock check rolls back the entire order and invoice", async () => {
   const d = doc({
     items: [{ product_id: "P1", cartons: 10000, loose_boxes: 0 }],

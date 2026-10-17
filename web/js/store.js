@@ -1145,7 +1145,7 @@ export class Store extends EventTarget {
     // Stock issues/returns change two linked ledgers. When online, wait for the
     // database transaction to confirm before the UI closes the form; otherwise
     // an RPC/RLS/migration error could be swallowed by the generic offline queue.
-    if ((["stock.issue", "stock.return"].includes(kind) || kind.startsWith("cashbook.")) && this.client && navigator.onLine) {
+    if ((["stock.add", "stock.issue", "stock.return"].includes(kind) || kind.startsWith("cashbook.")) && this.client && navigator.onLine) {
       if (this.queue.length) {
         await this.sync();
         if (this.queue.length || this.error) {
@@ -1164,7 +1164,7 @@ export class Store extends EventTarget {
         if (error) {
           const message = error.message || String(error);
           if (/schema cache|could not find the function|function .* does not exist|unknown command/i.test(message)) {
-            throw Error((kind.startsWith("cashbook.") ? "The Cash & Bank Book migration may be missing. Apply supabase/cash_bank_book.sql after the existing schema and operational migrations. Original error: " : "The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: ") + message);
+            throw Error((kind === "stock.add" ? "The stock-entry database function is missing or outdated. Apply supabase/fix_stock_entry_idempotency.sql, then refresh the app. Original error: " : kind.startsWith("cashbook.") ? "The Cash & Bank Book migration may be missing. Apply supabase/cash_bank_book.sql after the existing schema and operational migrations. Original error: " : "The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: ") + message);
           }
           throw error;
         }

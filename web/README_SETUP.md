@@ -183,12 +183,13 @@ Run `supabase/closing_balances.sql` once in the Supabase SQL editor (after `oper
 
 ## Salesman self-service portal update
 
-The salesman profile, private document upload, attendance, and optional GPS customer-visit features require the additive SQL migration `supabase/salesman_self_service.sql`. Back up the database first, then run this migration in the Supabase SQL Editor. Do not paste the filename itself—open the SQL file and paste its SQL contents. The migration preserves existing records. Confirm that Storage is enabled and that the private `employee-private` bucket and RLS policies were created successfully before using uploads.
+The salesman profile, private document upload, attendance, and optional GPS customer-visit features require the additive SQL migration `supabase/salesman_self_service.sql`. Run it after the base schema and operational modules. If applying the full set of migrations, run `supabase/salesman_self_service_permissions_fix.sql` last because `operational_modules.sql` previously revoked direct SELECT on `salesmen`. Back up the database first, then run migrations in the Supabase SQL Editor. Do not paste the filename itself—open the SQL file and paste its SQL contents. The migration preserves existing records. Confirm that Storage is enabled and that the private `employee-private` bucket and RLS policies were created successfully before using uploads.
 
 ## If the salesman dashboard changes are not visible
 
 1. Deploy the contents of the updated `web/` folder to the same website hosting location used by the live app (or deploy the root-level release if your hosting is configured to serve the repository root). Do not upload the ZIP as a file and expect the live site to change.
 2. In Supabase, run the contents of `supabase/salesman_self_service.sql` in the SQL Editor. This adds attendance, employee document, visit, and private storage structures.
+3. Run `supabase/salesman_self_service_permissions_fix.sql` last, after `operational_modules.sql` and other migrations. It restores SELECT grants with row-level security for salesman profile and fieldwork views.
 3. In Users & access, confirm the employee login role is `salesman`, and in Salesmen & targets link that user's login to the correct salesman record. The `salesmen.user_id` field must match the authenticated account.
 4. Ensure the deployed `app_config.js` still points to the same Supabase project where the migration was run. Keep the existing real project URL and publishable key; do not replace them with the empty template values.
 5. Sign out, then hard-refresh the website (Ctrl+Shift+R). If it still shows the old UI, open browser DevTools → Application → Service Workers, unregister the service worker for this site, clear that site's cached storage, reload, and sign in again.
@@ -198,7 +199,7 @@ The dashboard is selected by the `salesman` role and the linked salesman record;
 
 ### Fix admin fieldwork access (existing deployments)
 
-If the admin page reports `permission denied for table salesmen`, rerun the updated `supabase/salesman_self_service.sql` in the Supabase SQL Editor using the project owner/admin SQL role. It restores `SELECT` permission for authenticated users and the admin/self-salesman read policy; it does not delete business data. After it succeeds, sign out and back in to refresh the session.
+If the admin page reports `permission denied for table salesmen`, run the contents of `supabase/salesman_self_service_permissions_fix.sql` in the Supabase SQL Editor using the project owner/admin SQL role. It must be run AFTER `operational_modules.sql`, which previously revoked the grant. The repair restores SELECT permission while keeping row-level security limited to admins and each salesman’s own record; it does not delete business data. After it succeeds, sign out and back in to refresh the session.
 
 
 ## Cash & Bank Book migration

@@ -435,8 +435,11 @@ begin
   );
 end $$;
 
--- Sensitive table reads are available only through the scoped snapshot RPC.
-revoke select on public.products,public.salesmen,public.order_items,public.quotation_items from authenticated;
+-- Product and line-item reads are available only through scoped RPCs.
+-- Salesman profile/fieldwork screens use direct, column-limited SELECT queries;
+-- their access remains restricted by the salesmen RLS policies. Do not revoke
+-- SELECT on salesmen here, or the self-service profile screen fails with 42501.
+revoke select on public.products,public.order_items,public.quotation_items from authenticated;
 revoke all on function public.business_snapshot() from public,anon;
 grant execute on function public.business_snapshot() to authenticated;
 
