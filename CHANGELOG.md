@@ -274,3 +274,10 @@ This release is a deployable source package, not a live deployment. Production c
 - Added a standalone, idempotent `supabase/fix_admin_avatar_path.sql` migration for deployments whose live `profiles` table or PostgREST schema cache does not yet expose `avatar_path`.
 - Migration ensures the column and scoped own-row update policy exist, grants the required column privileges, and requests a PostgREST schema reload.
 - Updated service-worker cache namespace and synchronized root/web copies. Live Supabase schema changes must still be applied by the project owner.
+
+
+## 2026-10-17 — Cash & Bank Book navigation fix (v17)
+- Fixed the blank/non-opening Cash & Bank Book page: the `cashbook` route was present in navigation and access rules, and `renderCashBook()` existed, but the page renderer was missing the `cashbook: renderCashBook` dispatch entry.
+- Added the Cash & Bank Book page to the sidebar navigation regression test and asserted that it renders the expected heading.
+- Bumped the service-worker cache namespace so deployed browsers fetch the corrected app code.
+- Live deployment and live Supabase access remain unverified.

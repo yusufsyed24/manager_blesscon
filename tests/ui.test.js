@@ -47,6 +47,7 @@ it("practice workspace navigates every sidebar page without DOM errors", async (
     "dashboard",
     "dsr",
     "closing",
+    "cashbook",
     "orders",
     "invoices",
     "quotes",
@@ -63,7 +64,8 @@ it("practice workspace navigates every sidebar page without DOM errors", async (
   ];
   for (const p of pages) {
     document.querySelector(`[data-page="${p}"]`).click();
-    expect(document.querySelector("#page h1")).not.toBeNull();
+    expect(document.querySelector("#page h1"), `page ${p} should render a heading`).not.toBeNull();
+    if (p === "cashbook") expect(document.querySelector("#page h1").textContent).toContain("Cash & Bank Book");
   }
   expect(document.querySelector(".brand img").src).toMatch(/^data:image/);
 });

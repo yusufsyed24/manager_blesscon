@@ -293,6 +293,7 @@ function render() {
     myprofile: renderMyProfile,
     dsr: renderDailyReport,
     closing: renderDailyClosing,
+    cashbook: renderCashBook,
     orders: () => renderDocs(false),
     quotes: () => renderDocs(true),
     invoices: renderInvoices,
