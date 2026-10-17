@@ -296,3 +296,8 @@ This release is a deployable source package, not a live deployment. Production c
 - Kept direct `salesmen` SELECT available to authenticated sessions while relying on RLS policies to restrict rows to admins and the linked salesman. Product and line-item reads remain scoped through RPCs.
 - Added `supabase/salesman_self_service_permissions_fix.sql` for existing deployments; run it after the other migrations.
 - Updated setup instructions. No live Supabase database was modified by this package change.
+
+## Stock warning and overview clarification
+- When `block_negative_stock` is disabled, the Sales Order line now shows the exact box shortage as an informational warning and clarifies that negative stock is allowed; it no longer labels the quantity as a blocking insufficiency.
+- The dashboard already includes a “Stock by candy” overview grouped by candy family, showing cartons, loose boxes, total boxes, and each flavour's individual balance and boxes per carton. The release step synced the updated source into `web/`.
+- Validation note: automated tests could not be run in this environment because dependencies are not installed (`vitest: not found`).

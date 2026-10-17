@@ -1707,7 +1707,7 @@ function calcEditor() {
       $("line-total-" + i).innerHTML = "<b>" + money(l.amount_paisa) + "</b>";
       $("line-note-" + i).innerHTML =
         badge(l.tier_label + ": " + money(l.rate_paisa) + "/box") +
-        ` · ${l.boxes} boxes · Stock: ${avail}${admin() || can("pnl") ? ` · Margin: <span class="${l.margin_paisa < 0 ? "text-red" : "text-green"}">${money(l.margin_paisa)}</span>${l.margin_paisa < 0 ? " · BELOW COST" : ""}` : ""}${l.boxes > avail ? ' · <b class="text-red">Insufficient stock</b>' : ""}`;
+        ` · ${l.boxes} boxes · Stock: ${avail}${admin() || can("pnl") ? ` · Margin: <span class="${l.margin_paisa < 0 ? "text-red" : "text-green"}">${money(l.margin_paisa)}</span>${l.margin_paisa < 0 ? " · BELOW COST" : ""}` : ""}${l.boxes > avail ? (S().settings.block_negative_stock ? ' · <b class="text-red">Insufficient stock — order blocked by stock setting</b>' : ' · <b class="text-amber">Short by ' + (l.boxes - avail) + ' boxes — negative stock allowed</b>') : ""}`;
       if (
         !draft.items[i].override_reason?.trim() &&
         document.activeElement !== $("line-r-" + i)
