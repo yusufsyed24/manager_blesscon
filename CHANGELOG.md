@@ -348,3 +348,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Added an Edit action for bank and wallet accounts in Cash & Bank Book, visible only to administrators.
 - Edit form keeps account keys fixed and permits administrators to update display names. Existing store-level admin validation remains in place; ledger-history protections continue to prevent unsafe opening-balance or account-mapping changes.
 - Non-admin users do not receive account edit controls.
+
+## Manager access follow-up (candidate build)
+- Enabled Manager UI access to add/edit/toggle products and initiate warehouse stock movements, alongside existing Admin access.
+- Added a Clone action to daily closing rows. It opens a new closing form with copied values and today's date; it does not copy a closing ID or approval state.
+- Added a reminder to verify manager role/RLS permissions in the deployed Supabase project before production use.
+- Validation note: `scripts/check.mjs` could not run in this environment because the `typescript` npm dependency is not installed. JavaScript syntax checks were run separately; full integration and Supabase RLS tests remain outstanding.

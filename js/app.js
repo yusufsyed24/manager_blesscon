@@ -689,9 +689,9 @@ function renderDailyClosing() {
     head(
       "Daily closing",
       "Reconcile collected cash and salesman-held stock before management approval.",
-      admin() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : "",
+      mgmt() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : "",
     ) +
-    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", ...CLOSING_BALANCE_FIELDS.map(([, label]) => label), "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), ...CLOSING_BALANCE_FIELDS.map(([name]) => money(closing[name + "_paisa"] || 0)), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
+    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", ...CLOSING_BALANCE_FIELDS.map(([, label]) => label), "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), ...CLOSING_BALANCE_FIELDS.map(([name]) => money(closing[name + "_paisa"] || 0)), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${mgmt() ? `<div class="actions">${btn("Clone", "clone-closing", closing.id)}</div>` : ""}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
   );
 }
 function dsrClosingSection() {
@@ -1048,7 +1048,7 @@ function renderStock() {
     sellerRows.set(key, row);
   }
   const actions =
-    (admin() ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
+    (mgmt() ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
     (canStockWrite() ? btn("Issue to salesman", "stock-issue", "", "", "gold") : "") +
     (admin() || own() || canStockWrite()
       ? btn("Receive salesman return", "stock-return")
@@ -1118,7 +1118,7 @@ function renderProducts() {
     head(
       "Products & pricing",
       "Prices are saved on each sale so later changes cannot alter old invoices.",
-      admin() ? btn("+ Product", "add-product", "", "", "gold") : "",
+      mgmt() ? btn("+ Product", "add-product", "", "", "gold") : "",
     ) +
     `<section class="panel"><div class="filters">${field("Search products by name or ID", "search", filter.search, "search", 'data-filter="search" placeholder="Type a product name or ID" autocomplete="off"')}</div><p class="muted" style="margin:0 0 12px">${q ? rows.length + " of " + visible(s.products).length + " products match" : visible(s.products).length + " products"}</p>${table(
       [
@@ -1144,7 +1144,7 @@ function renderProducts() {
           .join("<br>") || money(p.wholesale_paisa),
         p.expiry_date ? esc(p.expiry_date) + "<small>" + esc(expiryStatus(p.expiry_date)) + "</small>" : "Not set",
         badge(p.active ? "Active" : "Inactive"),
-        admin() ? btn("Edit", "edit-product", p.id) + btn(p.active ? "Deactivate" : "Activate", "toggle-product", p.id) : "—",
+        mgmt() ? btn("Edit", "edit-product", p.id) + btn(p.active ? "Deactivate" : "Activate", "toggle-product", p.id) : "—",
       ]),
       q ? "No products match your search" : "No products yet",
     )}</section>`
@@ -2653,7 +2653,7 @@ async function action(act, id, element) {
       masterForm("product", id);
       break;
     case "toggle-product": {
-      if (!admin()) throw Error("Admin required");
+      if (!mgmt()) throw Error("Manager or Admin required");
       const p = S().products.find(x=>x.id===id);
       if (!p) throw Error("Product not found");
       await store.run("product.save", { record:{...p,active:!p.active}, expected_version:p.version, tiers:S().price_tiers.filter(t=>t.product_id===id&&!t.deleted_at) });
@@ -2708,6 +2708,31 @@ async function action(act, id, element) {
     case "new-closing":
       closingModal();
       break;
+    case "clone-closing": {
+      if (!mgmt()) throw Error("Manager or Admin required");
+      const source = S().daily_closings.find((row) => row.id === id);
+      if (!source) throw Error("Daily closing not found");
+      // Cloning is a new draft only: no source id, approval status, or transactions are copied.
+      closingModal();
+      const form = $("closing-form");
+      if (form) {
+        const values = {
+          opening_cash: num(source.opening_cash_paisa) / 100,
+          cash_handed_over: num(source.cash_handed_over_paisa) / 100,
+          actual_cash: num(source.actual_cash_paisa) / 100,
+          reason: "", notes: source.notes || "",
+          ...Object.fromEntries(CLOSING_BALANCE_FIELDS.map(([name]) => [name, num(source[name + "_paisa"]) / 100]))
+        };
+        for (const [name, value] of Object.entries(values)) {
+          const input = form.elements.namedItem(name);
+          if (input) input.value = value;
+        }
+        const dateInput = form.elements.namedItem("date");
+        if (dateInput) dateInput.value = today();
+      }
+      toast("Previous closing copied into a new draft. Review date and values before submitting.");
+      break;
+    }
     case "approve-closing": {
       const closing = S().daily_closings.find((row) => row.id === id);
       await store.run("closing.approve", {

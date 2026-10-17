@@ -32,3 +32,8 @@
 3. Edit the new product's expiry date and wholesale price; save.
 4. Enable tier overrides and try an invalid tier; verify the dialog stays open and displays an inline error.
 5. Confirm the saved product appears in order and quotation product pickers.
+
+## Manager access candidate build notes
+- `node scripts/check.mjs` requires the project's TypeScript dependency; in the current build environment it could not run because that dependency was unavailable.
+- Run the full check suite in the project's normal development environment before deployment.
+- Verify Supabase RLS for Manager product edits, stock movements, fieldwork uploads/attendance, and daily closing clone workflow against a staging database.
