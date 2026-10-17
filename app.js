@@ -1247,10 +1247,10 @@ function stockModal() {
         ["in", "Stock received"],
         ["out", "Stock out"],
         ["damage", "Damaged"],
-        ["adjustment", "Adjustment (signed boxes)"],
+        ["adjustment", "Adjustment (add quantity)"],
         ["opening", "Opening stock"],
       ],
-    )}${field("Boxes", "boxes", 1, "number", 'step="1" required')}${field("Transaction reference", "transaction_id", "ST-" + uid(), "text", "required")}${area("Note", "note")}</div><button class="gold" style="margin-top:20px">Save movement</button></form>`,
+    )}${field("Cartons", "cartons", 0, "number", 'min="0" step="1" required')}${field("Loose boxes", "loose_boxes", 0, "number", 'min="0" step="1" required')}<div class="field"><label>Boxes per carton</label><output id="stock-pack-size">Select a product</output></div><div class="field"><label>Total movement</label><output id="stock-quantity-preview">Total: 0 boxes</output></div>${field("Transaction reference", "transaction_id", "ST-" + uid(), "text", "required")}${area("Note", "note")}</div><p class="muted">Enter full cartons and any extra loose boxes. The total is converted to boxes automatically.</p><button class="gold" style="margin-top:20px">Save movement</button></form>`,
   );
 }
 function targetsModal(id) {
