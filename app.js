@@ -2071,6 +2071,24 @@ document.addEventListener("click", async (e) => {
   }
 }, true);
 
+document.addEventListener("input", (e) => {
+  const form = e.target.closest?.("#stock-form");
+  if (!form) return;
+  const product = S().products.find((p) => p.id === form.elements.product_id.value);
+  const pack = num(product?.boxes_per_carton || S().settings.boxes_per_carton) || 1;
+  const cartons = Math.max(0, Math.trunc(num(form.elements.cartons.value)));
+  const loose = Math.max(0, Math.trunc(num(form.elements.loose_boxes.value)));
+  const packLabel = form.querySelector("#stock-pack-size");
+  const preview = form.querySelector("#stock-quantity-preview");
+  if (packLabel) packLabel.textContent = product ? String(pack) : "select a product";
+  if (preview) preview.textContent = `Total: ${cartons * pack + loose} boxes (${cartons} cartons + ${loose} loose boxes)`;
+});
+document.addEventListener("change", (e) => {
+  if (e.target.matches?.('#stock-form select[name="product_id"]')) {
+    e.target.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+});
+
 document.addEventListener("submit", async (e) => {
   const form = e.target;
   if (!(form instanceof HTMLFormElement)) return;
@@ -2115,12 +2133,20 @@ document.addEventListener("submit", async (e) => {
         toast("Payment recorded");
         break;
       case "stock-form":
-        await store.run("stock.add", {
-          ...f,
-          boxes: ["out", "damage"].includes(f.kind)
-            ? -Math.abs(num(f.boxes))
-            : num(f.boxes),
-        });
+        {
+          const product = S().products.find((p) => p.id === f.product_id);
+          if (!product) throw Error("Choose a valid product");
+          const cartons = num(f.cartons);
+          const looseBoxes = num(f.loose_boxes);
+          if (!Number.isInteger(cartons) || cartons < 0 || !Number.isInteger(looseBoxes) || looseBoxes < 0 || !(cartons || looseBoxes)) {
+            throw Error("Enter a positive whole number of cartons and/or loose boxes");
+          }
+          const quantity = cartons * num(product.boxes_per_carton || S().settings.boxes_per_carton) + looseBoxes;
+          await store.run("stock.add", {
+            ...f,
+            boxes: ["out", "damage"].includes(f.kind) ? -quantity : quantity,
+          });
+        }
         close();
         render();
         toast("Stock updated");

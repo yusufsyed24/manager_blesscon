@@ -301,3 +301,11 @@ This release is a deployable source package, not a live deployment. Production c
 - When `block_negative_stock` is disabled, the Sales Order line now shows the exact box shortage as an informational warning and clarifies that negative stock is allowed; it no longer labels the quantity as a blocking insufficiency.
 - The dashboard already includes a “Stock by candy” overview grouped by candy family, showing cartons, loose boxes, total boxes, and each flavour's individual balance and boxes per carton. The release step synced the updated source into `web/`.
 - Validation note: automated tests could not be run in this environment because dependencies are not installed (`vitest: not found`).
+
+## v20 — Warehouse movement carton entry
+- Replaced the single ambiguous warehouse movement quantity field with separate Cartons and Loose boxes inputs.
+- The form displays a live total in boxes and the selected product's boxes-per-carton pack size.
+- On save, cartons are converted using the selected product's own `boxes_per_carton`; stock ledger storage remains integer boxes to preserve compatibility with sales, stock overview, and Supabase.
+- Stock out and damaged movements apply a negative sign to the combined quantity; stock received/opening/adjustment movements add the combined quantity.
+- Synced the root and `web/js/app.js` copies.
+- Validation: JavaScript syntax checks passed for both app copies. Full test suite not run because dependencies are not installed in this workspace.
