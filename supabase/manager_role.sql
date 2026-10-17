@@ -48,3 +48,40 @@ begin
   nd:=replace(nd,'public.is_admin() or public.has_permission(''stock'')','public.is_admin() or public.is_manager() or public.has_permission(''stock'')');
   if nd<>def then execute nd; raise notice 'manager_role: business_snapshot patched'; else raise notice 'manager_role: business_snapshot already patched'; end if;
 end $$;
+
+-- Explicit Manager read access for the requested company-wide operational screens.
+-- This release uses company-wide Manager visibility (not per-team assignment).
+-- Admin write policies and existing data are left untouched.
+drop policy if exists product_read on public.products;
+create policy product_read on public.products for select to authenticated
+using (public.is_admin() or public.is_manager() or public.has_permission('products')
+  or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active));
+
+drop policy if exists salesman_read on public.salesmen;
+create policy salesman_read on public.salesmen for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(id));
+
+drop policy if exists customer_read on public.customers;
+create policy customer_read on public.customers for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id)
+  or (created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active)));
+
+drop policy if exists target_read on public.salesman_daily_targets;
+create policy target_read on public.salesman_daily_targets for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id));
+
+drop policy if exists stock_admin on public.stock_movements;
+create policy stock_admin on public.stock_movements for select to authenticated
+using (public.is_admin() or public.is_manager() or public.has_permission('stock'));
+
+drop policy if exists daily_closing_read on public.daily_closings;
+create policy daily_closing_read on public.daily_closings for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or public.has_permission('closing'));
+
+drop policy if exists salesman_stock_read on public.salesman_stock_movements;
+create policy salesman_stock_read on public.salesman_stock_movements for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or public.has_permission('stock'));
+
+drop policy if exists stock_voucher_read on public.stock_vouchers;
+create policy stock_voucher_read on public.stock_vouchers for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or public.has_permission('stock'));
