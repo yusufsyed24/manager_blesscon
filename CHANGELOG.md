@@ -341,3 +341,10 @@ This release is a deployable source package, not a live deployment. Production c
 ## v29 — Market Credit opening display fix
 
 - Fixed the Account Balances table to render the invoice-based prior-day opening value for Market Credit, rather than recalculating it from the legacy receivable ledger. Other accounts retain their existing ledger-based opening calculation.
+
+
+## v30 — Admin-only bank account editing
+
+- Added an Edit action for bank and wallet accounts in Cash & Bank Book, visible only to administrators.
+- Edit form keeps account keys fixed and permits administrators to update display names. Existing store-level admin validation remains in place; ledger-history protections continue to prevent unsafe opening-balance or account-mapping changes.
+- Non-admin users do not receive account edit controls.
