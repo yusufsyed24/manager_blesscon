@@ -376,6 +376,6 @@ This release is a deployable source package, not a live deployment. Production c
 
 ## v35 — Admin reset-password action visibility
 - Added a visible **Reset password** action to each other account in Admin → Users & access. The current Admin account is excluded from this action; Admin self-service password changes remain under Account.
-- The action invokes the existing `admin-reset-user-password` Edge Function, validates temporary passwords (12–128 characters), handles function errors, and reminds Admin to share the temporary password securely.
+- The action invokes the existing `admin-reset-user-password` Edge Function, validates passwords (12–128 characters), handles function errors, and reminds Admin to share the password securely.
 - Synced root, `js/`, and `web/js/` app copies to keep deployment variants consistent.
 - Validation: `node --check` passed for all three updated app.js copies; ZIP integrity checked after packaging. Live Supabase function deployment/permissions are not verified here.

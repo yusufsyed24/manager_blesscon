@@ -2326,7 +2326,7 @@ function userModal(id) {
   if (!id) {
     modal(
       "Create login",
-      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Temporary password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select(
+      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select(
         "Link salesman (optional)",
         "salesman_id",
         [
@@ -2335,7 +2335,7 @@ function userModal(id) {
             .salesmen.filter((x) => !x.user_id)
             .map((s) => [s.id, s.name]),
         ],
-      )}</div><p class="muted">The login is created without sending an email. Share the temporary password securely and ask the user to change it.</p><button class="gold">Create login</button></form>`,
+      )}</div><p class="muted">The login is created without sending an email. Share the password securely. Non-admin users must contact Admin if they need a password change.</p><button class="gold">Create login</button></form>`,
     );
     return;
   }
@@ -2910,7 +2910,7 @@ async function action(act, id, element) {
       const target = S().profiles.find((p) => p.id === id);
       if (!target) throw Error("User profile not found");
       modal("Reset password · " + (target.display_name || target.email || "User"),
-        `<form id="admin-reset-password-form" data-id="${esc(id)}">${field("New temporary password (12–128 characters)", "temporary_password", "", "password", 'minlength="12" maxlength="128" autocomplete="new-password" required')}<p class="muted">The password will be set by the Admin. Share it securely with the user; do not send it through an unsecured channel.</p><button class="gold">Reset password</button></form>`);
+        `<form id="admin-reset-password-form" data-id="${esc(id)}">${field("New password (12–128 characters)", "temporary_password", "", "password", 'minlength="12" maxlength="128" autocomplete="new-password" required')}<p class="muted">The password will be set by the Admin. Share it securely with the user; do not send it through an unsecured channel.</p><button class="gold">Reset password</button></form>`);
       break;
     }
     case "salesman-profile":
@@ -3666,7 +3666,7 @@ document.addEventListener("submit", async (e) => {
         }
         if (data?.error) throw Error(data.error);
         close();
-        toast("Password reset successfully. Share the temporary password securely.");
+        toast("Password updated successfully. Share the password securely with the user.");
         break;
       }
       case "password-form": {

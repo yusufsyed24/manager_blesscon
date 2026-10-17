@@ -4,7 +4,7 @@
 - Manager and Salesman accounts do not see a self-service password-change form in the application. They must ask an Admin to reset their password.
 - Admin users can reset another user's password from **Users & access → Reset password**.
 - The reset uses the `admin-reset-user-password` Supabase Edge Function. It verifies the caller's active Admin role through `is_admin()` and never exposes the service-role key to the browser.
-- The function rejects attempts to reset the caller's own password. It accepts 12–128 character temporary passwords.
+- The function rejects attempts to reset the caller's own password. It accepts a password of 12–128 characters set by Admin.
 
 ## Deployment
 1. Deploy the updated static app.
@@ -21,4 +21,4 @@ Hiding the password-change form is an application-level restriction only. Supaba
 - This is an application UI restriction; it does not by itself prevent direct password updates through Supabase Auth APIs. Do not treat it as a server-side security boundary.
 
 ## v35 UI fix — Admin reset action
-In Admin → Users & access, each account other than the currently signed-in Admin now has a **Reset password** button beside **Edit access**. Clicking it prompts Admin to enter a temporary password (12–128 characters) and calls the `admin-reset-user-password` Edge Function. The Edge Function must be deployed and configured as described above; otherwise the UI will report the invocation error. Admin's own password remains changeable from Account.
+In Admin → Users & access, each account other than the currently signed-in Admin now has a **Reset password** button beside **Edit access**. Clicking it prompts Admin to set the user’s password (12–128 characters) and calls the `admin-reset-user-password` Edge Function. The Edge Function must be deployed and configured as described above; otherwise the UI will report the invocation error. Admin's own password remains changeable from Account.

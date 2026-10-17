@@ -2393,7 +2393,7 @@ function userModal(id) {
   if (!id) {
     modal(
       "Create login",
-      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Temporary password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select(
+      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select(
         "Link salesman (optional)",
         "salesman_id",
         [
@@ -2402,7 +2402,7 @@ function userModal(id) {
             .salesmen.filter((x) => !x.user_id)
             .map((s) => [s.id, s.name]),
         ],
-      )}</div><p class="muted">The login is created without sending an email. Share the temporary password securely and ask the user to change it.</p><button class="gold">Create login</button></form>`,
+      )}</div><p class="muted">The login is created without sending an email. Share the password securely. Non-admin users must contact Admin if they need a password change.</p><button class="gold">Create login</button></form>`,
     );
     return;
   }
@@ -3028,17 +3028,17 @@ async function action(act, id, element) {
       if (!client) throw Error("Password resets require a configured Supabase connection.");
       const target = S().profiles.find((p) => String(p.id) === String(id));
       if (!target || target.id === user.id) throw Error("Choose another valid user account.");
-      const temporaryPassword = window.prompt(`Set a temporary password for ${target.display_name || target.email || target.id}. Use at least 12 characters:`);
+      const temporaryPassword = window.prompt(`Set the password for ${target.display_name || target.email || target.id}. They will keep using this password until Admin changes it. Use at least 12 characters:`);
       if (temporaryPassword === null) break;
-      if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Temporary password must be 12–128 characters.");
-      const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, temporary_password: temporaryPassword } });
+      if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Password must be 12–128 characters.");
+      const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: temporaryPassword } });
       if (error) {
         let message = error.message;
         try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
         throw Error(message);
       }
       if (data?.error) throw Error(data.error);
-      toast(`Password reset for ${target.display_name || target.email || "user"}. Share the temporary password securely.`);
+      toast(`Password set for ${target.display_name || target.email || "user"}. The user can sign in with this password and cannot change it from the app. Share it securely.`);
       break;
     }
     case "salesman-profile":

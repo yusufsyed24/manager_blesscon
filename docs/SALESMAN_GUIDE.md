@@ -1,6 +1,6 @@
 # Blesscon Candy — Salesman quick guide
 
-**Sign in:** Use the login supplied by the owner. Open Account to change your temporary password. Use the same phone/browser for pending offline work.
+**Sign in:** Use the login supplied by the owner. Use the password supplied by Admin. Contact Admin if you need it changed; non-admin accounts cannot change passwords in the app. Use the same phone/browser for pending offline work.
 
 1. **Check your target.** Dashboard and Salesmen & targets show today's effective target, achieved cartons and remaining cartons. Unmet targets carry to the next working day under the owner's settings. Daily tracking shows the calculation.
 2. **Create your sale.** Sales orders → New sale. Choose an existing customer or tap New customer. Check your salesman selection, date and retail/wholesale channel.

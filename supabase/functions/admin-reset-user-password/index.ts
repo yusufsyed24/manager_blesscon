@@ -29,14 +29,14 @@ Deno.serve(async (req: Request) => {
   if (authError || !authData.user) return reply({ error: "Authentication required" }, 401);
   const { data: isAdmin, error: permissionError } = await caller.rpc("is_admin");
   if (permissionError || !isAdmin) return reply({ error: "Active admin required" }, 403);
-  let body: { user_id?: string; temporary_password?: string };
+  let body: { user_id?: string; password?: string };
   try {
     body = await req.json();
   } catch {
     return reply({ error: "Invalid JSON body" }, 400);
   }
   const targetId = String(body.user_id || "").trim();
-  const password = String(body.temporary_password || "");
+  const password = String(body.password || "");
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(targetId))
     return reply({ error: "A valid target user ID is required" }, 400);
   if (targetId === authData.user.id) return reply({ error: "Admins can reset other users, not their own password, here" }, 400);
