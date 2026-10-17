@@ -326,3 +326,8 @@ This release is a deployable source package, not a live deployment. Production c
 - Persist the selected module in browser local storage whenever a page renders.
 - Restore the saved module when the application shell loads after refresh/sign-in.
 - Existing role/permission checks remain authoritative; inaccessible modules fall back to Overview.
+
+
+## v25 — Cash & Bank Book receivables reconciliation
+
+- Calculate Market Credit outstanding per confirmed invoice using non-voided payments through the selected date, matching invoice-level outstanding logic and preventing one overpaid invoice from making the total receivable negative.

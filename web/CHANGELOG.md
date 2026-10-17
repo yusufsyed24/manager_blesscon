@@ -289,3 +289,8 @@ This release is a deployable source package, not a live deployment. Production c
 - Kept direct `salesmen` SELECT available to authenticated sessions while relying on RLS policies to restrict rows to admins and the linked salesman. Product and line-item reads remain scoped through RPCs.
 - Added `supabase/salesman_self_service_permissions_fix.sql` for existing deployments; run it after the other migrations.
 - Updated setup instructions. No live Supabase database was modified by this package change.
+
+
+## v25 — Cash & Bank Book receivables reconciliation
+
+- Calculate Market Credit outstanding per confirmed invoice using non-voided payments through the selected date, matching invoice-level outstanding logic and preventing one overpaid invoice from making the total receivable negative.

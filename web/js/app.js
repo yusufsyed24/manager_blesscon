@@ -885,7 +885,16 @@ function renderCashBook() {
     return {a,opening,received,paid,transferIn,transferOut,closing};
   });
   const liquid = cards.filter(x=>isLiquid(x.a)).reduce((sum,x)=>sum+x.closing,0);
-  const market = cards.filter(x=>x.a.account_type==="receivable").reduce((sum,x)=>sum+x.closing,0);
+  // Receivables are calculated per confirmed invoice, matching the customer-outstanding
+  // report. An overpayment on one invoice must not make total receivables negative.
+  const market = s.invoices.reduce((sum, inv) => {
+    const order = s.orders.find(o => o.id === inv.order_id);
+    if (!order || order.status !== "confirmed" || order.date > date) return sum;
+    const paidByDate = s.payments
+      .filter(p => p.invoice_id === inv.id && !p.voided_at && p.date <= date)
+      .reduce((n, p) => n + num(p.amount_paisa), 0);
+    return sum + Math.max(0, num(inv.total_paisa) - paidByDate);
+  }, 0);
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
   const transactionRows = relevantEntries.filter(e=>e.business_date===date).sort((a,b)=>String(b.created_at||b.business_date).localeCompare(String(a.created_at||a.business_date))).map(e=>[
