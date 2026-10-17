@@ -52,6 +52,7 @@ const NAV = [
   ["myprofile", "My profile & fieldwork", "♙"],
   ["dsr", "Daily sales report", "▤"],
   ["closing", "Daily closing", "✓"],
+  ["cashbook", "5. Cash & Bank Book", "▤"],
   ["orders", "Sales orders", "↗"],
   ["invoices", "Invoices & payments", "▤"],
   ["quotes", "Quotations", "◇"],
@@ -88,13 +89,14 @@ const canViewAllClosings = () =>
       permission.can_view,
   );
 const can = (p) =>
-  (user?.role === "salesman" && ["dashboard","myprofile","dsr","closing","orders","invoices","quotes","ledger","stock","products"].includes(p)) ||
+  (user?.role === "salesman" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","stock","products"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
     ([
       "dashboard",
       "dsr",
       "closing",
+      "cashbook",
       "orders",
       "invoices",
       "quotes",
@@ -800,6 +802,116 @@ function renderDocs(quote) {
     )}</section>`
   );
 }
+
+const CASHBOOK_DEFAULT_ACCOUNTS = [
+  { account_key: "cash_hand", label: "Cash in Hand", account_type: "cash", opening_balance_paisa: 0, active: true },
+  { account_key: "bank_default", label: "Cash in Bank — Default account", account_type: "bank", payment_method: "Bank", opening_balance_paisa: 0, active: true },
+  { account_key: "easypaisa", label: "EasyPaisa", account_type: "wallet", payment_method: "Easypaisa", opening_balance_paisa: 0, active: true },
+  { account_key: "jazzcash", label: "JazzCash", account_type: "wallet", payment_method: "JazzCash", opening_balance_paisa: 0, active: true },
+  { account_key: "market_credit", label: "Market Credit — Receivables", account_type: "receivable", opening_balance_paisa: 0, active: true },
+];
+let cashbookDate = today();
+function cashbookMethodKey(method, salesmanId = "") {
+  const m = /easypaisa/i.test(method || "") ? "easypaisa" : /jazzcash/i.test(method || "") ? "jazzcash" : /bank|cheque/i.test(method || "") ? "bank" : "cash";
+  if (salesmanId) return `salesman:${salesmanId}:${m}`;
+  return ({ cash: "cash_hand", bank: "bank_default", easypaisa: "easypaisa", jazzcash: "jazzcash" })[m];
+}
+function cashbookData() {
+  const s = S();
+  let accounts = s.cashbook_loaded ? s.cashbook_accounts.filter(a => a.active) : user?.practice
+    ? [...CASHBOOK_DEFAULT_ACCOUNTS.map(a=>({...a,...(s.cashbook_accounts||[]).find(x=>x.account_key===a.account_key)})), ...(s.cashbook_accounts||[]).filter(a=>!CASHBOOK_DEFAULT_ACCOUNTS.some(d=>d.account_key===a.account_key))]
+    : [...CASHBOOK_DEFAULT_ACCOUNTS];
+  let entries = s.cashbook_loaded ? s.cashbook_entries : [];
+  if (!s.cashbook_loaded && user?.practice) {
+    // Practice mode derives an explicitly local preview from the same records users enter.
+    const addAccount = (key, label, type, method, salesman_id = null) => {
+      if (!accounts.some(a => a.account_key === key)) accounts.push({ account_key:key,label,account_type:type,payment_method:method,salesman_id,opening_balance_paisa:0,active:true });
+    };
+    const add = (key, tx, date, amount, entry_type, source_table, source_id, description, salesman_id = null) => {
+      entries.push({ id:`local:${key}`,posting_key:key,transaction_id:tx,business_date:date,account_key:key.split("|")[0],amount_paisa:amount,entry_type,source_table,source_id,description,salesman_id });
+    };
+    entries = [...(s.cashbook_entries || [])];
+    for (const inv of s.invoices) {
+      const order = s.orders.find(o => o.id === inv.order_id);
+      if (!order || order.status !== "confirmed") continue;
+      add("market_credit","Market Credit","receivable",null);
+      entries.push({posting_key:`local:invoice:${inv.id}`,transaction_id:`INV-${inv.id}`,business_date:order.date,account_key:"market_credit",amount_paisa:num(inv.total_paisa),entry_type:"receivable",source_table:"invoices",source_id:inv.id,description:"Invoice receivable",salesman_id:order.salesman_id});
+    }
+    for (const p of s.payments.filter(x => !x.voided_at)) {
+      const inv = s.invoices.find(i => i.id === p.invoice_id), order = inv && s.orders.find(o => o.id === inv.order_id);
+      if (!inv || !order || order.status !== "confirmed") continue;
+      const key = p.cashbook_account_key || cashbookMethodKey(p.method, order.salesman_id);
+      const seller = order.salesman_id && s.salesmen.find(x => x.id === order.salesman_id);
+      const labels = {cash_hand:"Cash in Hand",bank_default:"Cash in Bank — Default account",easypaisa:"EasyPaisa",jazzcash:"JazzCash"};
+      addAccount(key, seller ? `Salesman Collection — ${seller.name} (${p.method})` : (labels[key] || key), seller ? "salesman" : (key === "bank_default" ? "bank" : key === "cash_hand" ? "cash" : "wallet"), p.method, order.salesman_id || null);
+      entries.push({posting_key:`local:payment:${p.id}:receipt`,transaction_id:p.transaction_id,business_date:p.date,account_key:key,amount_paisa:num(p.amount_paisa),entry_type:"receipt",source_table:"payments",source_id:p.id,description:`Payment received — ${p.method}`,salesman_id:order.salesman_id});
+      entries.push({posting_key:`local:payment:${p.id}:receivable`,transaction_id:p.transaction_id,business_date:p.date,account_key:"market_credit",amount_paisa:-num(p.amount_paisa),entry_type:"receivable",source_table:"payments",source_id:p.id,description:"Receivable recovered",salesman_id:order.salesman_id});
+    }
+    for (const e of s.expenses.filter(x => !x.deleted_at)) {
+      const key = cashbookMethodKey(e.method, e.salesman_id);
+      const seller = e.salesman_id && s.salesmen.find(x => x.id === e.salesman_id);
+      const labels = {cash_hand:"Cash in Hand",bank_default:"Cash in Bank — Default account",easypaisa:"EasyPaisa",jazzcash:"JazzCash"};
+      addAccount(key, seller ? `Salesman Collection — ${seller.name} (${e.method})` : (labels[key] || key), seller ? "salesman" : (key === "bank_default" ? "bank" : key === "cash_hand" ? "cash" : "wallet"), e.method, e.salesman_id || null);
+      entries.push({posting_key:`local:expense:${e.id}`,transaction_id:e.id,business_date:e.date,account_key:key,amount_paisa:-num(e.amount_paisa),entry_type:"expense",source_table:"expenses",source_id:e.id,description:`Expense — ${e.category}`,salesman_id:e.salesman_id});
+    }
+  }
+  return { accounts, entries };
+}
+const cashbookAccountOpening = (account, date) => (!account.created_at || date >= String(account.created_at).slice(0,10)) ? num(account.opening_balance_paisa) : 0;
+function renderCashBook() {
+  const s = S(), data = cashbookData(), date = cashbookDate || today();
+  const allowedAccounts = data.accounts.filter(a => mgmt() || !a.salesman_id || a.salesman_id === own()?.id);
+  const relevantEntries = data.entries.filter(e => mgmt() || !e.salesman_id || e.salesman_id === own()?.id);
+  const amount = (key, pred = () => true) => relevantEntries.filter(e => e.account_key === key && pred(e)).reduce((sum,e) => sum + num(e.amount_paisa),0);
+  const before = e => e.business_date < date;
+  const onDay = e => e.business_date === date;
+  const isLiquid = a => ["cash","bank","wallet","salesman"].includes(a.account_type);
+  const cards = allowedAccounts.map(a => {
+    const opening = cashbookAccountOpening(a,date) + amount(a.account_key,before);
+    const dayEntries = relevantEntries.filter(e => e.account_key === a.account_key && onDay(e));
+    const received = dayEntries.filter(e => num(e.amount_paisa)>0 && !["transfer_in","adjustment","reversal"].includes(e.entry_type)).reduce((sum,e)=>sum+num(e.amount_paisa),0);
+    const paid = -dayEntries.filter(e => num(e.amount_paisa)<0 && !["transfer_out","adjustment","reversal"].includes(e.entry_type)).reduce((sum,e)=>sum+num(e.amount_paisa),0);
+    const transferIn = dayEntries.filter(e => e.entry_type==="transfer_in").reduce((sum,e)=>sum+num(e.amount_paisa),0);
+    const transferOut = -dayEntries.filter(e => e.entry_type==="transfer_out").reduce((sum,e)=>sum+num(e.amount_paisa),0);
+    const closing = opening + dayEntries.reduce((sum,e)=>sum+num(e.amount_paisa),0);
+    return {a,opening,received,paid,transferIn,transferOut,closing};
+  });
+  const liquid = cards.filter(x=>isLiquid(x.a)).reduce((sum,x)=>sum+x.closing,0);
+  const market = cards.filter(x=>x.a.account_type==="receivable").reduce((sum,x)=>sum+x.closing,0);
+  const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
+  const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
+  const transactionRows = relevantEntries.filter(e=>e.business_date===date).sort((a,b)=>String(b.created_at||b.business_date).localeCompare(String(a.created_at||a.business_date))).map(e=>[
+    esc(e.business_date), esc(e.reference || e.transaction_id || "—"), esc(e.description || e.entry_type), esc(accountLabel(e.account_key)), `<span class="${num(e.amount_paisa)<0?"negative":"positive"}">${num(e.amount_paisa)<0?"−":"+"}${money(Math.abs(num(e.amount_paisa)))}</span>`, esc(e.entry_type.replaceAll("_"," ")) + (e.pending_sync ? ` ${badge("Pending sync","amber")}` : ""), esc(e.source_table || "—")
+  ]);
+  const closings = (s.cashbook_daily_closings || []).filter(c => c.business_date === date && (mgmt() || allowedAccounts.some(a=>a.account_key===c.account_key)));
+  const allCloseAccounts = allowedAccounts.filter(a => a.account_type !== "receivable" && (mgmt() || (a.salesman_id && a.salesman_id === own()?.id)));
+  const closeAccounts = allCloseAccounts.filter(a=>!(s.cashbook_daily_closings||[]).some(c=>c.business_date===date && c.account_key===a.account_key && ["submitted","approved"].includes(c.status)));
+  const prevDate = addDays(date,-1);
+  const priorApproved = (s.cashbook_daily_closings || []).filter(c=>c.business_date===prevDate && c.status==="approved");
+  const missingPriorClose = allCloseAccounts.some(a=>!priorApproved.some(c=>c.account_key===a.account_key));
+  const priorWarning = missingPriorClose ? `<div class="notice">No approved closing was found for ${esc(prevDate)} for every account visible here. Today's opening is calculated from ledger entries, and the previous closing is not marked verified.</div>` : "";
+  const pendingNotice = relevantEntries.some(e=>e.pending_sync) ? `<div class="notice">Some entries are <b>Pending sync</b>. They are local/unconfirmed and may change if the server rejects them. Sync before finalizing a daily closing.</div>` : "";
+  const closeForm = closeAccounts.length && (s.cashbook_loaded || user?.practice) ? `<section class="panel"><h2>Verify actual closing balances</h2><p class="muted">Enter the amount physically counted or confirmed for each account. The system records expected balance, actual balance and variance separately. Any difference requires a reason and management approval before an adjustment is posted.</p><form id="cashbook-form" data-kind="close">${field("Business date","date",date,"date","required")}<div class="grid">${closeAccounts.map(a=>{const prior=closings.find(c=>c.account_key===a.account_key);return field(`Actual count — ${esc(a.label)}`,"actual_"+a.account_key,prior ? num(prior.actual_balance_paisa)/100 : "","number",`min="0" step="0.01" required ${prior?.status==="approved"?'readonly':''}`)}).join("")}</div>${area("Notes / variance reason (required if any difference)","notes",closings[0]?.notes||"")}<div class="actions"><button type="submit" class="gold">Submit daily closing</button></div></form></section>` : "";
+  const closeRows = closings.map(c=>[esc(allowedAccounts.find(a=>a.account_key===c.account_key)?.label || c.account_key),money(c.expected_balance_paisa),money(c.actual_balance_paisa),`<span class="${num(c.variance_paisa)===0?"positive":"negative"}">${money(c.variance_paisa)}</span>`,badge(c.status + (c.pending_sync ? " · Pending sync" : ""),c.status==="approved"?"green":"amber"),esc(c.notes||"—"),c.submitted_by===user.id?"You":esc(String(c.submitted_by||"—")),mgmt() && c.status!=="approved" ? btn("Approve & reconcile","cashbook-close-approve",c.id,"","gold") : "—"]);
+  const migrationNotice = !s.cashbook_loaded && !user?.practice
+    ? `<div class="notice danger"><b>Cash & Bank Book migration required.</b> This view is not yet connected to the authoritative ledger. Apply <code>supabase/cash_bank_book.sql</code> after the existing schema and operational migrations, then refresh. ${esc(s.cashbook_error || "")}</div>`
+    : user?.practice ? `<div class="notice">Practice mode: balances are a local preview derived from sample transactions. They are not connected to a live bank or Supabase ledger.</div>` : "";
+  const canWrite = mgmt() && !user?.practice && s.cashbook_loaded;
+  const actions = `${canWrite ? btn("Transfer between accounts","cashbook-transfer","","","gold")+btn("Record adjustment","cashbook-adjust")+(admin()?btn("Add bank / wallet account","cashbook-add-account"):"") : ""}${user?.role==="salesman" && s.cashbook_loaded ? btn("Hand over cash","cashbook-handover","","","gold") : ""}${btn("Export CSV","cashbook-csv")}${btn("Print","cashbook-print")}`;
+  return head("5. Cash & Bank Book","Know exactly how much money is held in each account, including salesman-held collections and market credit.",actions)
+    + migrationNotice
+    + priorWarning
+    + pendingNotice
+    + `<section class="panel"><div class="filters">${field("Business date","cashbook-date",date,"date",'data-cashbook-date="true"')}${btn("Today","cashbook-today")}</div>
+      <div class="cashbook-summary-grid"><article class="cashbook-summary"><span>Liquid funds at selected-date close</span><b>${money(liquid)}</b><small>Includes salesman-held collections once; excludes market credit</small></article><article class="cashbook-summary"><span>Market Credit outstanding</span><b>${money(market)}</b><small>Receivables only — not money received</small></article><article class="cashbook-summary"><span>Accounts tracked</span><b>${allowedAccounts.length}</b><small>Opening and closing calculated from ledger movements</small></article></div>
+      <h2>Account balances · ${esc(date)}</h2>${table(["Account","Opening","Increases / receipts","Decreases / recoveries","Transfers in","Transfers out","Expected closing"],cards.map(x=>[esc(x.a.label),money(cashbookAccountOpening(x.a,date)+amount(x.a.account_key,before)),money(x.received),money(x.paid),money(x.transferIn),money(x.transferOut),`<b>${money(x.closing)}</b>`]),"No accounts available")}
+      <p class="muted">Expected closing = opening + signed receipts/payments + transfers. A closing count is a separate verification and must not overwrite this calculated balance.</p>
+      <h2>Transactions for ${esc(date)}</h2>${table(["Date","Reference","Description","Account","Amount","Type","Source"],transactionRows,"No ledger transactions for this date")}</section>
+      ${closeForm}
+      <section class="panel"><h2>Daily closing register · ${esc(date)}</h2>${table(["Account","Expected","Actual counted","Variance","Status","Notes","Submitted by","Action"],closeRows,"No daily closing submitted for this date")}</section>
+      ${canWrite ? `<section class="panel"><h2>Salesman stock and cash closing</h2><p>Use Daily closing for salesman stock reconciliation and the existing cash-count workflow. Cash & Bank Book closing adjustments are only posted after management approval.</p><div class="actions">${btn("Open Daily closing","go-closing")}</div></section>` : ""}`;
+}
+
 function renderInvoices() {
   const s = S();
   return (
@@ -1550,7 +1662,7 @@ function openEditor(quote, id) {
       .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`)
       .join(
         "",
-      )}</datalist><div id="editor-lines"></div><button type="button" class="secondary add-line-bottom" data-act="add-line" style="margin:4px 0 16px">+ Add product</button><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div>${!quote && !old ? `<section class="panel" aria-labelledby="payment-section-title"><h2 id="payment-section-title">Payment</h2><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section>` : ""}<div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
+      )}</datalist><div id="editor-lines"></div><button type="button" class="secondary add-line-bottom" data-act="add-line" style="margin:4px 0 16px">+ Add product</button><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div>${!quote && !old ? `<section class="panel" aria-labelledby="payment-section-title"><h2 id="payment-section-title">Payment</h2><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${cashbookPaymentAccountField()}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section>` : ""}<div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
   );
   renderLines();
   calcEditor();
@@ -1678,7 +1790,7 @@ async function saveEditor(form) {
     const status = f.payment_status || "unpaid";
     const amount = status === "paid" ? null : status === "unpaid" ? 0 : paisa(f.payment_amount);
     if (status === "partial" && (!Number.isFinite(amount) || amount <= 0)) throw Error("Part payment must be greater than zero");
-    payload.payment = { status, amount_paisa: amount, transaction_id: "PAY-ORDER-" + draft.id, date: f.payment_date || today(), method: f.payment_method || "Cash", reference: f.payment_reference || "", received_by: f.payment_received_by || user.name || user.email || "Owner", due_date: f.payment_due_date || addDays(today(),7) };
+    payload.payment = { status, amount_paisa: amount, transaction_id: "PAY-ORDER-" + draft.id, date: f.payment_date || today(), method: f.payment_method || "Cash", cashbook_account_key: f.cashbook_account_key || "", reference: f.payment_reference || "", received_by: f.payment_received_by || user.name || user.email || "Owner", due_date: f.payment_due_date || addDays(today(),7) };
   }
   delete payload.quote;
   await store.run(quote ? "quote.save" : "order.save", payload);
@@ -1881,12 +1993,17 @@ function showDocument(id, quote = false) {
   const renderView = () => `<div class="actions doc-tools">${canCollect ? btn("Receive payment", "add-payment", activeDoc.invoice.id, "", "gold") : ""}<div class="field"><label for="document-template">Template</label><select id="document-template">${(DOCUMENT_TEMPLATES[activeDoc.type] || DOCUMENT_TEMPLATES.invoice).map(t=>`<option value="${t.id}" ${t.id===activeTemplate?"selected":""}>${esc(t.label)}</option>`).join("")}</select></div>${btn("Print", "doc-print")}${btn("Download PDF", "doc-pdf")}${btn("Share PDF", "doc-share")}${btn("WhatsApp", "doc-whatsapp")}${btn("Email", "doc-email")}${btn("Copy public link", "doc-link")}${btn("Revoke public link", "doc-revoke")}</div><div id="document-preview">${documentHTML(activeDoc, pending, activeTemplate)}</div>`;
   modal((quote ? "Quotation " : "Invoice ") + activeDoc.document.number, renderView());
 }
+function cashbookPaymentAccountField() {
+  if (!S().cashbook_loaded && !user?.practice) return "";
+  const accounts=S().cashbook_accounts.filter(a=>a.active && a.account_type!=="receivable");
+  return select("Specific receiving account (optional)","cashbook_account_key",[["","Automatic from method / salesman"],...accounts.map(a=>[a.account_key,a.label])],"");
+}
 function paymentModal(id) {
   const i = S().invoices.find((x) => x.id === id),
     p = invoiceState(i, S().payments);
   modal(
     "Receive payment · " + i.number,
-    `<div class="notice"><b>Invoice:</b> ${esc(i.number)} · <b>Customer:</b> ${esc(customerName(S().orders.find(o=>o.id===i.order_id)?.customer_id))}<br><b>Total:</b> ${money(i.total_paisa)} · <b>Already paid:</b> ${money(p.paid)} · <b>Balance due:</b> ${money(p.balance)} · ${badge(p.status)}</div><form id="payment-form" data-id="${id}"><div class="grid">${field("Date", "date", today(), "date", "required")}${field("Amount received now (Rs.)", "amount", p.balance / 100, "number", 'min="0.01" step="0.01" required')}<button type="button" class="secondary" data-act="pay-full-balance" data-id="${id}">Pay full balance</button>${select("Method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "reference")}${field("Received by", "received_by", user.name || user.email || "Owner", "text", "required")}</div><button class="gold" style="margin-top:20px">Record payment</button></form>`,
+    `<div class="notice"><b>Invoice:</b> ${esc(i.number)} · <b>Customer:</b> ${esc(customerName(S().orders.find(o=>o.id===i.order_id)?.customer_id))}<br><b>Total:</b> ${money(i.total_paisa)} · <b>Already paid:</b> ${money(p.paid)} · <b>Balance due:</b> ${money(p.balance)} · ${badge(p.status)}</div><form id="payment-form" data-id="${id}"><div class="grid">${field("Date", "date", today(), "date", "required")}${field("Amount received now (Rs.)", "amount", p.balance / 100, "number", 'min="0.01" step="0.01" required')}<button type="button" class="secondary" data-act="pay-full-balance" data-id="${id}">Pay full balance</button>${select("Method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${cashbookPaymentAccountField()}${field("Reference", "reference")}${field("Received by", "received_by", user.name || user.email || "Owner", "text", "required")}</div><button class="gold" style="margin-top:20px">Record payment</button></form>`,
   );
 }
 function stockModal() {
@@ -2354,6 +2471,56 @@ async function action(act, id, element) {
       if(act === "visit-save-location") { if(!navigator.geolocation) throw Error("This device does not support GPS. Save the visit without location instead."); await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(async pos=>{try{await save(pos.coords);resolve();}catch(err){reject(err);}},()=>reject(Error("Location permission was denied or unavailable. You can save the visit without GPS.")),{enableHighAccuracy:true,timeout:12000,maximumAge:60000})); } else await save();
       break;
     }
+    case "cashbook-today":
+      cashbookDate = today(); render(); break;
+    case "cashbook-close-approve":
+      if (!mgmt()) throw Error("Management approval required");
+      await store.run("cashbook.close.approve",{closing_id:id});
+      await store.refresh?.();
+      render();
+      toast("Daily closing approved. Any variance was posted as an audited adjustment.");
+      break;
+    case "cashbook-transfer":
+      if (!mgmt()) throw Error("Management access required");
+      {
+        const { accounts } = cashbookData();
+        const opts = accounts.filter(a => a.active && a.account_type !== "receivable").map(a => [a.account_key,a.label]);
+        modal("Transfer between accounts", `<form id="cashbook-form" data-kind="transfer">${field("Date","date",cashbookDate,"date","required")}${select("From account","source_account",opts,"cash_hand")}${select("To account","destination_account",opts,"bank_default")}${field("Amount (Rs.)","amount","","number",'min="0.01" step="0.01" required')}${field("Reference (optional)","reference")}${area("Description","description","Account transfer") }<div class="actions"><button class="gold" type="submit">Confirm transfer</button></div></form>`);
+      }
+      break;
+    case "cashbook-handover":
+      if (user?.role!=="salesman") throw Error("Salesman login required");
+      {
+        const { accounts } = cashbookData();
+        const opts=accounts.filter(a=>a.active && a.account_type==="salesman" && a.salesman_id===own()?.id && a.payment_method==="Cash").map(a=>[a.account_key,a.label]);
+        if (!opts.length) throw Error("Your cash collection account is not configured. Ask management to refresh the Cash & Bank Book migration.");
+        modal("Hand over cash to office", `<p class="notice">This transfers the amount out of your cash collection and into the office Cash in Hand account. It does not duplicate or delete the original receipt.</p><form id="cashbook-form" data-kind="handover">${field("Date","date",cashbookDate,"date","required")}${select("Your cash collection","source_account",opts,opts[0][0])}${field("Amount (Rs.)","amount","","number",'min="0.01" step="0.01" required')}${field("Reference (optional)","reference")}${area("Note","description","Cash handed to office")}<div class="actions"><button class="gold" type="submit">Submit cash handover</button></div></form>`);
+      }
+      break;
+    case "cashbook-adjust":
+      if (!mgmt()) throw Error("Management access required");
+      {
+        const { accounts } = cashbookData();
+        modal("Cashbook adjustment", `<p class="notice">Adjustments are audited and require a clear reason. Use a negative amount to decrease an account.</p><form id="cashbook-form" data-kind="adjustment">${field("Date","date",cashbookDate,"date","required")}${select("Account","account_key",accounts.filter(a=>a.active).map(a=>[a.account_key,a.label]),"cash_hand")}${field("Signed amount (Rs.)","amount","","number",'step="0.01" required')}${field("Reference (optional)","reference")}${area("Reason (required)","description","") }<div class="actions"><button class="gold" type="submit">Record adjustment</button></div></form>`);
+      }
+      break;
+    case "cashbook-add-account":
+      if (!admin()) throw Error("Only Admin can configure accounts");
+      modal("Add bank / wallet account", `<form id="cashbook-form" data-kind="account">${field("Account key (letters, numbers, _ : -)","account_key","","text",'pattern="[a-z][a-z0-9_:-]{2,79}" required')}${field("Display name","label","","text","required")}${select("Account type","account_type", [["bank","Bank"],["wallet","Digital wallet"]],"bank")}${select("Payment method mapping","payment_method",[["Bank","Bank"],["Easypaisa","EasyPaisa"],["JazzCash","JazzCash"]],"Bank")}${field("Opening balance (Rs.)","opening_balance","0","number",'min="0" step="0.01" value="0" required')}<div class="actions"><button class="gold" type="submit">Save account</button></div></form>`);
+      break;
+    case "cashbook-csv": {
+      const { accounts, entries } = cashbookData();
+      const rows = [["Date","Reference","Description","Account","Amount PKR","Type","Source"], ...entries.filter(e=>e.business_date===cashbookDate && (mgmt() || !e.salesman_id || e.salesman_id===own()?.id)).map(e=>[e.business_date,e.reference||e.transaction_id,e.description,accounts.find(a=>a.account_key===e.account_key)?.label||e.account_key,num(e.amount_paisa)/100,e.entry_type,e.source_table])];
+      const safe = value => { let v=String(value??""); if(/^[=+@-]/.test(v)) v="'"+v; return '"'+v.replaceAll('"','""')+'"'; };
+      download(`Blesscon_Cash_Bank_Book_${cashbookDate}.csv`,rows.map(r=>r.map(safe).join(",")).join("\\r\\n"),"text/csv");
+      break;
+    }
+    case "cashbook-print": {
+      const content = $("page").innerHTML;
+      $("print-area").innerHTML = `<article class="document"><header class="doc-head"><img src="${ICON}" alt="Blesscon Candy"><div><h1>Cash & Bank Book</h1><p>${esc(cashbookDate)}</p></div></header>${content}</article>`;
+      window.print();
+      break;
+    }
     case "new-order":
       openEditor(false);
       break;
@@ -2560,7 +2727,7 @@ async function action(act, id, element) {
       const q = S().quotations.find((x) => x.id === id);
       modal(
         "Convert " + q.number,
-        `<p>Stock will be checked and deducted once. The original quotation will link to the new order.</p><div class="notice">${S().quotation_items.filter(l=>l.quotation_id===id).map(l=>{const available=balance(l.product_id);return `${esc(l.product_name)}: ${available} available / ${l.boxes} required ${available>=l.boxes?"✓":"⚠ Insufficient"}`;}).join("<br>")}</div><form id="convert-form" data-id="${id}"><p>Quotation total: <b>${money(q.total_paisa)}</b></p><div class="checkbox"><input id="reprice" name="reprice" type="checkbox"><label for="reprice">Re-price at today's rates</label></div><section class="panel"><h3>Payment</h3><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="convert-payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section><button class="gold" style="margin-top:20px">Convert to order</button></form>`,
+        `<p>Stock will be checked and deducted once. The original quotation will link to the new order.</p><div class="notice">${S().quotation_items.filter(l=>l.quotation_id===id).map(l=>{const available=balance(l.product_id);return `${esc(l.product_name)}: ${available} available / ${l.boxes} required ${available>=l.boxes?"✓":"⚠ Insufficient"}`;}).join("<br>")}</div><form id="convert-form" data-id="${id}"><p>Quotation total: <b>${money(q.total_paisa)}</b></p><div class="checkbox"><input id="reprice" name="reprice" type="checkbox"><label for="reprice">Re-price at today's rates</label></div><section class="panel"><h3>Payment</h3><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"])}${cashbookPaymentAccountField()}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="convert-payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section><button class="gold" style="margin-top:20px">Convert to order</button></form>`,
       );
       break;
     }
@@ -2945,6 +3112,7 @@ document.addEventListener("input", (e) => {
     const error = masterForm.querySelector("#master-form-error");
     if (error) { error.textContent = ""; error.style.display = "none"; }
   }
+  if (input.matches("[data-cashbook-date]")) { cashbookDate = input.value || today(); return; }
   if (input.dataset.filter === "search") {
     const pos = input.selectionStart;
     filter.search = input.value;
@@ -2995,6 +3163,7 @@ document.addEventListener("input", (e) => {
     refreshClosingEstimate(closingForm);
 });
 document.addEventListener("change", async (e) => {
+  if (e.target.matches?.("[data-cashbook-date]")) { cashbookDate = e.target.value || today(); render(); return; }
   try {
     const closingForm = e.target.closest("#closing-form");
     if (
@@ -3147,6 +3316,32 @@ document.addEventListener("submit", async (e) => {
       case "settings-form":
         await saveSettings(form);
         break;
+      case "cashbook-form": {
+        const kind = form.dataset.kind;
+        if (kind === "transfer") {
+          const source = f.source_account, destination = f.destination_account;
+          if (source === destination) throw Error("Choose two different accounts");
+          await store.run("cashbook.transfer", { source_account:source, destination_account:destination, amount_paisa:paisa(f.amount), date:f.date, reference:f.reference||"", description:f.description||"" });
+          toast("Account transfer recorded.");
+        } else if (kind === "adjustment") {
+          if (!String(f.description||"").trim()) throw Error("A reason is required");
+          await store.run("cashbook.adjust", { account_key:f.account_key, amount_paisa:paisa(f.amount), date:f.date, reference:f.reference||"", description:f.description });
+          toast("Audited cashbook adjustment recorded.");
+        } else if (kind === "handover") {
+          await store.run("cashbook.handover", { source_account:f.source_account, destination_account:"cash_hand", amount_paisa:paisa(f.amount), date:f.date, reference:f.reference||"", description:f.description||"Cash handed to office" });
+          toast("Cash handover recorded.");
+        } else if (kind === "account") {
+          await store.run("cashbook.account.save", { account_key:f.account_key.trim().toLowerCase(), label:f.label.trim(), account_type:f.account_type, payment_method:f.payment_method, opening_balance_paisa:paisa(f.opening_balance) });
+          toast("Account saved.");
+        } else if (kind === "close") {
+          const accounts = cashbookData().accounts.filter(a=>a.active && a.account_type!=="receivable" && (mgmt() || a.salesman_id===own()?.id) && !(S().cashbook_daily_closings||[]).some(c=>c.business_date===f.date && c.account_key===a.account_key && c.status==="approved"));
+          const actuals = accounts.map(a=>({account_key:a.account_key,actual_balance_paisa:paisa(f["actual_"+a.account_key])}));
+          await store.run("cashbook.close.submit",{date:f.date,notes:f.notes||"",actuals});
+          toast("Daily closing submitted for management review.");
+        }
+        cashbookDate = f.date || cashbookDate;
+        close(); render(); break;
+      }
       case "payment-form":
         await store.run("payment.add", {
           invoice_id: form.dataset.id,
@@ -3154,6 +3349,7 @@ document.addEventListener("submit", async (e) => {
           date: f.date,
           amount_paisa: paisa(f.amount),
           method: f.method,
+          cashbook_account_key: f.cashbook_account_key || "",
           reference: f.reference,
           received_by: f.received_by,
         });
@@ -3242,7 +3438,7 @@ document.addEventListener("submit", async (e) => {
           version: q.version,
           order_id: uid(),
           reprice: f.reprice === "on",
-          payment: { status: f.payment_status || "unpaid", amount_paisa: f.payment_status === "paid" ? null : f.payment_status === "unpaid" ? 0 : paisa(f.payment_amount), transaction_id: "PAY-CONVERT-" + q.id, date: f.payment_date || today(), method: f.payment_method || "Cash", reference: f.payment_reference || "", received_by: f.payment_received_by || user.name || user.email || "Owner", due_date: f.payment_due_date || addDays(today(),7) },
+          payment: { status: f.payment_status || "unpaid", amount_paisa: f.payment_status === "paid" ? null : f.payment_status === "unpaid" ? 0 : paisa(f.payment_amount), transaction_id: "PAY-CONVERT-" + q.id, date: f.payment_date || today(), method: f.payment_method || "Cash", cashbook_account_key: f.cashbook_account_key || "", reference: f.payment_reference || "", received_by: f.payment_received_by || user.name || user.email || "Owner", due_date: f.payment_due_date || addDays(today(),7) },
         });
         close();
         render();

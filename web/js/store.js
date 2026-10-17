@@ -22,6 +22,9 @@ export const TABLES = [
   "salesman_stock_movements",
   "stock_vouchers",
   "daily_closings",
+  "cashbook_accounts",
+  "cashbook_entries",
+  "cashbook_daily_closings",
   "expenses",
   "audit_log",
   "profiles",
@@ -32,6 +35,7 @@ export const TABLES = [
   "customer_visits",
 ];
 const commandRpc = (kind) =>
+  kind.startsWith("cashbook.") ? "cashbook_record_command" :
   kind.startsWith("closing.") || ["stock.issue", "stock.return"].includes(kind)
     ? "apply_operational_command"
     : "apply_command";
@@ -41,6 +45,13 @@ export function empty() {
     ["settings", structuredClone(DEFAULTS)],
     ["settings_version", 1],
     ["stock", []],
+    ["cashbook_accounts", [
+      { account_key:"cash_hand",label:"Cash in Hand",account_type:"cash",payment_method:"Cash",opening_balance_paisa:0,active:true },
+      { account_key:"bank_default",label:"Cash in Bank — Default account",account_type:"bank",payment_method:"Bank",opening_balance_paisa:0,active:true },
+      { account_key:"easypaisa",label:"EasyPaisa",account_type:"wallet",payment_method:"Easypaisa",opening_balance_paisa:0,active:true },
+      { account_key:"jazzcash",label:"JazzCash",account_type:"wallet",payment_method:"JazzCash",opening_balance_paisa:0,active:true },
+      { account_key:"market_credit",label:"Market Credit — Receivables",account_type:"receivable",opening_balance_paisa:0,active:true },
+    ]],
   ]);
 }
 const upsert = (a, r, key = "id") => {
@@ -48,6 +59,29 @@ const upsert = (a, r, key = "id") => {
   if (i < 0) a.push(r);
   else a[i] = { ...a[i], ...r };
 };
+function localCashbookLedger(state) {
+  const rows = [...(state.cashbook_entries || [])];
+  const accountKey = (method, salesmanId = null) => {
+    const m = /easypaisa/i.test(method || "") ? "easypaisa" : /jazzcash/i.test(method || "") ? "jazzcash" : /bank|cheque/i.test(method || "") ? "bank" : "cash";
+    return salesmanId ? `salesman:${salesmanId}:${m}` : ({cash:"cash_hand",bank:"bank_default",easypaisa:"easypaisa",jazzcash:"jazzcash"})[m];
+  };
+  for (const invoice of state.invoices || []) {
+    const order = (state.orders || []).find(o => o.id === invoice.order_id);
+    if (!order || order.status !== "confirmed" || !Number(invoice.total_paisa)) continue;
+    rows.push({posting_key:`local:invoice:${invoice.id}`,account_key:"market_credit",business_date:order.date,amount_paisa:Number(invoice.total_paisa),entry_type:"receivable"});
+  }
+  for (const payment of (state.payments || []).filter(p=>!p.voided_at)) {
+    const invoice=(state.invoices||[]).find(i=>i.id===payment.invoice_id), order=invoice&&(state.orders||[]).find(o=>o.id===invoice.order_id);
+    if (!invoice || !order || order.status!=="confirmed") continue;
+    const key=payment.cashbook_account_key || accountKey(payment.method,order.salesman_id);
+    rows.push({posting_key:`local:payment:${payment.id}:receipt`,account_key:key,business_date:payment.date,amount_paisa:Number(payment.amount_paisa),entry_type:"receipt"});
+    rows.push({posting_key:`local:payment:${payment.id}:receivable`,account_key:"market_credit",business_date:payment.date,amount_paisa:-Number(payment.amount_paisa),entry_type:"receivable"});
+  }
+  for (const expense of (state.expenses || []).filter(e=>!e.deleted_at)) {
+    rows.push({posting_key:`local:expense:${expense.id}`,account_key:accountKey(expense.method,expense.salesman_id),business_date:expense.date,amount_paisa:-Number(expense.amount_paisa),entry_type:"expense"});
+  }
+  return rows;
+}
 export function localApply(base, op, user) {
   const s = structuredClone(base),
     d = op.data,
@@ -308,7 +342,7 @@ export function localApply(base, op, user) {
         if (!already) {
           const paid = s.payments.filter((x) => x.invoice_id === invoice.id && !x.voided_at).reduce((a,x)=>a+x.amount_paisa,0);
           if (paid + amount > invoice.total_paisa && !s.settings.allow_customer_credit) throw Error("Payment exceeds invoice total. Enable customer credit or correct the amount.");
-          s.payments.push({ id: uid(), transaction_id: payment.transaction_id, invoice_id: invoice.id, date: payment.date || today(), amount_paisa: amount, method: payment.method || "Cash", reference: payment.reference || "", received_by: payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
+          s.payments.push({ id: uid(), transaction_id: payment.transaction_id, invoice_id: invoice.id, date: payment.date || today(), amount_paisa: amount, method: payment.method || "Cash", cashbook_account_key: payment.cashbook_account_key || null, reference: payment.reference || "", received_by: payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
         }
       }
       break;
@@ -398,7 +432,7 @@ export function localApply(base, op, user) {
         const amount = d.payment.status === "paid" ? order.total_paisa : Number(d.payment.amount_paisa);
         if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Payment amount must be positive");
         if (amount > invoice.total_paisa && !s.settings.allow_customer_credit) throw Error("Payment exceeds invoice total");
-        if (!s.payments.some((x) => x.transaction_id === d.payment.transaction_id)) s.payments.push({ id: uid(), transaction_id: d.payment.transaction_id, invoice_id: invoice.id, date: d.payment.date || today(), amount_paisa: amount, method: d.payment.method || "Cash", reference: d.payment.reference || "", received_by: d.payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
+        if (!s.payments.some((x) => x.transaction_id === d.payment.transaction_id)) s.payments.push({ id: uid(), transaction_id: d.payment.transaction_id, invoice_id: invoice.id, date: d.payment.date || today(), amount_paisa: amount, method: d.payment.method || "Cash", cashbook_account_key: d.payment.cashbook_account_key || null, reference: d.payment.reference || "", received_by: d.payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
       }
       break;
     }
@@ -606,6 +640,95 @@ export function localApply(base, op, user) {
         result.push(movement);
       }
       result = { ...voucher, items: result };
+      break;
+    }
+    case "cashbook.account.save": {
+      if (!admin) throw Error("Only Admin can configure cashbook accounts");
+      if (!/^[a-z][a-z0-9_:-]{2,79}$/.test(String(d.account_key || ""))) throw Error("Invalid account key");
+      if (!["bank","wallet"].includes(d.account_type)) throw Error("Only bank and wallet accounts can be added");
+      if (!String(d.label || "").trim()) throw Error("Enter an account name");
+      if (["cash_hand","market_credit"].includes(d.account_key)) throw Error("This is a reserved system account key");
+      if (d.account_key==="bank_default" && (d.account_type!=="bank" || d.payment_method!=="Bank")) throw Error("Default bank account must remain mapped to Bank");
+      if (d.account_key==="easypaisa" && (d.account_type!=="wallet" || !/easypaisa/i.test(d.payment_method||""))) throw Error("EasyPaisa system account mapping cannot be changed");
+      if (d.account_key==="jazzcash" && (d.account_type!=="wallet" || !/jazzcash/i.test(d.payment_method||""))) throw Error("JazzCash system account mapping cannot be changed");
+      const oldAccount=s.cashbook_accounts.find(a=>a.account_key===d.account_key);
+      if (oldAccount && Number(oldAccount.opening_balance_paisa||0)!==d.opening_balance_paisa && s.cashbook_entries.some(e=>e.account_key===d.account_key)) throw Error("Account has ledger history; use an audited adjustment instead of changing its opening balance");
+      if (oldAccount && (oldAccount.account_type!==d.account_type || (oldAccount.payment_method||"")!==(d.payment_method||"")) && s.cashbook_entries.some(e=>e.account_key===d.account_key)) throw Error("Account type/method cannot change after ledger activity; create a new account");
+      if (!Number.isSafeInteger(d.opening_balance_paisa) || d.opening_balance_paisa < 0) throw Error("Opening balance cannot be negative");
+      result = { account_key:d.account_key, label:d.label.trim(), account_type:d.account_type, payment_method:d.payment_method, opening_balance_paisa:0, active:true, created_by:user.id, created_at:oldAccount?.created_at||now, pending_sync:!user.practice };
+      upsert(s.cashbook_accounts,result,"account_key");
+      if (d.opening_balance_paisa > 0) s.cashbook_entries.push({id:uid(),posting_key:`command:${op.id}:opening`,transaction_id:op.id,business_date:today(),account_key:d.account_key,amount_paisa:d.opening_balance_paisa,entry_type:"adjustment",source_table:"cashbook_accounts",source_id:d.account_key,description:"Opening balance",created_by:user.id,created_at:now,pending_sync:!user.practice});
+      break;
+    }
+    case "cashbook.transfer": {
+      if (!["admin","manager"].includes(user.role)) throw Error("Management access required");
+      const amount = Number(d.amount_paisa);
+      if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Transfer amount must be positive");
+      if (!d.source_account || !d.destination_account || d.source_account === d.destination_account) throw Error("Choose two different accounts");
+      const known = key => s.cashbook_accounts.some(a=>a.account_key===key && a.active);
+      if (s.cashbook_accounts.length && (!known(d.source_account)||!known(d.destination_account))) throw Error("Choose active accounts");
+      const baseEntry = { transaction_id:op.id,business_date:d.date||today(),source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:d.description||"Account transfer",created_by:user.id,created_at:now,pending_sync:!user.practice };
+      const sourceAccount=s.cashbook_accounts.find(a=>a.account_key===d.source_account);
+      const currentBalance=Number(sourceAccount?.opening_balance_paisa||0)+localCashbookLedger(s).filter(e=>e.account_key===d.source_account && e.business_date<=(d.date||today())).reduce((sum,e)=>sum+Number(e.amount_paisa),0);
+      if (currentBalance < amount) throw Error("Insufficient balance in the source account");
+      s.cashbook_entries.push({ ...baseEntry,id:uid(),posting_key:`command:${op.id}:out`,account_key:d.source_account,amount_paisa:-amount,entry_type:"transfer_out" },{ ...baseEntry,id:uid(),posting_key:`command:${op.id}:in`,account_key:d.destination_account,amount_paisa:amount,entry_type:"transfer_in" });
+      result = { ok:true, transaction_id:op.id };
+      break;
+    }
+    case "cashbook.handover": {
+      if (user.role!=="salesman") throw Error("Salesman login required for this handover action");
+      const amount=Number(d.amount_paisa), dt=d.date||today();
+      if (!Number.isSafeInteger(amount)||amount<=0) throw Error("Handover amount must be positive");
+      const account=s.cashbook_accounts.find(a=>a.account_key===d.source_account && a.active && a.account_type==="salesman" && a.payment_method==="Cash" && s.salesmen.some(x=>x.id===a.salesman_id && x.user_id===user.id));
+      if (!account) throw Error("Choose your own salesman cash collection account");
+      const balance=Number(account.opening_balance_paisa||0)+localCashbookLedger(s).filter(e=>e.account_key===account.account_key && e.business_date<=dt).reduce((sum,e)=>sum+Number(e.amount_paisa),0);
+      if (balance<amount) throw Error("Insufficient cash in your collection");
+      const baseEntry={transaction_id:op.id,business_date:dt,source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:d.description||"Cash handed to office",created_by:user.id,created_at:now,pending_sync:!user.practice,salesman_id:account.salesman_id};
+      s.cashbook_entries.push({...baseEntry,id:uid(),posting_key:`command:${op.id}:out`,account_key:account.account_key,amount_paisa:-amount,entry_type:"transfer_out"},{...baseEntry,id:uid(),posting_key:`command:${op.id}:in`,account_key:"cash_hand",amount_paisa:amount,entry_type:"transfer_in",description:(d.description||"Cash handed to office")+" — received by office"});
+      result={ok:true,transaction_id:op.id};
+      break;
+    }
+    case "cashbook.adjust": {
+      if (!["admin","manager"].includes(user.role)) throw Error("Management access required");
+      const amount = Number(d.amount_paisa);
+      if (!Number.isSafeInteger(amount) || amount === 0) throw Error("Adjustment amount cannot be zero");
+      if (!String(d.description||"").trim()) throw Error("A reason is required for an adjustment");
+      if (s.cashbook_accounts.length && !s.cashbook_accounts.some(a=>a.account_key===d.account_key && a.active)) throw Error("Choose an active account");
+      s.cashbook_entries.push({id:uid(),posting_key:`command:${op.id}`,transaction_id:op.id,business_date:d.date||today(),account_key:d.account_key,amount_paisa:amount,entry_type:"adjustment",source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:d.description,created_by:user.id,created_at:now,pending_sync:!user.practice});
+      result = { ok:true, transaction_id:op.id };
+      break;
+    }
+    case "cashbook.close.submit": {
+      if (!["admin","manager","salesman"].includes(user.role)) throw Error("Cashbook closing access required");
+      const dt=d.date||today(), note=String(d.notes||"").trim();
+      const liquidAccounts=s.cashbook_accounts.filter(a=>a.active && a.account_type!=="receivable");
+      const ledger=localCashbookLedger(s);
+      const actuals=Array.isArray(d.actuals)?d.actuals:[];
+      if (!actuals.length) throw Error("Enter actual balances");
+      for (const item of actuals) {
+        const account=liquidAccounts.find(a=>a.account_key===item.account_key);
+        if (!account) throw Error("Unknown account");
+        if (user.role==="salesman" && (!account.salesman_id || !s.salesmen.some(x=>x.id===account.salesman_id && x.user_id===user.id))) throw Error("You can only close your own collection accounts");
+        const prior=s.cashbook_daily_closings.find(x=>x.business_date===dt && x.account_key===account.account_key);
+        if (prior?.status==="approved") throw Error("This account is already approved for the selected date");
+        const expected=Number(account.opening_balance_paisa||0)+ledger.filter(e=>e.account_key===account.account_key && e.business_date<=dt).reduce((sum,e)=>sum+Number(e.amount_paisa),0);
+        const actual=Number(item.actual_balance_paisa), variance=actual-expected;
+        if (!Number.isSafeInteger(actual)||actual<0) throw Error("Actual balance cannot be negative");
+        if (variance && !note) throw Error("A reason is required for any difference");
+        const row={...prior,id:prior?.id||uid(),business_date:dt,account_key:account.account_key,expected_balance_paisa:expected,actual_balance_paisa:actual,variance_paisa:variance,notes:note,status:"submitted",submitted_by:user.id,submitted_at:now,pending_sync:!user.practice};
+        upsert(s.cashbook_daily_closings,row,"id");
+      }
+      result={ok:true,submitted:actuals.length};
+      break;
+    }
+    case "cashbook.close.approve": {
+      if (!admin && user.role!=="manager") throw Error("Management approval required");
+      const row=find("cashbook_daily_closings",d.closing_id);
+      if (!row) throw Error("Closing record not found");
+      if (row.status==="approved") throw Error("Closing already approved");
+      if (row.variance_paisa && !String(row.notes||"").trim()) throw Error("A reason is required for the variance");
+      if (row.variance_paisa) s.cashbook_entries.push({id:uid(),posting_key:`cashbook-close:${row.id}:variance`,transaction_id:`CLOSE-${row.id}`,business_date:row.business_date,account_key:row.account_key,amount_paisa:Number(row.variance_paisa),entry_type:"adjustment",source_table:"cashbook_daily_closings",source_id:row.id,description:`Approved reconciliation adjustment: ${row.notes}`,created_by:user.id,created_at:now,pending_sync:!user.practice});
+      row.status="approved"; row.approved_by=user.id; row.approved_at=now; result={ok:true,closing_id:row.id};
       break;
     }
     case "closing.submit": {
@@ -868,7 +991,23 @@ export class Store extends EventTarget {
       ...empty(),
       ...data,
       settings: { ...DEFAULTS, ...data.settings },
+      cashbook_loaded: false,
+      cashbook_error: "",
     };
+    try {
+      const [accounts, entries, closings] = await Promise.all([
+        this.all("cashbook_accounts"),
+        this.all("cashbook_entries"),
+        this.all("cashbook_daily_closings"),
+      ]);
+      this.base.cashbook_accounts = accounts;
+      this.base.cashbook_entries = entries;
+      this.base.cashbook_daily_closings = closings;
+      this.base.cashbook_loaded = true;
+    } catch (cashbookError) {
+      this.base.cashbook_error = cashbookError?.message || String(cashbookError);
+      this.base.cashbook_loaded = false;
+    }
     this.persist();
     this.replay();
   }
@@ -893,6 +1032,9 @@ export class Store extends EventTarget {
       this.persist();
       this.replay();
       return n.result;
+    }
+    if (kind === "cashbook.close.approve" && this.client && !navigator.onLine) {
+      throw Error("Daily closing approval requires an online connection.");
     }
     // Product writes must not be reported as successful while merely queued.
     // In the old path, an RPC rejection was swallowed by sync(), the optimistic
@@ -1003,7 +1145,7 @@ export class Store extends EventTarget {
     // Stock issues/returns change two linked ledgers. When online, wait for the
     // database transaction to confirm before the UI closes the form; otherwise
     // an RPC/RLS/migration error could be swallowed by the generic offline queue.
-    if (["stock.issue", "stock.return"].includes(kind) && this.client && navigator.onLine) {
+    if ((["stock.issue", "stock.return"].includes(kind) || kind.startsWith("cashbook.")) && this.client && navigator.onLine) {
       if (this.queue.length) {
         await this.sync();
         if (this.queue.length || this.error) {
@@ -1022,7 +1164,7 @@ export class Store extends EventTarget {
         if (error) {
           const message = error.message || String(error);
           if (/schema cache|could not find the function|function .* does not exist|unknown command/i.test(message)) {
-            throw Error("The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: " + message);
+            throw Error((kind.startsWith("cashbook.") ? "The Cash & Bank Book migration may be missing. Apply supabase/cash_bank_book.sql after the existing schema and operational migrations. Original error: " : "The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: ") + message);
           }
           throw error;
         }

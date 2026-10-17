@@ -1145,3 +1145,13 @@ pre {
 .profile-hero{display:flex;align-items:center;gap:18px;margin-bottom:20px}.profile-hero h2{margin:0 0 6px}.profile-hero p{margin:4px 0}.profile-avatar{width:88px;height:88px;flex:0 0 88px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--surface-2,#f1f3f5);font-size:38px;border:1px solid var(--border,#ddd)}.profile-avatar img{width:100%;height:100%;object-fit:cover}.profile-hero+.grid{align-items:end}@media(max-width:560px){.profile-hero{align-items:flex-start;gap:12px}.profile-avatar{width:68px;height:68px;flex-basis:68px}.profile-hero h2{font-size:1.1rem}}
 
 .profile-photo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:12px 0 20px}.profile-photo-card{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border,#ddd);border-radius:12px;background:var(--surface,#fff);min-width:0}.profile-photo-card .profile-avatar{width:76px;height:76px;flex:0 0 76px}.profile-photo-card p{margin:5px 0;overflow-wrap:anywhere}
+
+
+/* Cash & Bank Book */
+.cashbook-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0 24px}
+.cashbook-summary{display:flex;flex-direction:column;gap:8px;padding:18px;border:1px solid var(--line,#dedede);border-radius:14px;background:var(--panel,#fff);min-width:0}
+.cashbook-summary span{font-size:.88rem;color:var(--muted,#666)}
+.cashbook-summary b{font-size:clamp(1.25rem,2.2vw,1.8rem);overflow-wrap:anywhere}
+.cashbook-summary small{font-size:.78rem;color:var(--muted,#666);line-height:1.4}
+.positive{color:#167448;font-weight:700}.negative{color:#b42318;font-weight:700}
+@media(max-width:760px){.cashbook-summary-grid{grid-template-columns:1fr}.cashbook-summary{padding:14px}.cashbook-summary b{font-size:1.35rem}}

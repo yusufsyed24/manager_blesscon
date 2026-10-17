@@ -1,16 +1,23 @@
-Product Save Button Fix — validation log (2026-10-14)
+Cash & Bank Book feature — validation log (17 October 2026)
 
 PASS: node --check js/app.js
-PASS: node --check all js/*.js, tests/*.js, and web/js/*.js
-PASS: node scripts/release.mjs completed
-PASS: root/deployed js/app.js and js/store.js are byte-identical
-PASS: ZIP integrity check will be performed after packaging
+PASS: node --check js/store.js
+PASS: node --check tests/cashbook.test.js
+PASS: node --check tests/db-helper.js
+PASS: root/web js/app.js, js/store.js, css/app.css and sw.js copies are byte-identical.
+PASS: service-worker cache version bumped for the Cash & Bank Book UI.
 
-NOT RUN / BLOCKED:
-FAIL TO START: npm test -- --reporter=dot
-Reason: vitest: not found (dependencies are not installed in this environment).
+AUTHORED BUT NOT EXECUTED:
+- tests/cashbook.test.js: invoice receivable postings, payment account selection, expense postings, salesman cash handover, daily close variance approval, and approved-day posting lock.
+- Full Vitest/PGlite suite and npm run check.
 
-FAIL TO START: npm run check
-Reason: ERR_MODULE_NOT_FOUND for package 'typescript' imported by scripts/check.mjs.
+BLOCKED IN THIS ENVIRONMENT:
+- `npm test`: Vitest dependency is not installed.
+- `npm ci --ignore-scripts`: dependency installation did not complete.
+- `node scripts/check.mjs`: blocked because the `typescript` package is unavailable.
 
-Not verified: live Supabase product create/update. The deployed database must have the product.save migration applied, the logged-in user must be an admin, and the live app_config.js must retain the project's working public Supabase URL and publishable/anon key.
+NOT VERIFIED:
+- SQL migration execution against PostgreSQL/Supabase.
+- Supabase RLS behavior in the live project.
+- Browser/mobile end-to-end behavior.
+- Live deployment. No live Supabase database was changed by this build.

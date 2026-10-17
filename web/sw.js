@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v18-admin-avatar-path-fix-20261017";
+const CACHE = "blesscon-static-v19-cash-bank-book-20261017";
 const ASSETS = [
   "./",
   "./index.html",

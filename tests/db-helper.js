@@ -21,6 +21,12 @@ export async function database() {
     ),
   );
   await db.exec(
+    await fs.readFile(
+      new URL("../supabase/cash_bank_book.sql", import.meta.url),
+      "utf8",
+    ),
+  );
+  await db.exec(
     `insert into auth.users values('${A}','admin@test.test'),('${B}','b@test.test'),('${C}','c@test.test'); insert into public.profiles(id,display_name) values('${A}','Admin'),('${B}','One'),('${C}','Two'); insert into public.user_roles(user_id,role) values('${A}','admin'),('${B}','salesman'),('${C}','salesman'); select set_config('request.jwt.claim.sub','${A}',false);`,
   );
   return db;

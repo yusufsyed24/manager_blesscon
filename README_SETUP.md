@@ -199,3 +199,9 @@ The dashboard is selected by the `salesman` role and the linked salesman record;
 ### Fix admin fieldwork access (existing deployments)
 
 If the admin page reports `permission denied for table salesmen`, rerun the updated `supabase/salesman_self_service.sql` in the Supabase SQL Editor using the project owner/admin SQL role. It restores `SELECT` permission for authenticated users and the admin/self-salesman read policy; it does not delete business data. After it succeeds, sign out and back in to refresh the session.
+
+
+## Cash & Bank Book migration
+
+After `supabase/schema.sql`, `supabase/operational_modules.sql`, and `supabase/manager_role.sql` (if used) are applied, run `supabase/cash_bank_book.sql` in the Supabase SQL Editor. This creates the account/ledger tables, posting triggers, historical backfill and access policies. Refresh the browser after the migration succeeds. The migration is additive and uses idempotent posting keys, but take a verified external database backup before applying it. It also enables daily per-account actual-count submissions, manager approval and a guard that rejects new ledger postings into an approved account/date. A variance is posted as an audited adjustment only after approval. Payment forms allow selecting a specific receiving account when the migration is installed; if left blank, bank/cheque receipts map to the default bank account and salesman-assigned orders map to the salesman's collection account.
+If a future destructive business reset is run after this migration, clear `cashbook_entries` and `cashbook_daily_closings`, then remove the salesman-specific `cashbook_accounts` before deleting salesman rows; preserve the five standard account rows unless the migration is being fully removed. Take the required external backup first.
