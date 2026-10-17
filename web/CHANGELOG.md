@@ -299,3 +299,8 @@ This release is a deployable source package, not a live deployment. Production c
 ## v26 — Cash Book receivable account balance
 
 - Fixed the Market Credit — Receivables account row to derive opening and closing balances from confirmed invoices and non-voided invoice payments as of the selected business date, matching the receivables summary.
+
+
+## v29 — Market Credit opening display fix
+
+- Fixed the Account Balances table to render the invoice-based prior-day opening value for Market Credit, rather than recalculating it from the legacy receivable ledger. Other accounts retain their existing ledger-based opening calculation.
