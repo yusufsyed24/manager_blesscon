@@ -373,3 +373,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Manager, Salesman, and other non-admin users see a message to contact Admin instead of a self-service password form.
 - This is UI-level enforcement only; Supabase Auth may still permit direct password updates outside the app unless separately constrained.
 - Validation: `node --check js/app.js` and `node --check web/js/app.js` passed.
+
+## v35 — Admin reset-password action visibility
+- Added a visible **Reset password** action to each other account in Admin → Users & access. The current Admin account is excluded from this action; Admin self-service password changes remain under Account.
+- The action invokes the existing `admin-reset-user-password` Edge Function, validates temporary passwords (12–128 characters), handles function errors, and reminds Admin to share the temporary password securely.
+- Synced root, `js/`, and `web/js/` app copies to keep deployment variants consistent.
+- Validation: `node --check` passed for all three updated app.js copies; ZIP integrity checked after packaging. Live Supabase function deployment/permissions are not verified here.

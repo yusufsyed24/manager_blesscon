@@ -19,3 +19,6 @@ Hiding the password-change form is an application-level restriction only. Supaba
 - Admin accounts can change their own password from Account.
 - Manager, Salesman, and other non-admin accounts do not see a self-service password-change form and are instructed to contact Admin.
 - This is an application UI restriction; it does not by itself prevent direct password updates through Supabase Auth APIs. Do not treat it as a server-side security boundary.
+
+## v35 UI fix — Admin reset action
+In Admin → Users & access, each account other than the currently signed-in Admin now has a **Reset password** button beside **Edit access**. Clicking it prompts Admin to enter a temporary password (12–128 characters) and calls the `admin-reset-user-password` Edge Function. The Edge Function must be deployed and configured as described above; otherwise the UI will report the invocation error. Admin's own password remains changeable from Account.

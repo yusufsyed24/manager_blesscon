@@ -1663,7 +1663,7 @@ function renderUsers() {
         badge(p.active ? "Active" : "Inactive"),
         p.id === user.id
           ? "Current user"
-          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
       ]),
     )}</section>`
   );
@@ -3023,6 +3023,24 @@ async function action(act, id, element) {
     case "edit-user":
       userModal(id);
       break;
+    case "reset-user-password": {
+      if (!admin()) throw Error("Only an administrator can reset another user's password.");
+      if (!client) throw Error("Password resets require a configured Supabase connection.");
+      const target = S().profiles.find((p) => String(p.id) === String(id));
+      if (!target || target.id === user.id) throw Error("Choose another valid user account.");
+      const temporaryPassword = window.prompt(`Set a temporary password for ${target.display_name || target.email || target.id}. Use at least 12 characters:`);
+      if (temporaryPassword === null) break;
+      if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Temporary password must be 12–128 characters.");
+      const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, temporary_password: temporaryPassword } });
+      if (error) {
+        let message = error.message;
+        try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
+        throw Error(message);
+      }
+      if (data?.error) throw Error(data.error);
+      toast(`Password reset for ${target.display_name || target.email || "user"}. Share the temporary password securely.`);
+      break;
+    }
     case "salesman-profile":
       await openAdminSalesmanProfile(id);
       break;
