@@ -89,6 +89,7 @@ const canViewAllClosings = () =>
       permission.can_view,
   );
 const can = (p) =>
+  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","products","stock","staff"].includes(p)) ||
   (user?.role === "salesman" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","stock","products"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
@@ -287,7 +288,7 @@ function render() {
   charts.forEach((c) => c.destroy());
   charts = [];
   const s = S();
-  if (page === "myprofile" && !admin() && !["salesman", "user"].includes(user.role)) page = "dashboard";
+  if (page === "myprofile" && !admin() && !["manager", "salesman", "user"].includes(user.role)) page = "dashboard";
   if (!can(page) && page !== "myprofile") page = "dashboard";
   // Keep the selected module across refreshes on this device. The normal
   // permission checks above still decide whether the user may open it.
@@ -319,6 +320,7 @@ function render() {
   };
   $("page").innerHTML = methods[page]();
   if (page === "myprofile" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load admin fieldwork: " + e.message));
+  else if (page === "myprofile" && manager()) hydrateManagerFieldwork().catch((e) => toast("Could not load Manager fieldwork: " + e.message));
   else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
   if (page === "staff" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load salesman fieldwork: " + e.message));
   if (page === "dsr")
@@ -326,6 +328,39 @@ function render() {
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
 }
+async function hydrateManagerFieldwork() {
+  if (!manager() || !client || page !== "myprofile") return;
+  const avatar = $("manager-profile-avatar");
+  const profile = await client.from("profiles").select("avatar_path,display_name").eq("id", user.id).maybeSingle();
+  if (!profile.error && profile.data?.avatar_path && avatar) {
+    const signed = await client.storage.from("employee-private").createSignedUrl(profile.data.avatar_path, 3600);
+    if (!signed.error && signed.data?.signedUrl && avatar.isConnected) avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo">`;
+  }
+  const [attendance, documents, visits, team, teamAttendance] = await Promise.all([
+    client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id", user.id).order("attendance_date", {ascending:false}).limit(60),
+    client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id", user.id).order("created_at", {ascending:false}).limit(100),
+    client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id", user.id).order("visited_at", {ascending:false}).limit(60),
+    client.from("salesmen").select("id,name,phone,territory,area,active,manager_user_id").eq("manager_user_id", user.id).eq("active", true),
+    client.from("attendance_records").select("salesman_id,attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude").order("attendance_date", {ascending:false}).limit(500),
+  ]);
+  const showError = (r) => r.error ? `<p class="notice">Unable to load records: ${esc(r.error.message)}. Apply the Manager fieldwork migration.</p>` : "";
+  const rows = (id, result, headers, map, empty) => { const el=$(id); if (!el || !el.isConnected) return; el.innerHTML = showError(result) || table(headers,(result.data||[]).map(map),empty); };
+  rows("manager-attendance-history",attendance,["Date","Check-in","Check-out","Status","GPS"],r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleTimeString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleTimeString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`],"No attendance recorded yet.");
+  const docsEl=$("manager-document-history");
+  if(docsEl?.isConnected){
+    if(documents.error) docsEl.innerHTML=showError(documents);
+    else { const dr=await Promise.all((documents.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];})); docsEl.innerHTML=table(["Document","Type","Uploaded","Size","File"],dr,"No documents uploaded yet."); }
+  }
+  rows("manager-visit-history",visits,["Visited","Customer","Area","Purpose","Notes","GPS"],r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`],"No fieldwork visits recorded yet.");
+  const names=new Map((team.data||[]).map(x=>[String(x.id),x.name]));
+  const teamEl=$("manager-team-attendance");
+  if(teamEl?.isConnected){
+    if(team.error) teamEl.innerHTML=showError(team);
+    else if(teamAttendance.error) teamEl.innerHTML=showError(teamAttendance);
+    else { const linked=new Set((team.data||[]).map(x=>String(x.id))); const rec=(teamAttendance.data||[]).filter(x=>linked.has(String(x.salesman_id))); teamEl.innerHTML=table(["Salesman","Date","Check-in","Check-out","Status","Location"],rec.map(r=>[esc(names.get(String(r.salesman_id))||r.salesman_id),esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.check_in_latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}">View map</a>`]),"No attendance records for your linked salesmen."); }
+  }
+}
+
 async function hydrateSalesmanProfile() {
   const seller = own();
   if (!seller || !client || page !== "myprofile") return;
@@ -370,13 +405,24 @@ function renderSalesmanDashboard() {
 function renderAdminMyProfile() {
   const current = user || {};
   const profile = S().profiles?.find((p) => String(p.id) === String(current.id)) || {};
-  return head("My profile & fieldwork", "Administrator account details and a consolidated view of salesman attendance, documents, customer visits and profile photos.") +
+  return head("My profile & fieldwork", "Administrator account details and a consolidated view of Manager and salesman attendance, documents, customer visits and profile photos.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="admin-profile-avatar">♙</div><div><h2>${esc(current.name || profile.display_name || "Administrator")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Administrator</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="admin-profile-photo">Upload / change administrator profile picture</label><input id="admin-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="admin-profile-photo-upload">Upload profile picture</button></div><p class="muted">Use a JPG, PNG or WebP image up to 5 MB. Your picture is private and visible to authorized users.</p><p class="muted">This page displays the signed-in administrator account. Salesman records and photos below are read-only and do not require the administrator to be linked to a salesman record.</p></section>
-    <section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
+    <section class="panel"><div class="panel-heading"><h2>Manager fieldwork & uploads</h2><span class="muted">Admin view · BABAR ALI KHAN</span></div><div id="admin-manager-fieldwork-data"><p class="muted">Loading Manager attendance, uploads and visits…</p></div></section><section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
+}
+
+function renderManagerMyProfile() {
+  const current = user || {};
+  return head("My profile & fieldwork", "Manager profile, attendance, secure documents, field visits and attendance of salesmen linked to your account.") +
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="manager-profile-avatar">♙</div><div><h2>${esc(current.name || current.email || "Manager")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Manager</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="manager-profile-photo">Upload / change profile photo</label><input id="manager-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="manager-profile-photo-upload">Upload profile photo</button></div><p class="muted">JPG, PNG or WebP up to 5 MB. Stored privately.</p></section>
+    <section class="panel"><h2>My attendance</h2><p>Check in and check out for today. GPS is optional and only requested when you check in.</p><div class="actions">${btn("Check in", "manager-attendance-check-in", "", "", "gold")}${btn("Check out", "manager-attendance-check-out")}</div><div id="manager-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
+    <section class="panel"><h2>My documents & photos</h2><div class="grid">${select("Document type","manager-document-type",[["identity","Identity document"],["employment","Employment document"],["other","Other document"]],"other")}<div class="field"><label for="manager-document-file">Choose PDF or photo</label><input id="manager-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="manager-document-upload">Upload securely</button><p class="muted">Maximum 10 MB. Private links expire after one hour.</p><div id="manager-document-history"><p class="muted">Loading documents…</p></div></section>
+    <section class="panel"><h2>Customer visits & fieldwork</h2><p class="muted">Record visits and notes. GPS is optional.</p><div class="grid">${field("Customer name or ID","manager-visit-customer","")}${field("Area visited","manager-visit-area","")}${select("Visit purpose","manager-visit-purpose",["Sales visit","Recovery","Order follow-up","Relationship visit","Other"],"Sales visit")}${area("Visit notes / outcome","manager-visit-notes","")}</div><div class="actions">${btn("Save visit without GPS","manager-visit-save")}${btn("Save visit with my location","manager-visit-save-location","","","gold")}</div><div id="manager-visit-history"><p class="muted">Loading visit history…</p></div></section>
+    <section class="panel"><div class="panel-heading"><h2>Attendance of my linked salesmen</h2><span class="muted">Only salesmen assigned to this Manager</span></div><div id="manager-team-attendance"><p class="muted">Loading linked salesman attendance…</p></div></section>`;
 }
 
 function renderMyProfile() {
   if (admin()) return renderAdminMyProfile();
+  if (manager()) return renderManagerMyProfile();
   const seller = own();
   if (!seller) return head("My profile", "Your account is not linked to a salesman record.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
   const s = S(), sid = seller.id;
@@ -1249,6 +1295,21 @@ async function hydrateAdminFieldwork() {
   const documentsHtml = sectionError("Employee documents", documents) || table(["Salesman","Document","Type","Uploaded","Size","File"], docRows, "No employee documents uploaded.");
   const visitsHtml = sectionError("Customer visits", visits) || table(["Salesman","Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted.");
   root.innerHTML = `<h3>Employee profile photos</h3>${photoHtml}<h3>Attendance</h3>${attendanceHtml}<h3>Uploaded employee documents</h3><p class="muted">Private links expire after one hour.</p>${documentsHtml}<h3>Customer visits & optional GPS</h3>${visitsHtml}`;
+  const managerRoot = $("admin-manager-fieldwork-data");
+  if (managerRoot) {
+    const managerUserId = "d2cf42d4-3806-44f1-9deb-369920e2f152";
+    const [ma, md, mv, mp] = await Promise.all([
+      client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id",managerUserId).order("attendance_date",{ascending:false}).limit(200),
+      client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id",managerUserId).order("created_at",{ascending:false}).limit(200),
+      client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id",managerUserId).order("visited_at",{ascending:false}).limit(200),
+      client.from("profiles").select("avatar_path,display_name").eq("id",managerUserId).maybeSingle()
+    ]);
+    const errHtml = r => r.error ? `<p class="notice danger">Could not load: ${esc(r.error.message)}. Apply <code>supabase/manager_profile_fieldwork.sql</code>.</p>` : "";
+    const docRows = md.error ? [] : await Promise.all((md.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];}));
+    let avatarHtml = "No profile photo uploaded.";
+    if (!mp.error && mp.data?.avatar_path) { const signed=await client.storage.from("employee-private").createSignedUrl(mp.data.avatar_path,3600); if(signed.data?.signedUrl) avatarHtml=`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open Manager profile photo</a>`; }
+    managerRoot.innerHTML = `<h3>Manager profile</h3><p><b>BABAR ALI KHAN</b> · ${avatarHtml}</p><h3>Manager attendance</h3>${errHtml(ma)||table(["Date","Check-in","Check-out","Status","GPS"],(ma.data||[]).map(r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager attendance records.")}<h3>Manager uploads</h3><p class="muted">Private links expire after one hour.</p>${errHtml(md)||table(["Document","Type","Uploaded","Size","File"],docRows,"No Manager documents uploaded.")}<h3>Manager fieldwork visits</h3>${errHtml(mv)||table(["Visited","Customer","Area","Purpose","Notes","GPS"],(mv.data||[]).map(r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager fieldwork visits.")}`;
+  }
 }
 async function openAdminSalesmanProfile(salesmanId) {
   if (!admin()) throw Error("Administrator access is required to view employee profiles.");
@@ -2478,6 +2539,33 @@ async function action(act, id, element) {
       if (profile) profile.avatar_path = path;
       toast("Administrator profile picture uploaded.");
       break;
+    }
+    case "manager-profile-photo-upload": {
+      if (!manager()) throw Error("Manager account required.");
+      const file=$("manager-profile-photo")?.files?.[0]; if(!file) throw Error("Choose a photo first.");
+      if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>5*1024*1024) throw Error("Use JPG, PNG or WebP up to 5 MB.");
+      const path=`${user.id}/manager-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private");
+      const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const saved=await client.from("profiles").update({avatar_path:path,updated_at:new Date().toISOString()}).eq("id",user.id); if(saved.error){await bucket.remove([path]);throw saved.error;}
+      const signed=await bucket.createSignedUrl(path,3600); if(signed.error) throw signed.error; const avatar=$("manager-profile-avatar"); if(avatar) avatar.innerHTML=`<img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo">`; toast("Manager profile photo updated."); break;
+    }
+    case "manager-document-upload": {
+      if(!manager()) throw Error("Manager account required."); const file=$("manager-document-file")?.files?.[0]; if(!file) throw Error("Choose a document first.");
+      if(!(file.type==="application/pdf"||/^image\/(jpeg|png|webp)$/.test(file.type))||file.size>10*1024*1024) throw Error("Use PDF, JPG, PNG or WebP up to 10 MB.");
+      const path=`${user.id}/manager-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private"); const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const saved=await client.from("manager_employee_documents").insert({manager_user_id:user.id,document_type:$("manager-document-type")?.value||"other",file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size}); if(saved.error){await bucket.remove([path]);throw saved.error;} $("manager-document-file").value=""; toast("Document uploaded securely."); await hydrateManagerFieldwork(); break;
+    }
+    case "manager-attendance-check-in":
+    case "manager-attendance-check-out": {
+      if(!manager()) throw Error("Manager account required."); const {data:existing,error:readErr}=await client.from("manager_attendance_records").select("*").eq("manager_user_id",user.id).eq("attendance_date",today()).maybeSingle(); if(readErr) throw readErr;
+      if(act==="manager-attendance-check-in") { if(existing?.check_in_at) throw Error("You have already checked in today."); let coords=null; if(navigator.geolocation) try{coords=await new Promise(resolve=>navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude}),()=>resolve(null),{enableHighAccuracy:true,timeout:10000,maximumAge:60000}));}catch{}
+        const {error}=await client.from("manager_attendance_records").insert({manager_user_id:user.id,attendance_date:today(),check_in_at:new Date().toISOString(),status:"present",latitude:coords?.latitude??null,longitude:coords?.longitude??null}); if(error)throw error; toast(coords?"Check-in saved with GPS.":"Check-in saved without GPS.");
+      } else {if(!existing?.check_in_at)throw Error("Check in before checking out.");if(existing.check_out_at)throw Error("Already checked out today.");const {error}=await client.from("manager_attendance_records").update({check_out_at:new Date().toISOString()}).eq("id",existing.id);if(error)throw error;toast("Check-out recorded.");} await hydrateManagerFieldwork(); break;
+    }
+    case "manager-visit-save":
+    case "manager-visit-save-location": {
+      if(!manager())throw Error("Manager account required."); const save=async(coords=null)=>{const customer=$("f-manager-visit-customer")?.value.trim()||"",areaName=$("f-manager-visit-area")?.value.trim()||"";if(!customer&&!areaName)throw Error("Enter a customer or area.");const {error}=await client.from("manager_customer_visits").insert({manager_user_id:user.id,customer_label:customer,area:areaName,purpose:$("f-manager-visit-purpose")?.value||"Sales visit",notes:$("f-manager-visit-notes")?.value||"",latitude:coords?.latitude??null,longitude:coords?.longitude??null,visited_at:new Date().toISOString()});if(error)throw error;$("f-manager-visit-notes").value="";toast("Fieldwork visit saved.");};
+      if(act==="manager-visit-save-location"){if(!navigator.geolocation)throw Error("GPS unavailable. Save without GPS instead.");await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(async p=>{try{await save(p.coords);resolve();}catch(e){reject(e);}},()=>reject(Error("GPS permission denied. You can save without GPS.")),{enableHighAccuracy:true,timeout:12000,maximumAge:60000}));}else await save();await hydrateManagerFieldwork();break;
     }
     case "profile-photo-upload": {
       const seller = own(), file = $("profile-photo")?.files?.[0];

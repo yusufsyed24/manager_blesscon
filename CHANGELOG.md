@@ -360,3 +360,10 @@ This release is a deployable source package, not a live deployment. Production c
 - Updated `schema.sql` save-master and stock-entry authorization to honor the explicit product-edit and stock-create/edit permissions.
 - Product expiry dates are part of the product record and can be edited through the existing Product Edit form.
 - Apply the migration in Supabase SQL Editor for an already-deployed database; changing local files alone does not change live Supabase permissions.
+
+## Manager profile & fieldwork build
+- Added Manager-specific My profile & fieldwork page with profile photo upload, optional-GPS attendance check-in/out, private document/photo uploads, customer visit notes and history.
+- Added linked-salesman attendance panel scoped to salesmen assigned through `salesmen.manager_user_id`.
+- Added Admin visibility for the Manager's profile photo, attendance, uploaded documents and fieldwork visits.
+- Added additive Supabase migration `supabase/manager_profile_fieldwork.sql`; apply it after the existing Manager role and salesman self-service migrations.
+- This build's database behavior still requires validation against the target Supabase project; tests could not run because `vitest` is not installed in this environment.
