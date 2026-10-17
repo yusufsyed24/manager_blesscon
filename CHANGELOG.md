@@ -331,3 +331,8 @@ This release is a deployable source package, not a live deployment. Production c
 ## v25 — Cash & Bank Book receivables reconciliation
 
 - Calculate Market Credit outstanding per confirmed invoice using non-voided payments through the selected date, matching invoice-level outstanding logic and preventing one overpaid invoice from making the total receivable negative.
+
+
+## v26 — Cash Book receivable account balance
+
+- Fixed the Market Credit — Receivables account row to derive opening and closing balances from confirmed invoices and non-voided invoice payments as of the selected business date, matching the receivables summary.

@@ -895,6 +895,31 @@ function renderCashBook() {
       .reduce((n, p) => n + num(p.amount_paisa), 0);
     return sum + Math.max(0, num(inv.total_paisa) - paidByDate);
   }, 0);
+  // Keep the Market Credit row consistent with the receivables summary card.
+  // The ledger's stored opening balance can be stale; derive this account from
+  // confirmed invoices and their non-voided payments for the selected date.
+  const outstandingAsOf = cutoff => s.invoices.reduce((sum, inv) => {
+    const order = s.orders.find(o => o.id === inv.order_id);
+    if (!order || order.status !== "confirmed" || order.date > cutoff) return sum;
+    const paid = s.payments.filter(p => p.invoice_id === inv.id && !p.voided_at && p.date <= cutoff)
+      .reduce((n, p) => n + num(p.amount_paisa), 0);
+    return sum + Math.max(0, num(inv.total_paisa) - paid);
+  }, 0);
+  const marketCard = cards.find(x => x.a.account_key === "market_credit");
+  if (marketCard) {
+    const prior = outstandingAsOf(addDays(date, -1));
+    const issuedToday = s.invoices.reduce((sum, inv) => {
+      const order = s.orders.find(o => o.id === inv.order_id);
+      return sum + (order && order.status === "confirmed" && order.date === date ? num(inv.total_paisa) : 0);
+    }, 0);
+    const recoveredToday = s.payments.filter(p => !p.voided_at && p.date === date).reduce((sum, p) => sum + num(p.amount_paisa), 0);
+    marketCard.opening = prior;
+    marketCard.received = issuedToday;
+    marketCard.paid = recoveredToday;
+    marketCard.transferIn = 0;
+    marketCard.transferOut = 0;
+    marketCard.closing = market;
+  }
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
   const transactionRows = relevantEntries.filter(e=>e.business_date===date).sort((a,b)=>String(b.created_at||b.business_date).localeCompare(String(a.created_at||a.business_date))).map(e=>[
