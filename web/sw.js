@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v20-cash-bank-book-navfix-20261017";
+const CACHE = "blesscon-static-v24-module-state-20261017";
 const ASSETS = [
   "./",
   "./index.html",

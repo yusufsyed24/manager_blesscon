@@ -270,6 +270,10 @@ function syncBadge() {
         : "";
 }
 function shell() {
+  try {
+    const savedPage = localStorage.getItem("blesscon:last-page");
+    if (savedPage && NAV.some((item) => item[0] === savedPage)) page = savedPage;
+  } catch {}
   const nav = NAV.filter((x) => can(x[0]));
   $("app").innerHTML =
     `<div class="layout"><aside class="sidebar" id="sidebar"><div class="brand"><img src="${ICON}" alt="Blesscon Candy logo"><div><b>BLESSCON CANDY</b><small>Business Manager</small></div></div><nav aria-label="Main navigation">${nav.map((n, i) => `${[0, 5, 10].includes(i) ? `<div class="nav-section">${i === 0 ? "BUSINESS" : i === 5 ? "OPERATIONS" : "ADMINISTRATION"}</div>` : ""}<button data-page="${n[0]}" class="${page === n[0] ? "active" : ""}"><span class="nav-icon" aria-hidden="true">${n[2]}</span>${n[1]}</button>`).join("")}</nav><div class="sidebar-footer">${esc(user.name || user.email || "Owner")}<br>${esc(user.role)}<hr><small>Karachi business dates · PKR</small></div></aside><div><header class="topbar"><div class="actions"><button class="mobile-menu icon-button" data-act="menu" aria-label="Toggle navigation">☰</button><span class="muted">${new Date(today() + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span></div><div class="actions"><span id="sync-status"></span>${btn("↻ Sync", "sync")}${btn("Account", "account")}${btn("Sign out", "logout")}</div></header><main id="main" class="main-content" tabindex="-1">${user.practice ? '<div class="notice">Practice workspace — example products only. This data is stored on this device and never sent to your business database.</div>' : ""}<div id="sync-alert"></div><div id="page"></div></main></div></div>`;
@@ -285,6 +289,9 @@ function render() {
   const s = S();
   if (page === "myprofile" && !admin() && !["salesman", "user"].includes(user.role)) page = "dashboard";
   if (!can(page) && page !== "myprofile") page = "dashboard";
+  // Keep the selected module across refreshes on this device. The normal
+  // permission checks above still decide whether the user may open it.
+  try { localStorage.setItem("blesscon:last-page", page); } catch {}
   document.querySelectorAll("[data-page]").forEach((b) => {
     b.classList.toggle("active", b.dataset.page === page);
     if (b.dataset.page === page) b.setAttribute("aria-current", "page");

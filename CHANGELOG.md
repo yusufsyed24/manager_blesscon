@@ -321,3 +321,8 @@ This release is a deployable source package, not a live deployment. Production c
 - Carton and loose-box input changes now refresh the total movement preview; the modal initializes the preview on open.
 - Kept the database movement quantity in boxes and retained existing save validation.
 - Validation: `node --check app.js` and `node --check js/app.js` pass. Full checks could not run because the TypeScript dependency is not installed in this environment.
+
+## v24 — Preserve selected module on refresh
+- Persist the selected module in browser local storage whenever a page renders.
+- Restore the saved module when the application shell loads after refresh/sign-in.
+- Existing role/permission checks remain authoritative; inaccessible modules fall back to Overview.
