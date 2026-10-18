@@ -271,6 +271,7 @@ export function targetPerformance(
   const managerOrders = periodOrders.filter(
     (order) =>
       !order.salesman_id ||
+      (managerUserId && order.sold_by_user_id === managerUserId) ||
       (managerUserId &&
         order.created_by === managerUserId &&
         managerSalesmanId &&

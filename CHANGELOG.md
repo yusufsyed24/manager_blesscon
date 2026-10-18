@@ -400,3 +400,20 @@ This release is a deployable source package, not a live deployment. Production c
 
 ## v42 migration compatibility note
 The v40 migration now recognizes an existing `private.save_master` implementation that already grants manager expense access. It no longer aborts solely because the manager permission condition was patched previously. Run `supabase/manager_closing_expenses_v40.sql` once in Supabase SQL Editor; do not run the standalone v41 wrapper first. This package has not been applied to or verified against the live Supabase project.
+
+## v43 — Manager closing RPC ambiguity fix
+- Removed the alternate `(jsonb, text, uuid)` wrapper because both RPC overloads exposed the same argument names in different order, causing PostgREST to report an ambiguous candidate.
+- Added `supabase/manager_closing_rpc_ambiguity_fix_v43.sql` to drop only the wrapper and reload the PostgREST schema cache.
+- Existing implementation `(uuid, text, jsonb)` is retained. Live Supabase changes are not applied by this package.
+
+## v45 — Manager closing schema repair
+
+- Added idempotent SQL repair for all columns expected by the manager closing command, including `sales_count`.
+- Preserves existing closing rows and requests a PostgREST schema-cache reload.
+- Apply `supabase/manager_closing_schema_patch_v45.sql` before retrying team closing.
+
+## v46 — Manager direct-sale attribution fix
+- Manager dashboard direct-sales list now recognizes invoices attributed through `sold_by_user_id`, even when `created_by` is an admin/import user.
+- Monthly target performance enriches linked orders with invoice seller attribution and classifies the manager's own direct sales separately from salesman achievement.
+- Salesman targets remain based on salesman-attributed orders; manager-direct cartons are excluded from the salesman subtotal.
+- Validation note: automated Vitest suite could not run in this environment because dependencies (`vitest`) are not installed. Run `npm ci`, `npm test`, and `npm run check` before production handover.

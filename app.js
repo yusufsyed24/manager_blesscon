@@ -477,8 +477,16 @@ function renderDashboard() {
     ) : null;
   const sales = report.sales_paisa,
     targets = targetRows(),
+    // Attribute invoices sold directly by a manager back to their linked order.
+    // Invoice created_by can be an admin/import user; sold_by_user_id is the sales attribution.
+    ordersWithSellerAttribution = s.orders.map((order) => {
+      const linkedInvoice = s.invoices.find((invoice) => invoice.order_id === order.id);
+      return linkedInvoice?.sold_by_user_id
+        ? { ...order, sold_by_user_id: linkedInvoice.sold_by_user_id }
+        : order;
+    }),
     companyTargetProgress = targetPerformance(
-      s.orders,
+      ordersWithSellerAttribution,
       s.order_items,
       monthStart(today()),
       today(),
@@ -506,7 +514,10 @@ function renderDashboard() {
           0,
         ),
     myDirect = manager()
-      ? directOrders.filter((o) => o.created_by === user.id)
+      ? directOrders.filter((o) => {
+          const linkedInvoice = s.invoices.find((invoice) => invoice.order_id === o.id);
+          return o.created_by === user.id || o.sold_by_user_id === user.id || linkedInvoice?.sold_by_user_id === user.id;
+        })
       : directOrders,
     myCartons = myDirect.reduce((a, o) => a + cartonsOf(o), 0),
     myValue = myDirect.reduce((a, o) => a + num(o.total_paisa), 0),
