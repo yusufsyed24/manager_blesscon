@@ -523,16 +523,8 @@ function renderDashboard() {
     ) : null;
   const sales = report.sales_paisa,
     targets = targetRows(),
-    // Attribute invoices sold directly by a manager back to their linked order.
-    // Invoice created_by can be an admin/import user; sold_by_user_id is the sales attribution.
-    ordersWithSellerAttribution = s.orders.map((order) => {
-      const linkedInvoice = s.invoices.find((invoice) => invoice.order_id === order.id);
-      return linkedInvoice?.sold_by_user_id
-        ? { ...order, sold_by_user_id: linkedInvoice.sold_by_user_id }
-        : order;
-    }),
     companyTargetProgress = targetPerformance(
-      ordersWithSellerAttribution,
+      s.orders,
       s.order_items,
       monthStart(today()),
       today(),
@@ -560,10 +552,7 @@ function renderDashboard() {
           0,
         ),
     myDirect = manager()
-      ? directOrders.filter((o) => {
-          const linkedInvoice = s.invoices.find((invoice) => invoice.order_id === o.id);
-          return o.created_by === user.id || o.sold_by_user_id === user.id || linkedInvoice?.sold_by_user_id === user.id;
-        })
+      ? directOrders.filter((o) => o.created_by === user.id)
       : directOrders,
     myCartons = myDirect.reduce((a, o) => a + cartonsOf(o), 0),
     myValue = myDirect.reduce((a, o) => a + num(o.total_paisa), 0),
@@ -1451,18 +1440,25 @@ function renderExpenses() {
         "Description",
         "Amount",
         "Method",
+        "Paid from account",
         "Salesman",
         "Actions",
       ],
-      rows.map((e) => [
+      rows.map((e) => {
+        const account = (S().cashbook_accounts || []).find(a => a.account_key === e.cashbook_account_key);
+        const inferredKey = e.cashbook_account_key || (e.method && /bank|cheque/i.test(e.method) ? "pk80mucb1156654281004446" : e.method && /jazzcash/i.test(e.method) ? "jazzcash" : e.method && /easypaisa/i.test(e.method) ? "easypaisa" : "cash_hand");
+        const accountLabel = account?.label || ({cash_hand:"Cash in Hand",bank_default:"Cash in Bank — Default account",easypaisa:"EasyPaisa",jazzcash:"JazzCash",pk80mucb1156654281004446:"MCB"})[inferredKey] || inferredKey;
+        return [
         esc(e.date),
         esc(e.category),
         esc(e.description),
         money(e.amount_paisa),
         esc(e.method),
+        esc(accountLabel) + (e.cashbook_account_key ? "" : ' <span class="badge amber">Not saved</span>'),
         esc(salesmanName(e.salesman_id)),
         `<div class="actions">${!manager() || e.created_by === user.id ? btn("Edit", "edit-expense", e.id) : ""}${e.attachment_path ? btn("Receipt", "receipt", e.id) : ""}${admin() ? btn("Delete", "delete-expense", e.id, "", "danger") : ""}</div>`,
-      ]),
+      ];
+      }),
     )}</section>`
   );
 }
@@ -2027,8 +2023,8 @@ function masterForm(kind, id) {
   if (kind === "expense") {
     const activeAccounts = (s.cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable");
     const defaultAccount = r.cashbook_account_key || (r.method && /bank|cheque/i.test(r.method) ? "pk80mucb1156654281004446" : r.method && /jazzcash/i.test(r.method) ? "jazzcash" : r.method && /easypaisa/i.test(r.method) ? "easypaisa" : "cash_hand");
-    const accountOptions = [["cash_hand", "Cash in Hand"], ["bank_default", "Cash in Bank — Default account"], ["easypaisa", "EasyPaisa"], ["jazzcash", "JazzCash"], ...activeAccounts.filter(a => !["cash_hand","bank_default","easypaisa","jazzcash"].includes(a.account_key)).map(a => [a.account_key, a.label])];
-    if (!accountOptions.some(x => x[0] === "pk80mucb1156654281004446")) accountOptions.push(["pk80mucb1156654281004446", "New Bank Account (pk80mucb1156654281004446)"]);
+    const accountOptions = [["cash_hand", "Cash in Hand"], ["bank_default", "Bank Account — Default (not MCB)"], ["easypaisa", "EasyPaisa"], ["jazzcash", "JazzCash"], ...activeAccounts.filter(a => !["cash_hand","bank_default","easypaisa","jazzcash"].includes(a.account_key)).map(a => [a.account_key, a.label])];
+    if (!accountOptions.some(x => x[0] === "pk80mucb1156654281004446")) accountOptions.push(["pk80mucb1156654281004446", "MCB (verify account setup)"]);
     html = `<div class="grid">${field("Date", "date", r.date || today(), "date", "required")}${field("Category", "category", r.category || "Misc", "text", 'list="expense-categories" required')}<datalist id="expense-categories">${["Rent", "Salaries", "Transport", "Utilities", "Packaging", "Marketing", "Misc"].map((x) => "<option>" + x + "</option>").join("")}</datalist>${field("Amount (Rs.)", "amount", num(r.amount_paisa) / 100, "number", 'min="0.01" step="0.01" required')}${select("Payment method", "method", ["Cash", "Bank Account", "JazzCash", "Easypaisa", "Cheque"], r.method || "Cash")}${select("Pay from account", "cashbook_account_key", accountOptions, defaultAccount)}<p class="muted">Choose the exact cash/bank/wallet account used. This account will be reduced by the expense.</p>${select("Salesman (optional)", "salesman_id", [["", "Not linked"], ...visible(s.salesmen).filter((x) => !manager() || managerTeamIds(s, user.id).includes(x.id)).map((x) => [x.id, x.name])], r.salesman_id || "")}${area("Description", "description", r.description || "")}<div class="field"><label for="receipt-file">Receipt image (optional, up to 5 MB)</label><input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp"></div></div>`;
   }
   modal(
@@ -2108,6 +2104,7 @@ async function saveMaster(form) {
       salesman_id: f.salesman_id || null,
     });
   if (kind === "expense") {
+    if (!String(f.cashbook_account_key || "").trim()) throw Error("Choose the exact account used to pay this expense.");
     Object.assign(r, {
       date: f.date,
       category: f.category.trim(),

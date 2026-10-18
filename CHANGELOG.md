@@ -438,3 +438,11 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Expense records now carry `cashbook_account_key`; local cashbook projections and Supabase posting trigger use the explicitly selected account, falling back to legacy payment-method mapping only when no account is selected.
 - Added `supabase/expense_specific_cashbook_account.sql` migration to add the FK column, extend `private.save_master`'s expense allow-list, and update expense ledger posting.
 - Validation: JavaScript syntax checks passed for root and mirrored app/store files. `scripts/check.mjs` could not run because the environment lacks the `typescript` package. No live Supabase database was accessed or changed.
+
+
+## v51 — Expense account selection persistence and verification
+- Expense form now requires an explicit “Pay from account” choice and defaults bank/cheque expenses to the configured MCB account key `pk80mucb1156654281004446` when editing legacy records or creating new expenses.
+- Expense list now displays the selected account and flags legacy rows where `cashbook_account_key` has not been saved; this makes it clear that a historical row must be edited and saved before its account selection is persisted.
+- Clarified the generic `bank_default` option so it cannot be mistaken for MCB.
+- Synchronized root, `js/`, and `web/` application copies and bumped the service-worker cache name to force clients to fetch the new build.
+- Validation: `node --check` passed for app/store JS copies; ZIP integrity verified. Full project tests require the project dependencies to be installed. No live database was accessed or changed.

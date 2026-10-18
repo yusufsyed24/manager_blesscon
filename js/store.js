@@ -65,7 +65,7 @@ function localCashbookLedger(state) {
   const rows = [...(state.cashbook_entries || [])];
   const accountKey = (method, salesmanId = null) => {
     const m = /easypaisa/i.test(method || "") ? "easypaisa" : /jazzcash/i.test(method || "") ? "jazzcash" : /bank|cheque/i.test(method || "") ? "bank" : "cash";
-    return salesmanId ? `salesman:${salesmanId}:${m}` : ({cash:"cash_hand",bank:"bank_default",easypaisa:"easypaisa",jazzcash:"jazzcash"})[m];
+    return salesmanId ? `salesman:${salesmanId}:${m}` : ({cash:"cash_hand",bank:(state.cashbook_accounts||[]).some(a=>a.account_key==="pk80mucb1156654281004446"&&a.active)?"pk80mucb1156654281004446":"bank_default",easypaisa:"easypaisa",jazzcash:"jazzcash"})[m];
   };
   for (const invoice of state.invoices || []) {
     const order = (state.orders || []).find(o => o.id === invoice.order_id);
