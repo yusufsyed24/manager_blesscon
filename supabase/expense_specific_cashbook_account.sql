@@ -10,7 +10,7 @@ do $patch$
 declare def text; newdef text;
 begin
   select pg_get_functiondef('private.save_master(text,jsonb,integer)'::regprocedure) into def;
-  if position("'cashbook_account_key'" in def) > 0 then
+  if position('cashbook_account_key' in def) > 0 then
     raise notice 'private.save_master already accepts expense cashbook_account_key';
   else
     newdef := replace(def,
@@ -54,6 +54,20 @@ begin
   end if;
   return new;
 end $$;
+
+-- Repair current expense postings that were previously created against the default account.
+-- Keep the same posting row/key, but move it to the account explicitly selected on the expense.
+-- This prevents a selected MCB expense from continuing to reduce the default bank balance.
+update public.cashbook_entries ce
+set account_key = e.cashbook_account_key
+from public.expenses e
+where ce.source_table = 'expenses'
+  and ce.source_id = e.id::text
+  and ce.entry_type = 'expense'
+  and ce.amount_paisa = -e.amount_paisa
+  and e.deleted_at is null
+  and e.cashbook_account_key is not null
+  and ce.account_key is distinct from e.cashbook_account_key;
 
 -- Refresh the expense ledger postings once for records already carrying a selected account.
 -- Existing expenses with NULL selected account retain the prior method-based posting.
