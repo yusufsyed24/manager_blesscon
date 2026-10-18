@@ -1,3 +1,9 @@
+## v52 — Expense account save confirmation
+
+- Fixed expense persistence at the store/RPC layer: online `master.save` calls for `expenses` now wait for Supabase confirmation before the editor closes.
+- A rejected RPC or missing/incorrect returned `cashbook_account_key` now raises a visible error instead of leaving an optimistic local save that is not in the database.
+- The authoritative saved expense is applied locally only after the returned record ID and selected account key match the submitted record.
+
 
 ## v50 — Bank Account naming and selected-account expense posting
 - Renamed the visible bank account type and payment method labels to “Bank Account” while retaining the database enum value `bank` for compatibility.

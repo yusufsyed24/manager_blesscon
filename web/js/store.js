@@ -1209,6 +1209,56 @@ export class Store extends EventTarget {
     if (kind === "cashbook.close.approve" && this.client && !navigator.onLine) {
       throw Error("Daily closing approval requires an online connection.");
     }
+    // Expense account selection must be committed by Supabase before the editor closes.
+    // The generic optimistic queue previously swallowed an RPC error and left the form
+    // appearing saved while cashbook_account_key remained NULL in public.expenses.
+    if (kind === "master.save" && data?.table === "expenses" && this.client && navigator.onLine) {
+      if (this.queue.length) {
+        await this.sync();
+        if (this.queue.length || this.error) {
+          throw Error("A previous change is still pending. Resolve the sync error before saving this expense: " + (this.error || "pending changes remain"));
+        }
+      }
+      this.busy = true;
+      this.emit();
+      try {
+        await this.verifyUser();
+        const { data: saved, error } = await this.client.rpc("apply_command", {
+          op_id: op.id,
+          kind,
+          data,
+        });
+        if (error) {
+          const message = error.message || String(error);
+          if (/schema cache|could not find the function|function .* does not exist|unknown command/i.test(message)) {
+            throw Error("Supabase rejected the expense save. Confirm that cashbook_account_key exists on public.expenses and is allowed by private.save_master(text,jsonb,integer), then run NOTIFY pgrst, 'reload schema'. Original error: " + message);
+          }
+          throw error;
+        }
+        if (!saved?.id || saved.id !== data?.record?.id || saved.cashbook_account_key !== data?.record?.cashbook_account_key) {
+          throw Error("Supabase did not confirm the selected expense account. The expense editor was kept open; refresh the Expenses list and check the database migration.");
+        }
+        const index = this.base.expenses.findIndex((e) => e.id === saved.id);
+        if (index < 0) this.base.expenses.push(saved);
+        else this.base.expenses[index] = saved;
+        this.persist();
+        this.error = "";
+        this.lastResult = saved;
+        this.replay();
+        try {
+          await this.refresh();
+        } catch (refreshError) {
+          this.error = "Expense was saved successfully, but the full data refresh failed: " + (refreshError?.message || String(refreshError));
+          this.emit();
+        }
+        return saved;
+      } catch (error) {
+        throw Error(error?.message || "Expense save failed. Check Supabase permissions and schema migration.");
+      } finally {
+        this.busy = false;
+        this.emit();
+      }
+    }
     // Product writes must not be reported as successful while merely queued.
     // In the old path, an RPC rejection was swallowed by sync(), the optimistic
     // product stayed visible locally, and saveMaster closed the dialog anyway.
