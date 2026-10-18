@@ -1,3 +1,9 @@
+
+## v50 — Bank Account naming and selected-account expense posting
+- Renamed the visible bank account type and payment method labels to “Bank Account” while retaining the database enum value `bank` for compatibility.
+- Added support for `Bank Account` as a payment-method alias in cashbook routing.
+- Migration moves existing expense debit entries to the explicitly selected account when that selection is saved; future expense postings use the selected account.
+- Requires the v50 SQL migration to be run against the existing Supabase project before deployment.
 ## Manager team closing, manager expenses and Admin approval (18 October 2026) - v40
 
 - **Manager team closing:** one consolidated closing per manager per business date covering the assigned team's sales, collections (by payment method), expenses and stock movements, plus the manager's own direct sales and unlinked expenses. No dummy salesman is created. New table `manager_daily_closings` (`unique(manager_user_id, business_date)`), RPC `manager_closing_command`, RLS limited to Admin and the owning manager.

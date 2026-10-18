@@ -55,6 +55,36 @@ begin
   return new;
 end $$;
 
+
+-- Normalize the user-facing payment method alias without changing internal account_type='bank'.
+create or replace function private.cashbook_method_account(p_method text, p_salesman_id text default null)
+returns text language plpgsql security definer set search_path=''
+as $$
+begin
+  if p_salesman_id is not null then
+    return private.cashbook_ensure_salesman_account(p_salesman_id,p_method);
+  end if;
+  return case
+    when lower(coalesce(p_method,'')) in ('easypaisa','easy paisa') then 'easypaisa'
+    when lower(coalesce(p_method,''))='jazzcash' then 'jazzcash'
+    when lower(coalesce(p_method,'')) in ('bank','bank account','cheque') then 'bank_default'
+    else 'cash_hand'
+  end;
+end $$;
+
+-- Move an existing expense posting to the explicitly selected account, rather than creating
+-- a second debit. This corrects historical entries only where the saved selection is known.
+update public.cashbook_entries ce
+set account_key = e.cashbook_account_key
+from public.expenses e
+where ce.source_table='expenses'
+  and ce.source_id=e.id::text
+  and ce.entry_type='expense'
+  and ce.amount_paisa=-e.amount_paisa
+  and e.deleted_at is null
+  and e.cashbook_account_key is not null
+  and ce.account_key is distinct from e.cashbook_account_key;
+
 -- Repair current expense postings that were previously created against the default account.
 -- Keep the same posting row/key, but move it to the account explicitly selected on the expense.
 -- This prevents a selected MCB expense from continuing to reduce the default bank balance.

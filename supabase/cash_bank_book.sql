@@ -117,7 +117,7 @@ begin
   method_name := case
     when lower(coalesce(p_method,'')) in ('easypaisa','easy paisa') then 'Easypaisa'
     when lower(coalesce(p_method,''))='jazzcash' then 'JazzCash'
-    when lower(coalesce(p_method,''))='bank' or lower(coalesce(p_method,''))='cheque' then 'Bank'
+    when lower(coalesce(p_method,'')) in ('bank','bank account','cheque') then 'Bank Account'
     else 'Cash'
   end;
   k := 'salesman:' || p_salesman_id || ':' || lower(replace(method_name,' ',''));
@@ -138,7 +138,7 @@ begin
   return case
     when lower(coalesce(p_method,'')) in ('easypaisa','easy paisa') then 'easypaisa'
     when lower(coalesce(p_method,''))='jazzcash' then 'jazzcash'
-    when lower(coalesce(p_method,'')) in ('bank','cheque') then 'bank_default'
+    when lower(coalesce(p_method,'')) in ('bank','bank account','cheque') then 'bank_default'
     else 'cash_hand'
   end;
 end $$;
@@ -193,7 +193,7 @@ begin
   expected_method := case
     when lower(coalesce(new.method,'')) in ('easypaisa','easy paisa') then 'Easypaisa'
     when lower(coalesce(new.method,''))='jazzcash' then 'JazzCash'
-    when lower(coalesce(new.method,'')) in ('bank','cheque') then 'Bank'
+    when lower(coalesce(new.method,'')) in ('bank','bank account','cheque') then 'Bank Account'
     else 'Cash'
   end;
   if new.cashbook_account_key is not null then
@@ -203,7 +203,7 @@ begin
       if lower(coalesce(acctrow.payment_method,''))<>lower(expected_method) then raise exception 'Selected salesman collection account does not match payment method'; end if;
     elsif expected_method='Cash' and acctrow.account_type<>'cash' then
       raise exception 'Cash receipts must be assigned to a cash account';
-    elsif expected_method='Bank' and acctrow.account_type<>'bank' then
+    elsif expected_method in ('Bank','Bank Account') and acctrow.account_type<>'bank' then
       raise exception 'Bank/cheque receipts must be assigned to a bank account';
     elsif expected_method in ('Easypaisa','JazzCash') and (acctrow.account_type<>'wallet' or lower(coalesce(acctrow.payment_method,''))<>lower(expected_method)) then
       raise exception 'Selected wallet does not match payment method';
