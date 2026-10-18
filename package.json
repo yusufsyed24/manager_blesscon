@@ -1,6 +1,6 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "3.0.0",
+  "version": "3.8.0",
   "description": "Buildless Blesscon Candy business manager with relational Supabase, offline queue and tested business rules",
   "directories": {
     "doc": "docs",
