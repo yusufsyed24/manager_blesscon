@@ -1,3 +1,11 @@
+## Manager can submit daily closing (18 October 2026) - v39
+
+- **Root cause:** `closing.submit` allowed a manager only for salesmen whose `manager_user_id` equalled that manager. Salesmen with no manager assigned (or assigned to someone else) were rejected with "Only the assigned salesman, their manager, or Admin may submit this closing", even though the closing screen listed them.
+- **Fix (app):** `web/js/store.js` now lets a manager submit a closing for any active salesman, matching the company-wide Manager role.
+- **Fix (database):** new `supabase/manager_closing_fix_v39.sql` patches `apply_operational_command` the same way (idempotent) and re-applies the manager read policy on `daily_closings`. **Run it once in the Supabase SQL editor, then redeploy `web/`.**
+- Approve / reject / reopen remain Admin-only.
+- Validation: JavaScript syntax check passed; SQL not executed against a live Supabase project in this environment.
+
 ## Cash & Bank Book ledger (17 October 2026)
 
 - Added the mobile-friendly **5. Cash & Bank Book** navigation page for Admin, Manager and Salesman roles. It shows date-based opening and expected closing balances by account, daily receipts/payments/transfers, salesman-held collection accounts, Market Credit receivables, transaction references, CSV export and print.
