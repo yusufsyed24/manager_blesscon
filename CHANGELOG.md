@@ -386,3 +386,9 @@ This release is a deployable source package, not a live deployment. Production c
 - Updated the Supabase `closing.submit` RPC authorization in both `supabase/operational_modules.sql` and its `web/` copy. The server-side check permits Admin, the assigned salesman, or the Manager explicitly assigned to that salesman; it does not permit a Manager to submit closings for unrelated salesmen.
 - Requires applying the updated `supabase/operational_modules.sql` to the Supabase project before live Manager submissions will work.
 - Validation performed: `node --check` passed for JavaScript files under `js/`, `web/js/`, and `tests/`; live Supabase RPC/RLS behavior not tested.
+
+## v39 — Manager expense access and consolidated closing migration foundation
+- Added Expenses to the manager route allow-list so the existing Expenses screen and Add Expense action are visible to manager users.
+- Added `supabase/manager_daily_closing_v39.sql`: a separate manager closing table with team-level summary fields, status/decision metadata, unique manager/date constraint and Admin/owner read policy; existing salesman closing constraints remain unchanged.
+- Updated the `private.save_master` authorization gate in the migration to allow managers to create expense entries while retaining existing permission checks for other roles/modules.
+- Important limitation: this migration is a foundation, not a complete manager-closing workflow. The UI does not yet submit manager summaries or expose manager-closing approval actions, and the table currently stores summary fields rather than computing assigned-team totals itself. Do not treat v39 as feature-complete until those integrations are implemented and tested.

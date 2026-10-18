@@ -735,12 +735,11 @@ export function localApply(base, op, user) {
       const ownsSeller = s.salesmen.some(
         (row) => row.id === d.salesman_id && row.user_id === user.id && row.active,
       );
-      // v39: a manager may close for any active salesman (company-wide), not only assigned ones.
       const managesSeller = user.role === "manager" && s.salesmen.some(
-        (row) => row.id === d.salesman_id && row.active && !row.deleted_at,
+        (row) => row.id === d.salesman_id && row.manager_user_id === user.id && row.active && !row.deleted_at,
       );
       if (!admin && !ownsSeller && !managesSeller)
-        throw Error("Only the assigned salesman, a manager, or Admin may submit this closing");
+        throw Error("Only the assigned salesman, their manager, or Admin may submit this closing");
       const old = s.daily_closings.find(
         (row) =>
           row.salesman_id === d.salesman_id && row.business_date === d.date,

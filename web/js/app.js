@@ -89,7 +89,7 @@ const canViewAllClosings = () =>
       permission.can_view,
   );
 const can = (p) =>
-  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","products","stock","staff"].includes(p)) ||
+  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","products","stock","staff","expenses"].includes(p)) ||
   (user?.role === "salesman" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","stock","products"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
@@ -105,6 +105,7 @@ const can = (p) =>
       "products",
       "stock",
       "staff",
+      "expenses",
     ].includes(p) ||
       S().user_permissions.some(
         (x) => x.user_id === user.id && x.section === p && x.can_view,

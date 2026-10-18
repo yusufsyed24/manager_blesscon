@@ -89,6 +89,7 @@ const canViewAllClosings = () =>
       permission.can_view,
   );
 const can = (p) =>
+  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","products","stock","staff","expenses"].includes(p)) ||
   (user?.role === "salesman" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","stock","products"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
@@ -104,6 +105,7 @@ const can = (p) =>
       "products",
       "stock",
       "staff",
+      "expenses",
     ].includes(p) ||
       S().user_permissions.some(
         (x) => x.user_id === user.id && x.section === p && x.can_view,
@@ -287,7 +289,7 @@ function render() {
   charts.forEach((c) => c.destroy());
   charts = [];
   const s = S();
-  if (page === "myprofile" && !admin() && !["salesman", "user"].includes(user.role)) page = "dashboard";
+  if (page === "myprofile" && !admin() && !["manager", "salesman", "user"].includes(user.role)) page = "dashboard";
   if (!can(page) && page !== "myprofile") page = "dashboard";
   // Keep the selected module across refreshes on this device. The normal
   // permission checks above still decide whether the user may open it.
@@ -319,6 +321,7 @@ function render() {
   };
   $("page").innerHTML = methods[page]();
   if (page === "myprofile" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load admin fieldwork: " + e.message));
+  else if (page === "myprofile" && manager()) hydrateManagerFieldwork().catch((e) => toast("Could not load Manager fieldwork: " + e.message));
   else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
   if (page === "staff" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load salesman fieldwork: " + e.message));
   if (page === "dsr")
@@ -326,6 +329,39 @@ function render() {
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
 }
+async function hydrateManagerFieldwork() {
+  if (!manager() || !client || page !== "myprofile") return;
+  const avatar = $("manager-profile-avatar");
+  const profile = await client.from("profiles").select("avatar_path,display_name").eq("id", user.id).maybeSingle();
+  if (!profile.error && profile.data?.avatar_path && avatar) {
+    const signed = await client.storage.from("employee-private").createSignedUrl(profile.data.avatar_path, 3600);
+    if (!signed.error && signed.data?.signedUrl && avatar.isConnected) avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo">`;
+  }
+  const [attendance, documents, visits, team, teamAttendance] = await Promise.all([
+    client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id", user.id).order("attendance_date", {ascending:false}).limit(60),
+    client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id", user.id).order("created_at", {ascending:false}).limit(100),
+    client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id", user.id).order("visited_at", {ascending:false}).limit(60),
+    client.from("salesmen").select("id,name,phone,territory,area,active,manager_user_id").eq("manager_user_id", user.id).eq("active", true),
+    client.from("attendance_records").select("salesman_id,attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude").order("attendance_date", {ascending:false}).limit(500),
+  ]);
+  const showError = (r) => r.error ? `<p class="notice">Unable to load records: ${esc(r.error.message)}. Apply the Manager fieldwork migration.</p>` : "";
+  const rows = (id, result, headers, map, empty) => { const el=$(id); if (!el || !el.isConnected) return; el.innerHTML = showError(result) || table(headers,(result.data||[]).map(map),empty); };
+  rows("manager-attendance-history",attendance,["Date","Check-in","Check-out","Status","GPS"],r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleTimeString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleTimeString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`],"No attendance recorded yet.");
+  const docsEl=$("manager-document-history");
+  if(docsEl?.isConnected){
+    if(documents.error) docsEl.innerHTML=showError(documents);
+    else { const dr=await Promise.all((documents.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];})); docsEl.innerHTML=table(["Document","Type","Uploaded","Size","File"],dr,"No documents uploaded yet."); }
+  }
+  rows("manager-visit-history",visits,["Visited","Customer","Area","Purpose","Notes","GPS"],r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`],"No fieldwork visits recorded yet.");
+  const names=new Map((team.data||[]).map(x=>[String(x.id),x.name]));
+  const teamEl=$("manager-team-attendance");
+  if(teamEl?.isConnected){
+    if(team.error) teamEl.innerHTML=showError(team);
+    else if(teamAttendance.error) teamEl.innerHTML=showError(teamAttendance);
+    else { const linked=new Set((team.data||[]).map(x=>String(x.id))); const rec=(teamAttendance.data||[]).filter(x=>linked.has(String(x.salesman_id))); teamEl.innerHTML=table(["Salesman","Date","Check-in","Check-out","Status","Location"],rec.map(r=>[esc(names.get(String(r.salesman_id))||r.salesman_id),esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.check_in_latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}">View map</a>`]),"No attendance records for your linked salesmen."); }
+  }
+}
+
 async function hydrateSalesmanProfile() {
   const seller = own();
   if (!seller || !client || page !== "myprofile") return;
@@ -370,13 +406,24 @@ function renderSalesmanDashboard() {
 function renderAdminMyProfile() {
   const current = user || {};
   const profile = S().profiles?.find((p) => String(p.id) === String(current.id)) || {};
-  return head("My profile & fieldwork", "Administrator account details and a consolidated view of salesman attendance, documents, customer visits and profile photos.") +
+  return head("My profile & fieldwork", "Administrator account details and a consolidated view of Manager and salesman attendance, documents, customer visits and profile photos.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="admin-profile-avatar">♙</div><div><h2>${esc(current.name || profile.display_name || "Administrator")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Administrator</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="admin-profile-photo">Upload / change administrator profile picture</label><input id="admin-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="admin-profile-photo-upload">Upload profile picture</button></div><p class="muted">Use a JPG, PNG or WebP image up to 5 MB. Your picture is private and visible to authorized users.</p><p class="muted">This page displays the signed-in administrator account. Salesman records and photos below are read-only and do not require the administrator to be linked to a salesman record.</p></section>
-    <section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
+    <section class="panel"><div class="panel-heading"><h2>Manager fieldwork & uploads</h2><span class="muted">Admin view · BABAR ALI KHAN</span></div><div id="admin-manager-fieldwork-data"><p class="muted">Loading Manager attendance, uploads and visits…</p></div></section><section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
+}
+
+function renderManagerMyProfile() {
+  const current = user || {};
+  return head("My profile & fieldwork", "Manager profile, attendance, secure documents, field visits and attendance of salesmen linked to your account.") +
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="manager-profile-avatar">♙</div><div><h2>${esc(current.name || current.email || "Manager")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Manager</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="manager-profile-photo">Upload / change profile photo</label><input id="manager-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="manager-profile-photo-upload">Upload profile photo</button></div><p class="muted">JPG, PNG or WebP up to 5 MB. Stored privately.</p></section>
+    <section class="panel"><h2>My attendance</h2><p>Check in and check out for today. GPS is optional and only requested when you check in.</p><div class="actions">${btn("Check in", "manager-attendance-check-in", "", "", "gold")}${btn("Check out", "manager-attendance-check-out")}</div><div id="manager-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
+    <section class="panel"><h2>My documents & photos</h2><div class="grid">${select("Document type","manager-document-type",[["identity","Identity document"],["employment","Employment document"],["other","Other document"]],"other")}<div class="field"><label for="manager-document-file">Choose PDF or photo</label><input id="manager-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="manager-document-upload">Upload securely</button><p class="muted">Maximum 10 MB. Private links expire after one hour.</p><div id="manager-document-history"><p class="muted">Loading documents…</p></div></section>
+    <section class="panel"><h2>Customer visits & fieldwork</h2><p class="muted">Record visits and notes. GPS is optional.</p><div class="grid">${field("Customer name or ID","manager-visit-customer","")}${field("Area visited","manager-visit-area","")}${select("Visit purpose","manager-visit-purpose",["Sales visit","Recovery","Order follow-up","Relationship visit","Other"],"Sales visit")}${area("Visit notes / outcome","manager-visit-notes","")}</div><div class="actions">${btn("Save visit without GPS","manager-visit-save")}${btn("Save visit with my location","manager-visit-save-location","","","gold")}</div><div id="manager-visit-history"><p class="muted">Loading visit history…</p></div></section>
+    <section class="panel"><div class="panel-heading"><h2>Attendance of my linked salesmen</h2><span class="muted">Only salesmen assigned to this Manager</span></div><div id="manager-team-attendance"><p class="muted">Loading linked salesman attendance…</p></div></section>`;
 }
 
 function renderMyProfile() {
   if (admin()) return renderAdminMyProfile();
+  if (manager()) return renderManagerMyProfile();
   const seller = own();
   if (!seller) return head("My profile", "Your account is not linked to a salesman record.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
   const s = S(), sid = seller.id;
@@ -689,9 +736,9 @@ function renderDailyClosing() {
     head(
       "Daily closing",
       "Reconcile collected cash and salesman-held stock before management approval.",
-      admin() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : "",
+      mgmt() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : "",
     ) +
-    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", ...CLOSING_BALANCE_FIELDS.map(([, label]) => label), "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), ...CLOSING_BALANCE_FIELDS.map(([name]) => money(closing[name + "_paisa"] || 0)), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
+    `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", ...CLOSING_BALANCE_FIELDS.map(([, label]) => label), "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), ...CLOSING_BALANCE_FIELDS.map(([name]) => money(closing[name + "_paisa"] || 0)), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${mgmt() ? `<div class="actions">${btn("Clone", "clone-closing", closing.id)}</div>` : ""}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
   );
 }
 function dsrClosingSection() {
@@ -897,8 +944,9 @@ function renderCashBook() {
       .reduce((n, p) => n + num(p.amount_paisa), 0);
     return sum + Math.max(0, num(inv.total_paisa) - paidByDate);
   }, 0);
-  // Derive Market Credit opening and closing from invoice-level outstanding, never
-  // from the signed receivable ledger (which can contain stale/legacy adjustments).
+  // Keep the Market Credit row consistent with the receivables summary card.
+  // The ledger's stored opening balance can be stale; derive this account from
+  // confirmed invoices and their non-voided payments for the selected date.
   const outstandingAsOf = cutoff => s.invoices.reduce((sum, inv) => {
     const order = s.orders.find(o => o.id === inv.order_id);
     if (!order || order.status !== "confirmed" || order.date > cutoff) return sum;
@@ -908,13 +956,18 @@ function renderCashBook() {
   }, 0);
   const marketCard = cards.find(x => x.a.account_key === "market_credit");
   if (marketCard) {
-    marketCard.opening = outstandingAsOf(addDays(date, -1));
-    marketCard.received = s.invoices.reduce((sum, inv) => {
+    const prior = outstandingAsOf(addDays(date, -1));
+    const issuedToday = s.invoices.reduce((sum, inv) => {
       const order = s.orders.find(o => o.id === inv.order_id);
       return sum + (order && order.status === "confirmed" && order.date === date ? num(inv.total_paisa) : 0);
     }, 0);
-    marketCard.paid = s.payments.filter(p => !p.voided_at && p.date === date).reduce((sum, p) => sum + num(p.amount_paisa), 0);
-    marketCard.transferIn = 0; marketCard.transferOut = 0; marketCard.closing = market;
+    const recoveredToday = s.payments.filter(p => !p.voided_at && p.date === date).reduce((sum, p) => sum + num(p.amount_paisa), 0);
+    marketCard.opening = prior;
+    marketCard.received = issuedToday;
+    marketCard.paid = recoveredToday;
+    marketCard.transferIn = 0;
+    marketCard.transferOut = 0;
+    marketCard.closing = market;
   }
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
@@ -1042,7 +1095,7 @@ function renderStock() {
     sellerRows.set(key, row);
   }
   const actions =
-    (admin() ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
+    (mgmt() ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
     (canStockWrite() ? btn("Issue to salesman", "stock-issue", "", "", "gold") : "") +
     (admin() || own() || canStockWrite()
       ? btn("Receive salesman return", "stock-return")
@@ -1112,7 +1165,7 @@ function renderProducts() {
     head(
       "Products & pricing",
       "Prices are saved on each sale so later changes cannot alter old invoices.",
-      admin() ? btn("+ Product", "add-product", "", "", "gold") : "",
+      mgmt() ? btn("+ Product", "add-product", "", "", "gold") : "",
     ) +
     `<section class="panel"><div class="filters">${field("Search products by name or ID", "search", filter.search, "search", 'data-filter="search" placeholder="Type a product name or ID" autocomplete="off"')}</div><p class="muted" style="margin:0 0 12px">${q ? rows.length + " of " + visible(s.products).length + " products match" : visible(s.products).length + " products"}</p>${table(
       [
@@ -1138,7 +1191,7 @@ function renderProducts() {
           .join("<br>") || money(p.wholesale_paisa),
         p.expiry_date ? esc(p.expiry_date) + "<small>" + esc(expiryStatus(p.expiry_date)) + "</small>" : "Not set",
         badge(p.active ? "Active" : "Inactive"),
-        admin() ? btn("Edit", "edit-product", p.id) + btn(p.active ? "Deactivate" : "Activate", "toggle-product", p.id) : "—",
+        mgmt() ? btn("Edit", "edit-product", p.id) + btn(p.active ? "Deactivate" : "Activate", "toggle-product", p.id) : "—",
       ]),
       q ? "No products match your search" : "No products yet",
     )}</section>`
@@ -1243,6 +1296,21 @@ async function hydrateAdminFieldwork() {
   const documentsHtml = sectionError("Employee documents", documents) || table(["Salesman","Document","Type","Uploaded","Size","File"], docRows, "No employee documents uploaded.");
   const visitsHtml = sectionError("Customer visits", visits) || table(["Salesman","Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(names.get(String(r.salesman_id)) || r.salesman_id), esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted.");
   root.innerHTML = `<h3>Employee profile photos</h3>${photoHtml}<h3>Attendance</h3>${attendanceHtml}<h3>Uploaded employee documents</h3><p class="muted">Private links expire after one hour.</p>${documentsHtml}<h3>Customer visits & optional GPS</h3>${visitsHtml}`;
+  const managerRoot = $("admin-manager-fieldwork-data");
+  if (managerRoot) {
+    const managerUserId = "d2cf42d4-3806-44f1-9deb-369920e2f152";
+    const [ma, md, mv, mp] = await Promise.all([
+      client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id",managerUserId).order("attendance_date",{ascending:false}).limit(200),
+      client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id",managerUserId).order("created_at",{ascending:false}).limit(200),
+      client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id",managerUserId).order("visited_at",{ascending:false}).limit(200),
+      client.from("profiles").select("avatar_path,display_name").eq("id",managerUserId).maybeSingle()
+    ]);
+    const errHtml = r => r.error ? `<p class="notice danger">Could not load: ${esc(r.error.message)}. Apply <code>supabase/manager_profile_fieldwork.sql</code>.</p>` : "";
+    const docRows = md.error ? [] : await Promise.all((md.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];}));
+    let avatarHtml = "No profile photo uploaded.";
+    if (!mp.error && mp.data?.avatar_path) { const signed=await client.storage.from("employee-private").createSignedUrl(mp.data.avatar_path,3600); if(signed.data?.signedUrl) avatarHtml=`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open Manager profile photo</a>`; }
+    managerRoot.innerHTML = `<h3>Manager profile</h3><p><b>BABAR ALI KHAN</b> · ${avatarHtml}</p><h3>Manager attendance</h3>${errHtml(ma)||table(["Date","Check-in","Check-out","Status","GPS"],(ma.data||[]).map(r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager attendance records.")}<h3>Manager uploads</h3><p class="muted">Private links expire after one hour.</p>${errHtml(md)||table(["Document","Type","Uploaded","Size","File"],docRows,"No Manager documents uploaded.")}<h3>Manager fieldwork visits</h3>${errHtml(mv)||table(["Visited","Customer","Area","Purpose","Notes","GPS"],(mv.data||[]).map(r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager fieldwork visits.")}`;
+  }
 }
 async function openAdminSalesmanProfile(salesmanId) {
   if (!admin()) throw Error("Administrator access is required to view employee profiles.");
@@ -1596,7 +1664,7 @@ function renderUsers() {
         badge(p.active ? "Active" : "Inactive"),
         p.id === user.id
           ? "Current user"
-          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id)}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
       ]),
     )}</section>`
   );
@@ -2169,14 +2237,14 @@ function closingBalanceTotal(closing) {
 }
 function closingModal() {
   const sellers = visible(S().salesmen).filter((row) => row.active);
-  const salesmanId = own()?.id || sellers[0]?.id || "";
+  const salesmanId = own()?.id || (mgmt() ? sellers[0]?.id : "") || "";
   const date = today();
   const opening = openingCashFor(salesmanId, date);
   const expectedCash = expectedClosingCash(salesmanId, date, opening, 0);
   const stockFields = closingStockFields(salesmanId, date);
   modal(
     "Submit daily closing",
-    `<form id="closing-form">${admin() ? select("Salesman", "closing_salesman", sellers.map((row) => [row.id, row.name]), salesmanId) : `<input type="hidden" name="closing_salesman" value="${esc(salesmanId)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(salesmanId))}" readonly></div>`}<div class="grid">${field("Business date", "date", date, "date", 'required data-closing-date')}${field("Opening cash (Rs.)", "opening_cash", opening / 100, "number", 'min="0" step="0.01" required data-closing-cash')}${field("Cash handed over / deposited (Rs.)", "cash_handed_over", "0.00", "number", 'min="0" step="0.01" required data-closing-cash')}${field("Actual cash counted (Rs.)", "actual_cash", (expectedCash / 100).toFixed(2), "number", 'min="0" step="0.01" required data-closing-cash')}</div><div class="notice" id="closing-cash-estimate" aria-live="polite">Expected cash: ${money(expectedCash)}</div><h3>Closing balances</h3><p class="muted">Enter the balance held in each place at the end of the day. These are recorded with the closing and do not affect the cash variance.</p><div class="grid">${CLOSING_BALANCE_FIELDS.map(([name, label]) => field(label + " (Rs.)", name, "0.00", "number", 'min="0" step="0.01" required')).join("")}</div><h3>Physical salesman stock count</h3><div id="closing-stock-fields" class="grid">${stockFields || '<p class="muted">No salesman stock movements exist for this account.</p>'}</div>${area("Variance reason (required when cash or stock differs)", "reason")}${area("Closing notes", "notes")}<button class="gold" style="margin-top:20px">Submit for management approval</button></form>`,
+    `<form id="closing-form">${mgmt() ? select("Salesman", "closing_salesman", sellers.map((row) => [row.id, row.name]), salesmanId) : `<input type="hidden" name="closing_salesman" value="${esc(salesmanId)}"><div class="field"><label>Salesman</label><input value="${esc(salesmanName(salesmanId))}" readonly></div>`}<div class="grid">${field("Business date", "date", date, "date", 'required data-closing-date')}${field("Opening cash (Rs.)", "opening_cash", opening / 100, "number", 'min="0" step="0.01" required data-closing-cash')}${field("Cash handed over / deposited (Rs.)", "cash_handed_over", "0.00", "number", 'min="0" step="0.01" required data-closing-cash')}${field("Actual cash counted (Rs.)", "actual_cash", (expectedCash / 100).toFixed(2), "number", 'min="0" step="0.01" required data-closing-cash')}</div><div class="notice" id="closing-cash-estimate" aria-live="polite">Expected cash: ${money(expectedCash)}</div><h3>Closing balances</h3><p class="muted">Enter the balance held in each place at the end of the day. These are recorded with the closing and do not affect the cash variance.</p><div class="grid">${CLOSING_BALANCE_FIELDS.map(([name, label]) => field(label + " (Rs.)", name, "0.00", "number", 'min="0" step="0.01" required')).join("")}</div><h3>Physical salesman stock count</h3><div id="closing-stock-fields" class="grid">${stockFields || '<p class="muted">No salesman stock movements exist for this account.</p>'}</div>${area("Variance reason (required when cash or stock differs)", "reason")}${area("Closing notes", "notes")}<button class="gold" style="margin-top:20px">Submit for management approval</button></form>`,
   );
 }
 function targetsModal(id) {
@@ -2473,6 +2541,33 @@ async function action(act, id, element) {
       toast("Administrator profile picture uploaded.");
       break;
     }
+    case "manager-profile-photo-upload": {
+      if (!manager()) throw Error("Manager account required.");
+      const file=$("manager-profile-photo")?.files?.[0]; if(!file) throw Error("Choose a photo first.");
+      if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>5*1024*1024) throw Error("Use JPG, PNG or WebP up to 5 MB.");
+      const path=`${user.id}/manager-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private");
+      const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const saved=await client.from("profiles").update({avatar_path:path,updated_at:new Date().toISOString()}).eq("id",user.id); if(saved.error){await bucket.remove([path]);throw saved.error;}
+      const signed=await bucket.createSignedUrl(path,3600); if(signed.error) throw signed.error; const avatar=$("manager-profile-avatar"); if(avatar) avatar.innerHTML=`<img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo">`; toast("Manager profile photo updated."); break;
+    }
+    case "manager-document-upload": {
+      if(!manager()) throw Error("Manager account required."); const file=$("manager-document-file")?.files?.[0]; if(!file) throw Error("Choose a document first.");
+      if(!(file.type==="application/pdf"||/^image\/(jpeg|png|webp)$/.test(file.type))||file.size>10*1024*1024) throw Error("Use PDF, JPG, PNG or WebP up to 10 MB.");
+      const path=`${user.id}/manager-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private"); const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const saved=await client.from("manager_employee_documents").insert({manager_user_id:user.id,document_type:$("manager-document-type")?.value||"other",file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size}); if(saved.error){await bucket.remove([path]);throw saved.error;} $("manager-document-file").value=""; toast("Document uploaded securely."); await hydrateManagerFieldwork(); break;
+    }
+    case "manager-attendance-check-in":
+    case "manager-attendance-check-out": {
+      if(!manager()) throw Error("Manager account required."); const {data:existing,error:readErr}=await client.from("manager_attendance_records").select("*").eq("manager_user_id",user.id).eq("attendance_date",today()).maybeSingle(); if(readErr) throw readErr;
+      if(act==="manager-attendance-check-in") { if(existing?.check_in_at) throw Error("You have already checked in today."); let coords=null; if(navigator.geolocation) try{coords=await new Promise(resolve=>navigator.geolocation.getCurrentPosition(p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude}),()=>resolve(null),{enableHighAccuracy:true,timeout:10000,maximumAge:60000}));}catch{}
+        const {error}=await client.from("manager_attendance_records").insert({manager_user_id:user.id,attendance_date:today(),check_in_at:new Date().toISOString(),status:"present",latitude:coords?.latitude??null,longitude:coords?.longitude??null}); if(error)throw error; toast(coords?"Check-in saved with GPS.":"Check-in saved without GPS.");
+      } else {if(!existing?.check_in_at)throw Error("Check in before checking out.");if(existing.check_out_at)throw Error("Already checked out today.");const {error}=await client.from("manager_attendance_records").update({check_out_at:new Date().toISOString()}).eq("id",existing.id);if(error)throw error;toast("Check-out recorded.");} await hydrateManagerFieldwork(); break;
+    }
+    case "manager-visit-save":
+    case "manager-visit-save-location": {
+      if(!manager())throw Error("Manager account required."); const save=async(coords=null)=>{const customer=$("f-manager-visit-customer")?.value.trim()||"",areaName=$("f-manager-visit-area")?.value.trim()||"";if(!customer&&!areaName)throw Error("Enter a customer or area.");const {error}=await client.from("manager_customer_visits").insert({manager_user_id:user.id,customer_label:customer,area:areaName,purpose:$("f-manager-visit-purpose")?.value||"Sales visit",notes:$("f-manager-visit-notes")?.value||"",latitude:coords?.latitude??null,longitude:coords?.longitude??null,visited_at:new Date().toISOString()});if(error)throw error;$("f-manager-visit-notes").value="";toast("Fieldwork visit saved.");};
+      if(act==="manager-visit-save-location"){if(!navigator.geolocation)throw Error("GPS unavailable. Save without GPS instead.");await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(async p=>{try{await save(p.coords);resolve();}catch(e){reject(e);}},()=>reject(Error("GPS permission denied. You can save without GPS.")),{enableHighAccuracy:true,timeout:12000,maximumAge:60000}));}else await save();await hydrateManagerFieldwork();break;
+    }
     case "profile-photo-upload": {
       const seller = own(), file = $("profile-photo")?.files?.[0];
       if (!seller) throw Error("Your login is not linked to a salesman profile.");
@@ -2647,7 +2742,7 @@ async function action(act, id, element) {
       masterForm("product", id);
       break;
     case "toggle-product": {
-      if (!admin()) throw Error("Admin required");
+      if (!mgmt()) throw Error("Manager or Admin required");
       const p = S().products.find(x=>x.id===id);
       if (!p) throw Error("Product not found");
       await store.run("product.save", { record:{...p,active:!p.active}, expected_version:p.version, tiers:S().price_tiers.filter(t=>t.product_id===id&&!t.deleted_at) });
@@ -2702,6 +2797,31 @@ async function action(act, id, element) {
     case "new-closing":
       closingModal();
       break;
+    case "clone-closing": {
+      if (!mgmt()) throw Error("Manager or Admin required");
+      const source = S().daily_closings.find((row) => row.id === id);
+      if (!source) throw Error("Daily closing not found");
+      // Cloning is a new draft only: no source id, approval status, or transactions are copied.
+      closingModal();
+      const form = $("closing-form");
+      if (form) {
+        const values = {
+          opening_cash: num(source.opening_cash_paisa) / 100,
+          cash_handed_over: num(source.cash_handed_over_paisa) / 100,
+          actual_cash: num(source.actual_cash_paisa) / 100,
+          reason: "", notes: source.notes || "",
+          ...Object.fromEntries(CLOSING_BALANCE_FIELDS.map(([name]) => [name, num(source[name + "_paisa"]) / 100]))
+        };
+        for (const [name, value] of Object.entries(values)) {
+          const input = form.elements.namedItem(name);
+          if (input) input.value = value;
+        }
+        const dateInput = form.elements.namedItem("date");
+        if (dateInput) dateInput.value = today();
+      }
+      toast("Previous closing copied into a new draft. Review date and values before submitting.");
+      break;
+    }
     case "approve-closing": {
       const closing = S().daily_closings.find((row) => row.id === id);
       await store.run("closing.approve", {
@@ -2905,12 +3025,21 @@ async function action(act, id, element) {
       userModal(id);
       break;
     case "reset-user-password": {
-      if (!admin()) throw Error("Only an active Admin can reset user passwords");
-      if (id === user.id) throw Error("Use the account recovery process for your own Admin account");
-      const target = S().profiles.find((p) => p.id === id);
-      if (!target) throw Error("User profile not found");
-      modal("Reset password · " + (target.display_name || target.email || "User"),
-        `<form id="admin-reset-password-form" data-id="${esc(id)}">${field("New password (12–128 characters)", "temporary_password", "", "password", 'minlength="12" maxlength="128" autocomplete="new-password" required')}<p class="muted">The password will be set by the Admin. Share it securely with the user; do not send it through an unsecured channel.</p><button class="gold">Reset password</button></form>`);
+      if (!admin()) throw Error("Only an administrator can reset another user's password.");
+      if (!client) throw Error("Password resets require a configured Supabase connection.");
+      const target = S().profiles.find((p) => String(p.id) === String(id));
+      if (!target || target.id === user.id) throw Error("Choose another valid user account.");
+      const temporaryPassword = window.prompt(`Set the password for ${target.display_name || target.email || target.id}. They will keep using this password until Admin changes it. Use at least 12 characters:`);
+      if (temporaryPassword === null) break;
+      if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Password must be 12–128 characters.");
+      const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: temporaryPassword } });
+      if (error) {
+        let message = error.message;
+        try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
+        throw Error(message);
+      }
+      if (data?.error) throw Error(data.error);
+      toast(`Password set for ${target.display_name || target.email || "user"}. The user can sign in with this password and cannot change it from the app. Share it securely.`);
       break;
     }
     case "salesman-profile":
@@ -3124,15 +3253,12 @@ async function action(act, id, element) {
         render();
       }
       break;
-    case "account": {
-      const role = user.role || "user";
-      const restricted = ["manager", "salesman"].includes(role);
+    case "account":
       modal(
         "Your account",
-        `<p>${esc(user.email || "Practice account")}</p>${user.practice ? "<p>Practice mode has no login password.</p>" : restricted ? "<p>Password changes are disabled for Manager and Salesman accounts. Please contact the Admin if you need a password reset.</p>" : role === "admin" ? "<p>Admin passwords are managed through the approved account recovery process. Use Users & access to reset other users’ passwords.</p>" : `<form id="password-form">${field("New password", "password", "", "password", 'minlength="12" required autocomplete="new-password"')}<button style="margin-top:15px">Change password</button></form>`}`,
+        `<p>${esc(user.email || "Practice account")}</p>${user.practice ? "<p>Practice mode has no login password.</p>" : admin() ? `<p>You can change your own password here. Use at least 12 characters.</p><form id="password-form">${field("New password", "password", "", "password", 'minlength="12" required autocomplete="new-password"')}<button style="margin-top:15px">Change my password</button></form>` : `<p>Password changes are managed by your Admin. Please contact the Admin to request a password reset.</p>`}`,
       );
       break;
-    }
     case "logout":
       minimized = null;
       updatePill();
@@ -3649,24 +3775,6 @@ document.addEventListener("submit", async (e) => {
         close();
         render();
         toast("Access and salesman link saved");
-        break;
-      }
-      case "admin-reset-password-form": {
-        if (!admin()) throw Error("Only an active Admin can reset user passwords");
-        const targetUserId = form.dataset.id;
-        if (!targetUserId || targetUserId === user.id) throw Error("You can reset passwords only for other users");
-        if (String(f.temporary_password || "").length < 12 || String(f.temporary_password || "").length > 128) throw Error("Password must be 12–128 characters");
-        const { data, error } = await client.functions.invoke("admin-reset-user-password", {
-          body: { user_id: targetUserId, temporary_password: f.temporary_password },
-        });
-        if (error) {
-          let message = error.message;
-          try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
-          throw Error(message);
-        }
-        if (data?.error) throw Error(data.error);
-        close();
-        toast("Password updated successfully. Share the password securely with the user.");
         break;
       }
       case "password-form": {
