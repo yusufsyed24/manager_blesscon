@@ -28,6 +28,9 @@ Already-applied files can be skipped; every file is safe to re-run.
    guess and changes nothing in that case (the earlier statements in the same run are not rolled back,
    but they are idempotent, so simply re-run after the fix).
 
+### RPC signature hotfix (v41)
+If the app reports `Could not find the function public.manager_closing_command(data, kind, op_id)`, run `supabase/manager_closing_rpc_signature_v41.sql` in the SQL Editor after v40 completes. The v41 compatibility overload matches the app's named RPC arguments and delegates to the original command. Then wait a few seconds and refresh the app.
+
 ## 3. Verify the database
 ```sql
 select to_regclass('public.manager_daily_closings') is not null                      as closing_table,
@@ -76,3 +79,7 @@ The migration only adds objects, so the old app keeps working. To disable the fe
 folder. Optional cleanup (loses manager closing history):
 `drop function public.manager_closing_command(uuid,text,jsonb); drop table public.manager_daily_closings;`
 Policy/function patches from steps 2–3 are harmless to leave in place.
+
+
+## v42 migration compatibility note
+The v40 migration now recognizes an existing `private.save_master` implementation that already grants manager expense access. It no longer aborts solely because the manager permission condition was patched previously. Run `supabase/manager_closing_expenses_v40.sql` once in Supabase SQL Editor; do not run the standalone v41 wrapper first. This package has not been applied to or verified against the live Supabase project.

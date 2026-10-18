@@ -396,3 +396,7 @@ This release is a deployable source package, not a live deployment. Production c
 - Updated the Supabase `closing.submit` RPC authorization in both `supabase/operational_modules.sql` and its `web/` copy. The server-side check permits Admin, the assigned salesman, or the Manager explicitly assigned to that salesman; it does not permit a Manager to submit closings for unrelated salesmen.
 - Requires applying the updated `supabase/operational_modules.sql` to the Supabase project before live Manager submissions will work.
 - Validation performed: `node --check` passed for JavaScript files under `js/`, `web/js/`, and `tests/`; live Supabase RPC/RLS behavior not tested.
+
+
+## v42 migration compatibility note
+The v40 migration now recognizes an existing `private.save_master` implementation that already grants manager expense access. It no longer aborts solely because the manager permission condition was patched previously. Run `supabase/manager_closing_expenses_v40.sql` once in Supabase SQL Editor; do not run the standalone v41 wrapper first. This package has not been applied to or verified against the live Supabase project.

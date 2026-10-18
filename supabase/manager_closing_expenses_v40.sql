@@ -47,11 +47,13 @@ begin
     raise notice 'manager_closing_expenses_v40: save_master already patched';
     return;
   end if;
+  -- Support both the older save_master permission expression and installations
+  -- where manager expense permission was already added by an earlier patch.
   nd := replace(def,
     $q$(t='expenses' and public.has_permission('expenses','create'))$q$,
     $q$(t='expenses' and (public.has_permission('expenses','create') or public.is_manager()))$q$);
-  if nd = def then
-    raise exception 'manager_closing_expenses_v40: save_master permission check not found; nothing changed';
+  if nd = def and position('public.is_manager()' in def) = 0 then
+    raise exception 'manager_closing_expenses_v40: unrecognised save_master permission expression; nothing changed';
   end if;
   def := nd;
   nd := replace(def,
@@ -341,5 +343,22 @@ begin
   if nd <> def then execute nd; raise notice 'manager_closing_expenses_v40: business_snapshot patched';
   else raise notice 'manager_closing_expenses_v40: business_snapshot already patched'; end if;
 end $mig$;
+
+notify pgrst, 'reload schema';
+
+
+-- v41 compatibility fix: PostgREST resolves RPC arguments by their JSON names.
+-- The deployed client sends {data, kind, op_id}; expose that exact argument signature
+-- and delegate to the original implementation. Keep the original signature for compatibility.
+create or replace function public.manager_closing_command(data jsonb, kind text, op_id uuid)
+returns jsonb
+language sql
+security definer
+set search_path=''
+as $$
+  select public.manager_closing_command(op_id, kind, data);
+$$;
+revoke all on function public.manager_closing_command(jsonb,text,uuid) from public, anon;
+grant execute on function public.manager_closing_command(jsonb,text,uuid) to authenticated;
 
 notify pgrst, 'reload schema';
