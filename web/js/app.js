@@ -15,7 +15,7 @@ import {
   expiryStatus,
   targetPerformance,
 } from "./domain.js";
-import { Store, empty, TABLES } from "./store.js";
+import { Store, empty, TABLES, managerClosingFigures, managerTeamIds } from "./store.js";
 import { readFile } from "./importer.js";
 import { LOGO, ICON } from "./brand.js";
 import {
@@ -105,7 +105,6 @@ const can = (p) =>
       "products",
       "stock",
       "staff",
-      "expenses",
     ].includes(p) ||
       S().user_permissions.some(
         (x) => x.user_id === user.id && x.section === p && x.can_view,
@@ -717,6 +716,68 @@ function refreshClosingEstimate(form, resetStock = false) {
   $("closing-cash-estimate").textContent =
     "Expected cash: " + money(expected);
 }
+
+const mcLabel = (id) =>
+  S().profiles.find((p) => p.id === id)?.display_name || (id === user?.id ? user.name || "Manager" : "Manager");
+function managerClosingPanel() {
+  if (!mgmt()) return "";
+  const rows = (S().manager_daily_closings || [])
+    .filter((r) => admin() || r.manager_user_id === user.id)
+    .sort((a, b) => b.business_date.localeCompare(a.business_date));
+  const pending = rows.filter((r) => r.status === "submitted").length;
+  const body = rows.map((r) => [
+    esc(r.business_date),
+    esc(mcLabel(r.manager_user_id)),
+    `${num(r.sales_count)} · ${money(r.sales_total_paisa)}`,
+    money(r.collections_total_paisa),
+    money(r.expenses_total_paisa),
+    money(r.expected_cash_paisa),
+    money(r.actual_cash_paisa),
+    money(r.cash_variance_paisa),
+    Object.keys(r.stock_variances || {}).length,
+    badge(r.status),
+    `${esc(r.reason || "")}${r.decision_at ? `<div class="muted">${esc(r.status === "approved" ? "Approved" : r.status === "rejected" ? "Rejected" : "Reopened")} ${esc(String(r.decision_at).slice(0, 16).replace("T", " "))}${r.decision_reason ? " — " + esc(r.decision_reason) : ""}</div>` : ""}${admin() && r.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-manager-closing", r.id)}${btn("Reject", "reject-manager-closing", r.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(r.status) ? `<div class="actions">${btn("Reopen", "reopen-manager-closing", r.id, "", "danger")}</div>` : ""}`,
+  ]);
+  return `<section class="panel"><h2>Manager team closings${pending && admin() ? ` <span class="badge amber">${pending} awaiting your decision</span>` : ""}</h2><p class="muted">One consolidated closing per manager per day: team sales, collections, expenses and stock movements.</p>${table(["Date", "Manager", "Sales", "Collections", "Expenses", "Expected cash", "Counted cash", "Variance", "Stock variances", "Status", "Reason / decision"], body, "No manager team closings submitted")}</section>`;
+}
+function managerClosingSummary(date) {
+  const f = managerClosingFigures(S(), user.id, date);
+  const methods = Object.entries(f.collectionsByMethod).map(([m, v]) => `${esc(m)} ${money(v)}`).join(" · ") || "none";
+  const moves = Object.entries(f.stockMovements)
+    .map(([pid, kinds]) => `${esc(visible(S().products).find((p) => p.id === pid)?.name || pid)}: ${Object.entries(kinds).map(([k, v]) => `${esc(k)} ${v}`).join(", ")}`)
+    .join("<br>") || "No team stock movements on this date";
+  return `<div class="notice" id="manager-closing-summary" aria-live="polite"><b>Team:</b> ${f.team.length} assigned salesman${f.team.length === 1 ? "" : "men"}<br><b>Sales:</b> ${f.salesCount} orders · ${money(f.salesTotal)}<br><b>Collections:</b> ${money(f.collectionsTotal)} (${methods})<br><b>Expenses:</b> ${money(f.expensesTotal)} (cash ${money(f.cashExpenses)})<br><b>Stock movements:</b><br>${moves}</div>`;
+}
+function managerClosingStockFields(date) {
+  const f = managerClosingFigures(S(), user.id, date);
+  const ids = new Set([...Object.keys(f.expectedStock), ...Object.keys(f.stockMovements)]);
+  return visible(S().products).filter((p) => ids.has(p.id)).map((p) => `<div class="field"><label for="mc-count-${esc(p.id)}">${esc(p.name)} · expected ${Number(f.expectedStock[p.id] || 0)} boxes with team</label><input id="mc-count-${esc(p.id)}" name="stock-${esc(p.id)}" data-stock-count="${esc(p.id)}" type="number" min="0" step="1" value="${Number(f.expectedStock[p.id] || 0)}" required></div>`).join("");
+}
+function managerOpeningCash(date) {
+  return Number((S().manager_daily_closings || []).filter((r) => r.manager_user_id === user.id && r.business_date < date && r.status === "approved").sort((a, b) => b.business_date.localeCompare(a.business_date))[0]?.actual_cash_paisa || 0);
+}
+function refreshManagerClosing(form, reset = false) {
+  const date = form.elements.date.value || today();
+  const f = managerClosingFigures(S(), user.id, date);
+  if (reset) {
+    form.elements.opening_cash.value = (managerOpeningCash(date) / 100).toFixed(2);
+    $("manager-closing-summary").outerHTML = managerClosingSummary(date);
+    $("manager-closing-stock").innerHTML = managerClosingStockFields(date) || '<p class="muted">No stock is held by your team.</p>';
+  }
+  const expected = paisa(form.elements.opening_cash.value) + f.cashReceived - f.cashExpenses - paisa(form.elements.cash_handed_over.value);
+  $("manager-closing-estimate").textContent = "Expected team cash: " + money(expected);
+}
+function managerClosingModal() {
+  if (!manager()) throw Error("Manager account required");
+  const date = today();
+  const opening = managerOpeningCash(date);
+  const f = managerClosingFigures(S(), user.id, date);
+  const expected = opening + f.cashReceived - f.cashExpenses;
+  modal(
+    "Submit team closing",
+    `<form id="manager-closing-form"><p class="muted">One consolidated closing for your assigned team. No salesman account is needed.</p><div class="grid">${field("Business date", "date", date, "date", "required data-mc-date")}${field("Opening cash (Rs.)", "opening_cash", opening / 100, "number", 'min="0" step="0.01" required data-mc-cash')}${field("Cash handed over / deposited (Rs.)", "cash_handed_over", "0.00", "number", 'min="0" step="0.01" required data-mc-cash')}${field("Actual cash counted (Rs.)", "actual_cash", (expected / 100).toFixed(2), "number", 'min="0" step="0.01" required data-mc-cash')}</div>${managerClosingSummary(date)}<div class="notice" id="manager-closing-estimate" aria-live="polite">Expected team cash: ${money(expected)}</div><h3>Closing balances</h3><div class="grid">${CLOSING_BALANCE_FIELDS.map(([name, label]) => field(label + " (Rs.)", name, "0.00", "number", 'min="0" step="0.01" required')).join("")}</div><h3>Physical stock count (team total)</h3><div id="manager-closing-stock" class="grid">${managerClosingStockFields(date) || '<p class="muted">No stock is held by your team.</p>'}</div>${area("Variance reason (required when cash or stock differs)", "reason")}${area("Closing notes", "notes")}<button class="gold" style="margin-top:20px">Submit for Admin approval</button></form>`,
+  );
+}
 function renderDailyClosing() {
   const s = S(),
     salesmanId = own()?.id,
@@ -736,8 +797,10 @@ function renderDailyClosing() {
     head(
       "Daily closing",
       "Reconcile collected cash and salesman-held stock before management approval.",
-      mgmt() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : "",
+      (manager() ? btn("Submit team closing", "new-manager-closing", "", "", "gold") : "") +
+        (mgmt() || salesmanId ? btn("Submit daily closing", "new-closing", "", "", "gold") : ""),
     ) +
+    managerClosingPanel() +
     `<div class="cards">${card("Pending approval", pending, "Submitted closings")}${card("Discrepancies", discrepancies, "Cash or physical stock variance")}${card("Salesmen", visible(s.salesmen).length, "Visible to this account")}</div><section class="panel"><h2>Closing register</h2>${table(["Date", "Salesman", "Expected cash", "Counted cash", "Variance", ...CLOSING_BALANCE_FIELDS.map(([, label]) => label), "Stock variances", "Status", "Action"], rows.map((closing) => [esc(closing.business_date), esc(salesmanName(closing.salesman_id)), money(closing.expected_cash_paisa), money(closing.actual_cash_paisa), money(closing.cash_variance_paisa), ...CLOSING_BALANCE_FIELDS.map(([name]) => money(closing[name + "_paisa"] || 0)), Object.keys(closing.stock_variances || {}).length, badge(closing.status), `${esc(closing.reason || closing.decision_reason || "")}${mgmt() ? `<div class="actions">${btn("Clone", "clone-closing", closing.id)}</div>` : ""}${admin() && closing.status === "submitted" ? `<div class="actions">${btn("Approve", "approve-closing", closing.id)}${btn("Reject", "reject-closing", closing.id, "", "danger")}</div>` : admin() && ["approved", "rejected"].includes(closing.status) ? `<div class="actions">${btn("Reopen", "reopen-closing", closing.id, "", "danger")}</div>` : ""}`]), "No daily closings submitted")}</section>`
   );
 }
@@ -1347,9 +1410,14 @@ async function openAdminSalesmanProfile(salesmanId) {
 function filters(category = false) {
   return `<div class="filters">${field("From", "from", filter.from, "date", 'data-filter="from"')}${field("To", "to", filter.to, "date", 'data-filter="to"')}${category ? select("Category", "category", ["All categories", ...new Set(S().expenses.map((e) => e.category))], filter.category || "All categories") : ""}${btn("Apply", "apply-filters")}${btn("This month", "this-month")}${btn("This year", "this-year")}</div>`;
 }
+function managerExpenseScope(e) {
+  // Mirrors public.manager_expense_visible(): own entries or entries linked to the assigned team.
+  return e.created_by === user.id || managerTeamIds(S(), user.id).includes(e.salesman_id);
+}
 function renderExpenses() {
   const rows = visible(S().expenses).filter(
     (e) =>
+      (!manager() || managerExpenseScope(e)) &&
       e.date >= filter.from &&
       e.date <= filter.to &&
       (!filter.category ||
@@ -1359,7 +1427,9 @@ function renderExpenses() {
   return (
     head(
       "Expenses",
-      "Keep operating costs and receipts in one place.",
+      manager()
+        ? "Daily expense entries for you and your assigned team. You can edit only the entries you created."
+        : "Keep operating costs and receipts in one place.",
       btn("Export CSV", "expense-csv") +
         btn("+ Expense", "add-expense", "", "", "gold"),
     ) +
@@ -1380,7 +1450,7 @@ function renderExpenses() {
         money(e.amount_paisa),
         esc(e.method),
         esc(salesmanName(e.salesman_id)),
-        `<div class="actions">${btn("Edit", "edit-expense", e.id)}${e.attachment_path ? btn("Receipt", "receipt", e.id) : ""}${admin() ? btn("Delete", "delete-expense", e.id, "", "danger") : ""}</div>`,
+        `<div class="actions">${!manager() || e.created_by === user.id ? btn("Edit", "edit-expense", e.id) : ""}${e.attachment_path ? btn("Receipt", "receipt", e.id) : ""}${admin() ? btn("Delete", "delete-expense", e.id, "", "danger") : ""}</div>`,
       ]),
     )}</section>`
   );
@@ -1944,7 +2014,7 @@ function masterForm(kind, id) {
   if (kind === "customer")
     html = `<div class="grid">${field("Customer name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Email", "email", r.email || "", "email")}${field("Address", "address", r.address || "")}${select("Assigned salesman", "salesman_id", [["", "Unassigned"], ...visible(s.salesmen).map((x) => [x.id, x.name])], r.salesman_id || own()?.id || "")}</div>`;
   if (kind === "expense")
-    html = `<div class="grid">${field("Date", "date", r.date || today(), "date", "required")}${field("Category", "category", r.category || "Misc", "text", 'list="expense-categories" required')}<datalist id="expense-categories">${["Rent", "Salaries", "Transport", "Utilities", "Packaging", "Marketing", "Misc"].map((x) => "<option>" + x + "</option>").join("")}</datalist>${field("Amount (Rs.)", "amount", num(r.amount_paisa) / 100, "number", 'min="0.01" step="0.01" required')}${select("Payment method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"], r.method || "Cash")}${select("Salesman (optional)", "salesman_id", [["", "Not linked"], ...visible(s.salesmen).map((x) => [x.id, x.name])], r.salesman_id || "")}${area("Description", "description", r.description || "")}<div class="field"><label for="receipt-file">Receipt image (optional, up to 5 MB)</label><input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp"></div></div>`;
+    html = `<div class="grid">${field("Date", "date", r.date || today(), "date", "required")}${field("Category", "category", r.category || "Misc", "text", 'list="expense-categories" required')}<datalist id="expense-categories">${["Rent", "Salaries", "Transport", "Utilities", "Packaging", "Marketing", "Misc"].map((x) => "<option>" + x + "</option>").join("")}</datalist>${field("Amount (Rs.)", "amount", num(r.amount_paisa) / 100, "number", 'min="0.01" step="0.01" required')}${select("Payment method", "method", ["Cash", "Bank", "JazzCash", "Easypaisa", "Cheque"], r.method || "Cash")}${select("Salesman (optional)", "salesman_id", [["", "Not linked"], ...visible(s.salesmen).filter((x) => !manager() || managerTeamIds(s, user.id).includes(x.id)).map((x) => [x.id, x.name])], r.salesman_id || "")}${area("Description", "description", r.description || "")}<div class="field"><label for="receipt-file">Receipt image (optional, up to 5 MB)</label><input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp"></div></div>`;
   modal(
     (existing ? "Edit " : "New ") + kind,
     `<form id="master-form" data-kind="${kind}" data-id="${esc(id || "")}" novalidate>${html}<div id="master-form-error" role="alert" class="notice danger" style="display:none" aria-live="polite"></div><div class="actions" style="margin-top:22px"><button type="submit" class="gold">Save ${kind}</button></div></form>`,
@@ -2797,6 +2867,34 @@ async function action(act, id, element) {
     case "new-closing":
       closingModal();
       break;
+    case "new-manager-closing":
+      managerClosingModal();
+      break;
+    case "approve-manager-closing": {
+      const row = S().manager_daily_closings.find((r) => r.id === id);
+      await store.run("closing.manager_approve", { id, expected_version: row.version });
+      render();
+      toast("Manager closing approved");
+      break;
+    }
+    case "reject-manager-closing": {
+      const row = S().manager_daily_closings.find((r) => r.id === id);
+      const reason = prompt("Reason for rejecting this manager closing:");
+      if (!reason?.trim()) break;
+      await store.run("closing.manager_reject", { id, expected_version: row.version, reason: reason.trim() });
+      render();
+      toast("Manager closing rejected");
+      break;
+    }
+    case "reopen-manager-closing": {
+      const row = S().manager_daily_closings.find((r) => r.id === id);
+      const reason = prompt("Reason for reopening this manager closing:");
+      if (!reason?.trim()) break;
+      await store.run("closing.manager_reopen", { id, expected_version: row.version, reason: reason.trim() });
+      render();
+      toast("Manager closing reopened");
+      break;
+    }
     case "clone-closing": {
       if (!mgmt()) throw Error("Manager or Admin required");
       const source = S().daily_closings.find((row) => row.id === id);
@@ -3362,12 +3460,19 @@ document.addEventListener("input", (e) => {
   const closingForm = input.closest("#closing-form");
   if (closingForm && input.matches("[data-closing-cash]"))
     refreshClosingEstimate(closingForm);
+  const mcForm = input.closest("#manager-closing-form");
+  if (mcForm && input.matches("[data-mc-cash]")) refreshManagerClosing(mcForm);
 });
 document.addEventListener("change", async (e) => {
   const stockForm = e.target.closest?.("#stock-form");
   if (stockForm && ["product_id", "cartons", "loose_boxes"].includes(e.target.name)) refreshStockMovementPreview(stockForm);
   if (e.target.matches?.("[data-cashbook-date]")) { cashbookDate = e.target.value || today(); render(); return; }
   try {
+    const mcForm = e.target.closest("#manager-closing-form");
+    if (mcForm && e.target.name === "date") {
+      refreshManagerClosing(mcForm, true);
+      return;
+    }
     const closingForm = e.target.closest("#closing-form");
     if (
       closingForm &&
@@ -3607,6 +3712,30 @@ document.addEventListener("submit", async (e) => {
         close();
         render();
         toast(saved?.queued ? "Multi-product return saved on this device; pending sync" : "Stock return voucher recorded");
+        break;
+      }
+      case "manager-closing-form": {
+        const date = f.date;
+        const current = (S().manager_daily_closings || []).find(
+          (row) => row.manager_user_id === user.id && row.business_date === date,
+        );
+        const actualStock = Object.fromEntries(
+          [...form.querySelectorAll("[data-stock-count]")].map((input) => [input.dataset.stockCount, num(input.value)]),
+        );
+        const saved = await store.run("closing.manager_submit", {
+          date,
+          opening_cash_paisa: paisa(f.opening_cash),
+          cash_handed_over_paisa: paisa(f.cash_handed_over),
+          actual_cash_paisa: paisa(f.actual_cash),
+          ...Object.fromEntries(CLOSING_BALANCE_FIELDS.map(([name]) => [name + "_paisa", paisa(f[name] || 0)])),
+          actual_stock: actualStock,
+          reason: f.reason || "",
+          notes: f.notes || "",
+          expected_version: current?.version,
+        });
+        close();
+        render();
+        toast(saved?.queued ? "Team closing saved on this device; pending sync" : "Team closing submitted for Admin approval");
         break;
       }
       case "closing-form": {

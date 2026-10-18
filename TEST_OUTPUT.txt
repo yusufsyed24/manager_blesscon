@@ -1,23 +1,31 @@
-Cash & Bank Book feature — validation log (17 October 2026)
+v40 validation log (18 October 2026)
 
-PASS: node --check js/app.js
-PASS: node --check js/store.js
-PASS: node --check tests/cashbook.test.js
-PASS: node --check tests/db-helper.js
-PASS: root/web js/app.js, js/store.js, css/app.css and sw.js copies are byte-identical.
-PASS: service-worker cache version bumped for the Cash & Bank Book UI.
+EXECUTED AND PASSING (build environment, Node only):
+  PASS figures cover the assigned team + manager direct sales/expenses only
+  PASS manager submits ONE consolidated closing without any salesman record
+  PASS cash or stock variance needs a reason
+  PASS only a manager can submit; negative amounts rejected; one closing per day
+  PASS Admin sees submitted closing; approve/reject/reopen are Admin-only and recorded
+  PASS opening cash must match the previous approved closing
+  PASS managers can add daily expenses locally; team-only visibility helper
+  PASS v39 regression: root and web store allow a manager to close for any active salesman
+  PASS deployment copies: root and web are identical
+  PASS RPC routing and sync path cover manager closing commands
+  PASS migration defines the table, command, scope rules and Admin-only decisions
+  PASS UI wiring: closing page, approval actions and expenses access exist
+  
+  12/12 passed
+  node --check on every file in js/, tests/, scripts/, sw.js, app_config.js: all pass.
+  Root and web/ copies of js/store.js, js/app.js, sw.js, index.html are byte-identical.
+  Mutation check: removing the Admin-only guard from the local approve path makes the regression fail.
 
-AUTHORED BUT NOT EXECUTED:
-- tests/cashbook.test.js: invoice receivable postings, payment account selection, expense postings, salesman cash handover, daily close variance approval, and approved-day posting lock.
-- Full Vitest/PGlite suite and npm run check.
-
-BLOCKED IN THIS ENVIRONMENT:
-- `npm test`: Vitest dependency is not installed.
-- `npm ci --ignore-scripts`: dependency installation did not complete.
-- `node scripts/check.mjs`: blocked because the `typescript` package is unavailable.
+AUTHORED BUT NOT EXECUTED (no PostgreSQL / PGlite / Vitest available in the build environment, no network):
+  - supabase/manager_closing_expenses_v40.sql (never run against any Postgres engine)
+  - tests/manager-closing-db.test.js (PGlite suite: team scope, no dummy salesman, Admin-only decisions,
+    variance reason, resubmission, day lock, manager expense rules, snapshot visibility)
+  - Browser/UI behaviour of the new screens (only syntax-checked and wiring-checked).
 
 NOT VERIFIED:
-- SQL migration execution against PostgreSQL/Supabase.
-- Supabase RLS behavior in the live project.
-- Browser/mobile end-to-end behavior.
-- Live deployment. No live Supabase database was changed by this build.
+  - SQL execution against the live Supabase project; run the verification query in DEPLOY_V40_MANAGER_CLOSING.md section 3
+    and the acceptance table in section 5.
+  - Full existing suite (npm test) and node scripts/check.mjs: dependencies are not installed here.

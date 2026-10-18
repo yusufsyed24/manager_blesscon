@@ -1,3 +1,13 @@
+## Manager team closing, manager expenses and Admin approval (18 October 2026) - v40
+
+- **Manager team closing:** one consolidated closing per manager per business date covering the assigned team's sales, collections (by payment method), expenses and stock movements, plus the manager's own direct sales and unlinked expenses. No dummy salesman is created. New table `manager_daily_closings` (`unique(manager_user_id, business_date)`), RPC `manager_closing_command`, RLS limited to Admin and the owning manager.
+- **Manager expenses:** managers can open Expenses, view their own and their team's entries and add daily expenses. Enforced in the database: `private.save_master` patch (own entries only, team-linked only, no salary postings, no future dates), scoped `manager_expense_visible()` read policy and snapshot, receipt-upload storage policy. Delete stays Admin-only.
+- **Admin approval:** submitted manager closings appear for Admin under *Manager team closings* with Approve / Reject (reason required) / Reopen (reason required). Decision, decision-maker and time are stored; a rejected or reopened closing can be resubmitted by the manager.
+- **Day lock:** a submitted/approved manager closing locks covered orders, payments and expenses until Admin rejects or reopens it.
+- **v39 fix re-applied to the published folder:** `netlify.toml` publishes the repository root, but the v39 app change had only been made in `web/js/store.js`. Root `js/` is now patched and `web/` re-synced.
+- Migration: `supabase/manager_closing_expenses_v40.sql`. Deployment steps: `DEPLOY_V40_MANAGER_CLOSING.md`.
+- Validation: see `TEST_OUTPUT.txt`. The SQL migration and the PGlite suite (`tests/manager-closing-db.test.js`) were written but could not be executed in the build environment.
+
 ## Stock-in confirmation and duplicate-reference fix (17 October 2026)
 
 - Root cause addressed: the stock-entry RPC previously returned an existing stock movement for any reused transaction reference, even when the new quantity/product/date differed. The UI could therefore report success while the ledger remained unchanged.
@@ -386,9 +396,3 @@ This release is a deployable source package, not a live deployment. Production c
 - Updated the Supabase `closing.submit` RPC authorization in both `supabase/operational_modules.sql` and its `web/` copy. The server-side check permits Admin, the assigned salesman, or the Manager explicitly assigned to that salesman; it does not permit a Manager to submit closings for unrelated salesmen.
 - Requires applying the updated `supabase/operational_modules.sql` to the Supabase project before live Manager submissions will work.
 - Validation performed: `node --check` passed for JavaScript files under `js/`, `web/js/`, and `tests/`; live Supabase RPC/RLS behavior not tested.
-
-## v39 — Manager expense access and consolidated closing migration foundation
-- Added Expenses to the manager route allow-list so the existing Expenses screen and Add Expense action are visible to manager users.
-- Added `supabase/manager_daily_closing_v39.sql`: a separate manager closing table with team-level summary fields, status/decision metadata, unique manager/date constraint and Admin/owner read policy; existing salesman closing constraints remain unchanged.
-- Updated the `private.save_master` authorization gate in the migration to allow managers to create expense entries while retaining existing permission checks for other roles/modules.
-- Important limitation: this migration is a foundation, not a complete manager-closing workflow. The UI does not yet submit manager summaries or expose manager-closing approval actions, and the table currently stores summary fields rather than computing assigned-team totals itself. Do not treat v39 as feature-complete until those integrations are implemented and tested.

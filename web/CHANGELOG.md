@@ -1,3 +1,21 @@
+## Manager team closing, manager expenses and Admin approval (18 October 2026) - v40
+
+- **Manager team closing:** one consolidated closing per manager per business date covering the assigned team's sales, collections (by payment method), expenses and stock movements, plus the manager's own direct sales and unlinked expenses. No dummy salesman is created. New table `manager_daily_closings` (`unique(manager_user_id, business_date)`), RPC `manager_closing_command`, RLS limited to Admin and the owning manager.
+- **Manager expenses:** managers can open Expenses, view their own and their team's entries and add daily expenses. Enforced in the database: `private.save_master` patch (own entries only, team-linked only, no salary postings, no future dates), scoped `manager_expense_visible()` read policy and snapshot, receipt-upload storage policy. Delete stays Admin-only.
+- **Admin approval:** submitted manager closings appear for Admin under *Manager team closings* with Approve / Reject (reason required) / Reopen (reason required). Decision, decision-maker and time are stored; a rejected or reopened closing can be resubmitted by the manager.
+- **Day lock:** a submitted/approved manager closing locks covered orders, payments and expenses until Admin rejects or reopens it.
+- **v39 fix re-applied to the published folder:** `netlify.toml` publishes the repository root, but the v39 app change had only been made in `web/js/store.js`. Root `js/` is now patched and `web/` re-synced.
+- Migration: `supabase/manager_closing_expenses_v40.sql`. Deployment steps: `DEPLOY_V40_MANAGER_CLOSING.md`.
+- Validation: see `TEST_OUTPUT.txt`. The SQL migration and the PGlite suite (`tests/manager-closing-db.test.js`) were written but could not be executed in the build environment.
+
+## Manager can submit daily closing (18 October 2026) - v39
+
+- **Root cause:** `closing.submit` allowed a manager only for salesmen whose `manager_user_id` equalled that manager. Salesmen with no manager assigned (or assigned to someone else) were rejected with "Only the assigned salesman, their manager, or Admin may submit this closing", even though the closing screen listed them.
+- **Fix (app):** `web/js/store.js` now lets a manager submit a closing for any active salesman, matching the company-wide Manager role.
+- **Fix (database):** new `supabase/manager_closing_fix_v39.sql` patches `apply_operational_command` the same way (idempotent) and re-applies the manager read policy on `daily_closings`. **Run it once in the Supabase SQL editor, then redeploy `web/`.**
+- Approve / reject / reopen remain Admin-only.
+- Validation: JavaScript syntax check passed; SQL not executed against a live Supabase project in this environment.
+
 ## Cash & Bank Book ledger (17 October 2026)
 
 - Added the mobile-friendly **5. Cash & Bank Book** navigation page for Admin, Manager and Salesman roles. It shows date-based opening and expected closing balances by account, daily receipts/payments/transfers, salesman-held collection accounts, Market Credit receivables, transaction references, CSV export and print.

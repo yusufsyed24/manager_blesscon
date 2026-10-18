@@ -22,6 +22,7 @@ export const TABLES = [
   "salesman_stock_movements",
   "stock_vouchers",
   "daily_closings",
+  "manager_daily_closings",
   "cashbook_accounts",
   "cashbook_entries",
   "cashbook_daily_closings",
@@ -36,6 +37,7 @@ export const TABLES = [
 ];
 const commandRpc = (kind) =>
   kind.startsWith("cashbook.") ? "cashbook_record_command" :
+  kind.startsWith("closing.manager_") ? "manager_closing_command" :
   kind.startsWith("closing.") || ["stock.issue", "stock.return"].includes(kind)
     ? "apply_operational_command"
     : "apply_command";
@@ -81,6 +83,65 @@ function localCashbookLedger(state) {
     rows.push({posting_key:`local:expense:${expense.id}`,account_key:accountKey(expense.method,expense.salesman_id),business_date:expense.date,amount_paisa:-Number(expense.amount_paisa),entry_type:"expense"});
   }
   return rows;
+}
+const sumBy = (rows, fn) => rows.reduce((a, r) => a + Number(fn(r) || 0), 0);
+export function managerTeamIds(state, managerId) {
+  return (state.salesmen || [])
+    .filter((r) => r.manager_user_id === managerId && r.active && !r.deleted_at)
+    .map((r) => r.id)
+    .sort();
+}
+// One consolidated figure set for a manager's assigned team on a business date.
+// Scope: orders/payments/expenses/stock of assigned salesmen, plus the manager's own
+// direct sales and own (unlinked) expenses. No salesman record is created or required.
+export function managerClosingFigures(state, managerId, date) {
+  const team = managerTeamIds(state, managerId);
+  const inTeam = (sid) => !!sid && team.includes(sid);
+  const orders = (state.orders || []).filter(
+    (o) =>
+      o.status === "confirmed" &&
+      (inTeam(o.salesman_id) || (!o.salesman_id && o.created_by === managerId)),
+  );
+  const orderById = new Map(orders.map((o) => [o.id, o]));
+  const invoiceById = new Map((state.invoices || []).map((i) => [i.id, i]));
+  const sales = orders.filter((o) => o.date === date);
+  const collectionsByMethod = {};
+  for (const p of state.payments || []) {
+    if (p.date !== date || p.voided_at) continue;
+    const order = orderById.get(invoiceById.get(p.invoice_id)?.order_id);
+    if (!order || order.date > date) continue;
+    collectionsByMethod[p.method] = (collectionsByMethod[p.method] || 0) + Number(p.amount_paisa);
+  }
+  const expenses = (state.expenses || []).filter(
+    (e) =>
+      !e.deleted_at &&
+      e.date === date &&
+      !e.salary_period &&
+      (inTeam(e.salesman_id) || (!e.salesman_id && e.created_by === managerId)),
+  );
+  const stockMovements = {};
+  const expectedStock = {};
+  for (const m of state.salesman_stock_movements || []) {
+    if (!inTeam(m.salesman_id)) continue;
+    if (m.date === date) {
+      stockMovements[m.product_id] ||= {};
+      stockMovements[m.product_id][m.kind] = (stockMovements[m.product_id][m.kind] || 0) + Number(m.boxes);
+    }
+    if (m.date <= date) expectedStock[m.product_id] = (expectedStock[m.product_id] || 0) + Number(m.boxes);
+  }
+  for (const k of Object.keys(expectedStock)) if (expectedStock[k] === 0) delete expectedStock[k];
+  return {
+    team,
+    salesCount: sales.length,
+    salesTotal: sumBy(sales, (o) => o.total_paisa),
+    collectionsByMethod,
+    collectionsTotal: Object.values(collectionsByMethod).reduce((a, b) => a + b, 0),
+    cashReceived: collectionsByMethod.Cash || 0,
+    expensesTotal: sumBy(expenses, (e) => e.amount_paisa),
+    cashExpenses: sumBy(expenses.filter((e) => e.method === "Cash"), (e) => e.amount_paisa),
+    stockMovements,
+    expectedStock,
+  };
 }
 export function localApply(base, op, user) {
   const s = structuredClone(base),
@@ -731,15 +792,118 @@ export function localApply(base, op, user) {
       row.status="approved"; row.approved_by=user.id; row.approved_at=now; result={ok:true,closing_id:row.id};
       break;
     }
+    case "closing.manager_submit": {
+      if (user.role !== "manager") throw Error("Only a manager can submit the team closing");
+      if (!d.date) throw Error("Business date is required");
+      if (!d.actual_stock || typeof d.actual_stock !== "object" || Array.isArray(d.actual_stock))
+        throw Error("Counted stock is required");
+      s.manager_daily_closings ||= [];
+      const old = s.manager_daily_closings.find(
+        (r) => r.manager_user_id === user.id && r.business_date === d.date,
+      );
+      if (old && (!["rejected", "reopened"].includes(old.status) || old.version !== d.expected_version))
+        throw Error("Manager closing already submitted or changed; reload before retrying");
+      const opening = Number(d.opening_cash_paisa || 0),
+        handed = Number(d.cash_handed_over_paisa || 0),
+        actualCash = Number(d.actual_cash_paisa || 0);
+      if (opening < 0 || handed < 0 || actualCash < 0) throw Error("Cash amounts cannot be negative");
+      const prior = s.manager_daily_closings
+        .filter((r) => r.manager_user_id === user.id && r.business_date < d.date && r.status === "approved")
+        .sort((a, b) => b.business_date.localeCompare(a.business_date))[0];
+      if (prior && Number(prior.actual_cash_paisa) !== opening)
+        throw Error("Opening cash must match the previous approved closing");
+      const balances = Object.fromEntries(
+        ["cash_in_bank_paisa", "cash_in_hand_paisa", "cash_in_easypaisa_paisa", "cash_in_jazzcash_paisa", "market_credit_paisa"]
+          .map((key) => [key, Number(d[key] || 0)]),
+      );
+      if (Object.values(balances).some((v) => !Number.isFinite(v) || v < 0))
+        throw Error("Closing balances cannot be negative");
+      const fig = managerClosingFigures(s, user.id, d.date);
+      const expectedCash = opening + fig.cashReceived - fig.cashExpenses - handed;
+      const cashVariance = actualCash - expectedCash;
+      const stockVariance = {};
+      for (const pid of new Set([...Object.keys(fig.expectedStock), ...Object.keys(d.actual_stock)])) {
+        const expected = Number(fig.expectedStock[pid] || 0), actual = Number(d.actual_stock[pid] || 0);
+        if (actual !== expected) stockVariance[pid] = { expected, actual, variance: actual - expected };
+      }
+      if ((cashVariance !== 0 || Object.keys(stockVariance).length) && !String(d.reason || "").trim())
+        throw Error("A reason is required for cash or stock variance");
+      result = {
+        ...old,
+        id: old?.id || uid(),
+        manager_user_id: user.id,
+        business_date: d.date,
+        team_salesman_ids: fig.team,
+        sales_count: fig.salesCount,
+        sales_total_paisa: fig.salesTotal,
+        collections_by_method: fig.collectionsByMethod,
+        collections_total_paisa: fig.collectionsTotal,
+        cash_received_paisa: fig.cashReceived,
+        expenses_total_paisa: fig.expensesTotal,
+        cash_expenses_paisa: fig.cashExpenses,
+        stock_movements: fig.stockMovements,
+        opening_cash_paisa: opening,
+        cash_handed_over_paisa: handed,
+        expected_cash_paisa: expectedCash,
+        actual_cash_paisa: actualCash,
+        cash_variance_paisa: cashVariance,
+        ...balances,
+        expected_stock: fig.expectedStock,
+        actual_stock: d.actual_stock,
+        stock_variances: stockVariance,
+        reason: d.reason || "",
+        notes: d.notes || "",
+        status: "submitted",
+        version: (old?.version || 0) + 1,
+        submitted_by: user.id,
+        submitted_at: now,
+        approved_by: null,
+        approved_at: null,
+        decision_by: null,
+        decision_at: null,
+        decision_reason: "",
+      };
+      upsert(s.manager_daily_closings, result);
+      break;
+    }
+    case "closing.manager_approve":
+    case "closing.manager_reject":
+    case "closing.manager_reopen": {
+      if (!admin) throw Error("Admin approval required");
+      s.manager_daily_closings ||= [];
+      const old = s.manager_daily_closings.find((r) => r.id === d.id);
+      if (!old || old.version !== d.expected_version) throw Error("Closing changed; refresh before updating");
+      const reason = String(d.reason || "").trim();
+      if (op.kind === "closing.manager_approve" && old.status !== "submitted")
+        throw Error("Only submitted manager closings can be approved");
+      if (op.kind === "closing.manager_reject" && (old.status !== "submitted" || !reason))
+        throw Error("A rejection reason is required for a submitted manager closing");
+      if (op.kind === "closing.manager_reopen" && (!["approved", "rejected"].includes(old.status) || !reason))
+        throw Error("A reopening reason is required for an approved or rejected manager closing");
+      const approved = op.kind === "closing.manager_approve";
+      result = {
+        ...old,
+        status: approved ? "approved" : op.kind === "closing.manager_reject" ? "rejected" : "reopened",
+        approved_by: approved ? user.id : null,
+        approved_at: approved ? now : null,
+        decision_by: user.id,
+        decision_at: now,
+        decision_reason: reason,
+        version: old.version + 1,
+      };
+      upsert(s.manager_daily_closings, result);
+      break;
+    }
     case "closing.submit": {
       const ownsSeller = s.salesmen.some(
         (row) => row.id === d.salesman_id && row.user_id === user.id && row.active,
       );
+      // v39: a manager may close for any active salesman (company-wide), not only assigned ones.
       const managesSeller = user.role === "manager" && s.salesmen.some(
-        (row) => row.id === d.salesman_id && row.manager_user_id === user.id && row.active && !row.deleted_at,
+        (row) => row.id === d.salesman_id && row.active && !row.deleted_at,
       );
       if (!admin && !ownsSeller && !managesSeller)
-        throw Error("Only the assigned salesman, their manager, or Admin may submit this closing");
+        throw Error("Only the assigned salesman, a manager, or Admin may submit this closing");
       const old = s.daily_closings.find(
         (row) =>
           row.salesman_id === d.salesman_id && row.business_date === d.date,
@@ -1148,7 +1312,7 @@ export class Store extends EventTarget {
     // Stock issues/returns change two linked ledgers. When online, wait for the
     // database transaction to confirm before the UI closes the form; otherwise
     // an RPC/RLS/migration error could be swallowed by the generic offline queue.
-    if ((["stock.add", "stock.issue", "stock.return"].includes(kind) || kind.startsWith("cashbook.")) && this.client && navigator.onLine) {
+    if ((["stock.add", "stock.issue", "stock.return"].includes(kind) || kind.startsWith("cashbook.") || kind.startsWith("closing.manager_")) && this.client && navigator.onLine) {
       if (this.queue.length) {
         await this.sync();
         if (this.queue.length || this.error) {
@@ -1167,7 +1331,7 @@ export class Store extends EventTarget {
         if (error) {
           const message = error.message || String(error);
           if (/schema cache|could not find the function|function .* does not exist|unknown command/i.test(message)) {
-            throw Error((kind === "stock.add" ? "The stock-entry database function is missing or outdated. Apply supabase/fix_stock_entry_idempotency.sql, then refresh the app. Original error: " : kind.startsWith("cashbook.") ? "The Cash & Bank Book migration may be missing. Apply supabase/cash_bank_book.sql after the existing schema and operational migrations. Original error: " : "The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: ") + message);
+            throw Error((kind === "stock.add" ? "The stock-entry database function is missing or outdated. Apply supabase/fix_stock_entry_idempotency.sql, then refresh the app. Original error: " : kind.startsWith("closing.manager_") ? "The manager closing migration is missing. Apply supabase/manager_closing_expenses_v40.sql in the Supabase SQL editor and refresh the app. Original error: " : kind.startsWith("cashbook.") ? "The Cash & Bank Book migration may be missing. Apply supabase/cash_bank_book.sql after the existing schema and operational migrations. Original error: " : "The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: ") + message);
           }
           throw error;
         }
