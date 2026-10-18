@@ -80,7 +80,7 @@ function localCashbookLedger(state) {
     rows.push({posting_key:`local:payment:${payment.id}:receivable`,account_key:"market_credit",business_date:payment.date,amount_paisa:-Number(payment.amount_paisa),entry_type:"receivable"});
   }
   for (const expense of (state.expenses || []).filter(e=>!e.deleted_at)) {
-    rows.push({posting_key:`local:expense:${expense.id}`,account_key:accountKey(expense.method,expense.salesman_id),business_date:expense.date,amount_paisa:-Number(expense.amount_paisa),entry_type:"expense"});
+    rows.push({posting_key:`local:expense:${expense.id}`,account_key:expense.cashbook_account_key || accountKey(expense.method,expense.salesman_id),business_date:expense.date,amount_paisa:-Number(expense.amount_paisa),entry_type:"expense"});
   }
   return rows;
 }

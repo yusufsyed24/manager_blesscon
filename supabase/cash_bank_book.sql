@@ -60,6 +60,7 @@ values
 on conflict(account_key) do nothing;
 
 alter table public.payments add column if not exists cashbook_account_key text references public.cashbook_accounts(account_key);
+alter table public.expenses add column if not exists cashbook_account_key text references public.cashbook_accounts(account_key);
 
 -- Keep the existing receipt RPC and its permission/validation checks, adding only the optional
 -- receiving-account key. This is safe to re-run against the current function definition.
@@ -241,17 +242,17 @@ as $$
 declare acct text; sid text;
 begin
   sid := new.salesman_id;
-  acct := private.cashbook_method_account(new.method,sid);
+  acct := coalesce(new.cashbook_account_key, private.cashbook_method_account(new.method,sid));
   if tg_op='INSERT' then
     if new.deleted_at is null then
       insert into public.cashbook_entries(posting_key,transaction_id,business_date,account_key,amount_paisa,entry_type,source_table,source_id,reference,description,salesman_id,created_by)
       values('expense:'||new.id||':v'||coalesce(new.version,1),new.id,new.date,acct,-new.amount_paisa,'expense','expenses',new.id::text,'','Expense — '||new.category,sid,new.created_by)
       on conflict(posting_key) do nothing;
     end if;
-  elsif (old.amount_paisa,old.method,old.date,old.salesman_id,old.deleted_at) is distinct from (new.amount_paisa,new.method,new.date,new.salesman_id,new.deleted_at) then
+  elsif (old.amount_paisa,old.method,old.cashbook_account_key,old.date,old.salesman_id,old.deleted_at) is distinct from (new.amount_paisa,new.method,new.cashbook_account_key,new.date,new.salesman_id,new.deleted_at) then
     if old.deleted_at is null then
       insert into public.cashbook_entries(posting_key,transaction_id,business_date,account_key,amount_paisa,entry_type,source_table,source_id,description,salesman_id,created_by)
-      values('expense:'||old.id||':reverse-v'||old.version,old.id,current_date,private.cashbook_method_account(old.method,old.salesman_id),old.amount_paisa,'reversal','expenses',old.id::text,'Reversal of edited/deleted expense',old.salesman_id,auth.uid())
+      values('expense:'||old.id||':reverse-v'||old.version,old.id,current_date,coalesce(old.cashbook_account_key, private.cashbook_method_account(old.method,old.salesman_id)),old.amount_paisa,'reversal','expenses',old.id::text,'Reversal of edited/deleted expense',old.salesman_id,auth.uid())
       on conflict(posting_key) do nothing;
     end if;
     if new.deleted_at is null then
@@ -341,7 +342,7 @@ from public.payments p join public.invoices i on i.id=p.invoice_id join public.o
 on conflict(posting_key) do nothing;
 
 insert into public.cashbook_entries(posting_key,transaction_id,business_date,account_key,amount_paisa,entry_type,source_table,source_id,description,salesman_id,created_by)
-select 'expense:'||e.id||':v'||coalesce(e.version,1),e.id,e.date,private.cashbook_method_account(e.method,e.salesman_id),-e.amount_paisa,'expense','expenses',e.id::text,'Expense — '||e.category,e.salesman_id,e.created_by
+select 'expense:'||e.id||':v'||coalesce(e.version,1),e.id,e.date,coalesce(e.cashbook_account_key, private.cashbook_method_account(e.method,e.salesman_id)),-e.amount_paisa,'expense','expenses',e.id::text,'Expense — '||e.category,e.salesman_id,e.created_by
 from public.expenses e where e.deleted_at is null
 on conflict(posting_key) do nothing;
 

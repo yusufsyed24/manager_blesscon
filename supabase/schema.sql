@@ -75,7 +75,7 @@ case t
  when 'price_tiers' then allowed:=array['id','product_id','min_cartons','label','rate_paisa'];
  when 'salesmen' then allowed:=array['id','name','phone','user_id','joining_date','base_salary_paisa','monthly_target','active','off_days'];
  when 'customers' then allowed:=array['id','name','phone','email','address','salesman_id'];
- when 'expenses' then allowed:=array['id','date','category','description','amount_paisa','method','attachment_path','salesman_id','salary_period'];
+ when 'expenses' then allowed:=array['id','date','category','description','amount_paisa','method','cashbook_account_key','attachment_path','salesman_id','salary_period'];
  when 'settings' then allowed:=array['id','value'];
  else raise exception 'Unsupported table'; end case;
 if not adm and not ((t in ('products','price_tiers') and public.has_permission('products','edit')) or t='customers' or (t='expenses' and public.has_permission('expenses','create'))) then raise exception 'Admin or product-edit permission required'; end if;

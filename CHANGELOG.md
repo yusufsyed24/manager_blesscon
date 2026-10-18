@@ -422,3 +422,13 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Fixed manager daily closing figures so direct manager sales are included when the linked invoice's `sold_by_user_id` is the manager, even if another account created the order.
 - This keeps cash collections for manager-owned direct sales in the manager's expected cash calculation and avoids a false negative expected closing caused by missing sale attribution.
 - Salesman-target attribution remains separate; this change is limited to manager closing scope.
+
+## Cash & Bank recovery/transfer clarity (18 October 2026)
+- Clarified Cash & Bank Book labels and guidance to distinguish receivable recoveries from liquid-account outflows.
+- Documented the invariant that account transfers must be equal-and-opposite and must not change total liquid funds. Historical ledger inconsistencies require audited correction rather than silent rewriting.
+
+## v49 — Expense-specific cash/bank account selection
+- Added a “Pay from account” selector to the Expense form, including active cash/bank/wallet accounts and the supplied account key `pk80mucb1156654281004446` as a fallback option.
+- Expense records now carry `cashbook_account_key`; local cashbook projections and Supabase posting trigger use the explicitly selected account, falling back to legacy payment-method mapping only when no account is selected.
+- Added `supabase/expense_specific_cashbook_account.sql` migration to add the FK column, extend `private.save_master`'s expense allow-list, and update expense ledger posting.
+- Validation: JavaScript syntax checks passed for root and mirrored app/store files. `scripts/check.mjs` could not run because the environment lacks the `typescript` package. No live Supabase database was accessed or changed.
