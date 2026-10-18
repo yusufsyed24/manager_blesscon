@@ -97,13 +97,19 @@ export function managerTeamIds(state, managerId) {
 export function managerClosingFigures(state, managerId, date) {
   const team = managerTeamIds(state, managerId);
   const inTeam = (sid) => !!sid && team.includes(sid);
+  const invoices = state.invoices || [];
+  const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+  const invoiceByOrderId = new Map(invoices.filter((i) => i.order_id).map((i) => [i.order_id, i]));
+  // A manager's direct sale may have been entered by an admin/other account.
+  // Attribute it by sold_by_user_id, not only by orders.created_by.
+  const isManagerDirect = (o) => {
+    const invoice = invoiceByOrderId.get(o.id);
+    return !o.salesman_id && (o.created_by === managerId || o.sold_by_user_id === managerId || invoice?.sold_by_user_id === managerId);
+  };
   const orders = (state.orders || []).filter(
-    (o) =>
-      o.status === "confirmed" &&
-      (inTeam(o.salesman_id) || (!o.salesman_id && o.created_by === managerId)),
+    (o) => o.status === "confirmed" && (inTeam(o.salesman_id) || isManagerDirect(o)),
   );
   const orderById = new Map(orders.map((o) => [o.id, o]));
-  const invoiceById = new Map((state.invoices || []).map((i) => [i.id, i]));
   const sales = orders.filter((o) => o.date === date);
   const collectionsByMethod = {};
   for (const p of state.payments || []) {

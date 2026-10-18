@@ -417,3 +417,8 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Monthly target performance enriches linked orders with invoice seller attribution and classifies the manager's own direct sales separately from salesman achievement.
 - Salesman targets remain based on salesman-attributed orders; manager-direct cartons are excluded from the salesman subtotal.
 - Validation note: automated Vitest suite could not run in this environment because dependencies (`vitest`) are not installed. Run `npm ci`, `npm test`, and `npm run check` before production handover.
+
+## v47 — Manager direct-sale cash closing attribution
+- Fixed manager daily closing figures so direct manager sales are included when the linked invoice's `sold_by_user_id` is the manager, even if another account created the order.
+- This keeps cash collections for manager-owned direct sales in the manager's expected cash calculation and avoids a false negative expected closing caused by missing sale attribution.
+- Salesman-target attribution remains separate; this change is limited to manager closing scope.
