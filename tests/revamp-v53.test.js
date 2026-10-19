@@ -18,7 +18,7 @@ describe("v53 salesman profile safeguards", () => {
 
   it("does not show monetary cards on the salesman overview", () => {
     const start = app.indexOf("function renderSalesmanDashboard() {");
-    const end = app.indexOf("function renderAdminMyProfile()", start);
+    const end = app.indexOf("function hydrateTeamNotifications()", start);
     const view = app.slice(start, end);
     expect(view).toContain("Quantity sold today");
     expect(view).toContain("Date of birth");

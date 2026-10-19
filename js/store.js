@@ -48,6 +48,8 @@ export function empty() {
     ["settings_version", 1],
     ["stock", []],
     ["cashbook_accounts", [
+      { account_key:"mcb_bank",label:"MCB Bank",account_type:"bank",payment_method:"Bank",opening_balance_paisa:0,active:true },
+      { account_key:"al_habib_bank",label:"Al Habib Bank",account_type:"bank",payment_method:"Bank",opening_balance_paisa:0,active:true },
       { account_key:"cash_hand",label:"Cash in Hand",account_type:"cash",payment_method:"Cash",opening_balance_paisa:0,active:true },
       { account_key:"bank_default",label:"Cash in Bank — Default account",account_type:"bank",payment_method:"Bank",opening_balance_paisa:0,active:true },
       { account_key:"easypaisa",label:"EasyPaisa",account_type:"wallet",payment_method:"Easypaisa",opening_balance_paisa:0,active:true },
@@ -368,8 +370,13 @@ export function localApply(base, op, user) {
     }
     case "master.save": {
       const { table, record, expected_version } = d;
-      if (!admin && !["customers", "expenses"].includes(table))
+      if (!admin && !(user?.role === "manager" && table === "salesmen") && !["customers", "expenses"].includes(table))
         throw Error("Admin required");
+      if (user?.role === "manager" && table === "salesmen") {
+        const assigned = managerTeamIds(s, user.id).map(String);
+        if (record.manager_user_id !== user.id || (expected_version != null && !assigned.includes(String(record.id))))
+          throw Error("Managers may create salesmen assigned to their own team or edit only their assigned salesmen.");
+      }
       const old =
         table === "settings"
           ? { version: s.settings_version }

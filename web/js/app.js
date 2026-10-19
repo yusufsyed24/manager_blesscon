@@ -73,7 +73,7 @@ const S = () => store.state,
   mgmt = () => user?.role === "admin" || user?.role === "manager",
   own = () => S().salesmen.find((s) => s.user_id === user.id);
 const canStockWrite = () =>
-  admin() ||
+  admin() || manager() ||
   S().user_permissions.some(
     (permission) =>
       permission.user_id === user.id &&
@@ -302,7 +302,7 @@ function render() {
     else b.removeAttribute("aria-current");
   });
   const methods = {
-    dashboard: user.role === "salesman" ? renderSalesmanDashboard : renderDashboard,
+    dashboard: user.role === "salesman" ? renderSalesmanDashboard : manager() ? renderManagerDashboard : renderDashboard,
     myprofile: renderMyProfile,
     dsr: renderDailyReport,
     closing: renderDailyClosing,
@@ -326,10 +326,13 @@ function render() {
   else if (page === "myprofile" && manager()) hydrateManagerFieldwork().catch((e) => toast("Could not load Manager fieldwork: " + e.message));
   else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
   if (page === "staff" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load salesman fieldwork: " + e.message));
+  if (page === "staff" && client) hydrateTeamNotifications().catch((e) => toast("Could not load team notifications: " + e.message));
   if (page === "dsr")
     $("page").insertAdjacentHTML("beforeend", dsrClosingSection());
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
+  if (page === "dashboard" && user.role === "salesman") hydrateSalesmanNotifications().catch((e) => toast("Could not load notifications: " + e.message));
+  if ((page === "staff" || (page === "dashboard" && manager())) && (admin() || manager())) hydrateSalesmanPhotoNodes().catch((e) => toast("Could not load employee photos: " + e.message));
 }
 async function hydrateManagerFieldwork() {
   if (!manager() || !client || page !== "myprofile") return;
@@ -372,10 +375,11 @@ async function hydrateSalesmanProfile() {
     const { data, error } = await client.storage.from("employee-private").createSignedUrl(seller.photo_path, 3600);
     if (!error && data?.signedUrl && avatar.isConnected) avatar.innerHTML = `<img src="${esc(data.signedUrl)}" alt="Your profile photo">`;
   }
-  const [attendance, documents, visits] = await Promise.all([
+  const [attendance, documents, visits, assignments] = await Promise.all([
     client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", { ascending: false }).limit(30),
     client.from("employee_documents").select("document_type,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", { ascending: false }).limit(50),
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", { ascending: false }).limit(30),
+    client.from("salesman_area_assignments").select("area_name,effective_from,effective_to,instructions").eq("salesman_id", seller.id).order("effective_from", { ascending: false }).limit(50),
   ]);
   const history = (id, result, headers, rows, emptyText) => {
     const el = $(id); if (!el || !el.isConnected) return;
@@ -385,6 +389,16 @@ async function hydrateSalesmanProfile() {
   history("my-attendance-history", attendance, ["Date","Check-in","Check-out","Status"], r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleTimeString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleTimeString() : "—"), esc(r.status)], "No attendance records yet.");
   history("my-document-history", documents, ["Document","Type","Uploaded","Size"], r => [esc(r.file_name), esc(r.document_type), esc(new Date(r.created_at).toLocaleDateString()), `${Math.ceil(num(r.size_bytes)/1024)} KB`], "No documents uploaded yet.");
   history("my-visit-history", visits, ["Visited","Customer","Area","Purpose","Location"], r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(4)}, ${num(r.longitude).toFixed(4)}`], "No customer visits recorded yet.");
+  history("my-area-history", assignments, ["Area","Effective from","Effective until","Instructions"], r => [esc(r.area_name), esc(r.effective_from), esc(r.effective_to || "Current"), esc(r.instructions || "—")], "No area assignments recorded yet.");
+}
+
+function salesmanTargetDetails(salesmanId) {
+  const seller = own();
+  if (!seller || seller.id !== salesmanId) throw Error("You can only view your own target details.");
+  const s = S(), target = targetRows().find(t => t.id === seller.id);
+  const days = s.salesman_daily_targets.filter(d => d.salesman_id === seller.id && d.date >= monthStart(today()) && d.date <= today()).sort((a,b)=>a.date.localeCompare(b.date));
+  const rows = days.map(d => [esc(d.date), num(d.effective_target).toFixed(2), num(d.achieved_cartons).toFixed(2), num(d.achieved_boxes), Math.max(0,num(d.effective_target)-num(d.achieved_cartons)).toFixed(2), num(d.carried_forward_out).toFixed(2)]);
+  modal("My monthly target · " + today().slice(0,7), `<section class="panel"><div class="cards">${card("Monthly target", `${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved", `${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining", `${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement", `${num(target?.percent).toFixed(1)}%`)}</div>${table(["Date","Daily target (ct)","Achieved (ct)","Boxes","Remaining (ct)","Carry forward (ct)"], rows, "No daily target records are available for this month.")}<p class="muted">Quantities only. Cancelled, returned and reversed sales follow the business target policy.</p></section>`);
 }
 
 function renderSalesmanDashboard() {
@@ -394,14 +408,107 @@ function renderSalesmanDashboard() {
   const todays = orders.filter(o => o.date === today()), month = orders.filter(o => String(o.date || "").startsWith(today().slice(0,7)));
   const held = visible(s.products).map(p => ({name:p.name, qty:heldStock(p.id, sid), unit:p.unit || "boxes"})).filter(x=>x.qty>0);
   const target = targetRows().find(t=>t.id===sid);
-  const soldQuantity = list => list.reduce((sum,o) => sum + (s.order_items||[]).filter(i => i.order_id===o.id).reduce((n,i)=>n+num(i.quantity),0),0);
+  const soldQuantity = list => list.reduce((sum,o) => sum + (s.order_items||[]).filter(i => i.order_id===o.id).reduce((n,i)=>n+num(i.boxes),0),0);
   const photo = seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="${esc(seller.name)} profile photo">` : "♙";
   return head("My overview", `Welcome, ${seller.name}. This dashboard shows your own operational activity only.`, btn("Open my profile", "go-myprofile", "", "", "gold")) +
-    `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p>Employee ID: ${esc(seller.id)} · Date of birth: ${esc(seller.date_of_birth || "Not recorded")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div></section>
-    <div class="cards">${card("Quantity sold today",soldQuantity(todays),`${todays.length} confirmed order(s)`,true)}${card("Quantity sold this month",soldQuantity(month),`${month.length} confirmed order(s)`)}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Recorded quantity against you")}${card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}</div>
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="salesman-dashboard-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p>Employee ID: ${esc(seller.id)} · Date of birth: ${esc(seller.date_of_birth || "Not recorded")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div></section>
+    <div class="cards">${card("Quantity sold today",soldQuantity(todays),`${todays.length} confirmed order(s)`,true)}${card("Quantity sold this month",soldQuantity(month),`${month.length} confirmed order(s)`)}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Recorded quantity against you")}${card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}<div class="card"><div class="label">Monthly salary</div><div class="value" id="salesman-salary-value">Loading…</div><div class="meta" id="salesman-salary-meta">Waiting for the server calculation</div></div></div>
     <section class="panel"><div class="panel-heading"><h2>My stock in hand</h2>${btn("View stock details","go-stock")}</div>${table(["Product","Balance","Unit"],held.map(x=>[esc(x.name),x.qty.toFixed(2),esc(x.unit)]),"No stock currently recorded against your account.")}</section>
-    <section class="panel"><div class="panel-heading"><h2>My latest sales quantities</h2>${btn("View sales","go-myorders")}</div>${table(["Date","Order","Quantity"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.date),esc(o.number),num((s.order_items||[]).filter(i=>i.order_id===o.id).reduce((n,i)=>n+num(i.quantity),0))]),"No sales recorded yet.")}</section>
-    <section class="panel"><h2>Quick access</h2><div class="actions">${btn("View my profile","go-myprofile","","","gold")}${btn("Daily sales report","go-dsr")}${btn("View stock","go-stock")}</div></section>`;
+    <section class="panel"><div class="panel-heading"><h2>My latest sales quantities</h2>${btn("View sales","go-myorders")}</div>${table(["Date","Order","Quantity"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.date),esc(o.number),num((s.order_items||[]).filter(i=>i.order_id===o.id).reduce((n,i)=>n+num(i.boxes),0))]),"No sales recorded yet.")}</section>
+    <section class="panel"><div class="panel-heading"><h2>Messages from management</h2><span class="muted">Updates and instructions</span></div><div id="salesman-notifications"><p class="muted">Loading messages…</p></div></section>
+    <section class="panel"><h2>Quick access</h2><div class="actions">${btn("View my profile","go-myprofile","","","gold")}${btn("Monthly target details","my-target-details",sid)}${btn("Salary breakdown","my-salary-details",sid)}${btn("Daily sales report","go-dsr")}${btn("View stock","go-stock")}</div></section>`;
+}
+
+async function hydrateSalesmanPhotoNodes() {
+  if (!client || !(admin() || manager())) return;
+  const scope = manager() ? new Set(managerTeamIds(S(), user.id).map(String)) : null;
+  const sellers = visible(S().salesmen).filter(s => (!scope || scope.has(String(s.id))) && s.photo_path && s.user_id);
+  await Promise.all(sellers.map(async seller => {
+    const node = $("team-photo-" + seller.id); if (!node || !node.isConnected) return;
+    const signed = await client.storage.from("employee-private").createSignedUrl(seller.photo_path, 3600);
+    if (!signed.error && signed.data?.signedUrl && node.isConnected) node.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="${esc(seller.name)} profile photo" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`;
+  }));
+}
+async function hydrateTeamNotifications() {
+  if (!client || !(admin() || manager()) || page !== "staff") return;
+  const root = $("team-notification-history"); if (!root) return;
+  const { data, error } = await client.from("employee_notifications").select("id,recipient_salesman_id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,created_at").order("created_at", { ascending: false }).limit(100);
+  if (error) { root.innerHTML = `<p class="notice danger">Could not load message history: ${esc(error.message)}</p>`; return; }
+  const sellers = new Map(S().salesmen.map(s => [String(s.id), s.name]));
+  const rows = (data || []).filter(n => admin() || managerTeamIds(S(), user.id).includes(n.recipient_salesman_id)).map(n => [esc(sellers.get(String(n.recipient_salesman_id)) || n.recipient_salesman_id), esc(n.title || "Message"), esc(n.message), esc(n.priority), n.read_at ? (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")) : badge("Unread","amber"), esc(new Date(n.created_at).toLocaleString())]);
+  root.innerHTML = table(["Recipient","Title","Message","Priority","Status","Sent"], rows, "No messages have been sent yet.");
+}
+async function hydrateSalesmanNotifications() {
+  if (!client || user?.role !== "salesman" || !own()) return;
+  const root = $("salesman-notifications");
+  const avatar = $("salesman-dashboard-avatar");
+  if (avatar && own()?.photo_path) { const signed = await client.storage.from("employee-private").createSignedUrl(own().photo_path, 3600); if (!signed.error && signed.data?.signedUrl) avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="${esc(own().name)} profile photo">`; }
+  const salaryValue = $("salesman-salary-value"), salaryMeta = $("salesman-salary-meta");
+  if (salaryValue && salaryMeta) {
+    const result = await client.rpc("own_salary_snapshot");
+    if (result.error) { salaryValue.textContent = "Unavailable"; salaryMeta.textContent = "Salary calculation could not be loaded. Contact Admin."; }
+    else if (result.data) { salaryValue.textContent = money(result.data.total_paisa || 0); salaryMeta.textContent = result.data.status === "posted" ? `Posted for ${result.data.salary_period}` : `Estimate for ${result.data.salary_period} · pending Admin approval`; }
+  }
+  if (!root) return;
+  const { data, error } = await client.from("employee_notifications").select("id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,expires_at,created_at").eq("recipient_salesman_id", own().id).order("created_at", { ascending: false }).limit(50);
+  if (error) { root.innerHTML = `<p class="notice danger">Notifications unavailable: ${esc(error.message)}. Apply the revamp migration and verify access policies.</p>`; return; }
+  const activeMessages = (data || []).filter(n => !n.expires_at || n.expires_at >= new Date().toISOString());
+  const unreadCount = activeMessages.filter(n => !n.read_at).length;
+  const rows = activeMessages.map(n => [`<b>${esc(n.title || "Message")}</b>${n.read_at ? "" : ` ${badge("UNREAD","amber")}`}<small>${esc(new Date(n.created_at).toLocaleString())} · ${esc(n.priority)}</small>`, esc(n.message), n.requires_acknowledgement && !n.acknowledged_at ? btn("Acknowledge", "ack-notification", n.id, "", "gold") : (!n.read_at ? btn("Mark read", "read-notification", n.id) : (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")))]);
+  root.innerHTML = `<p class="notice">${unreadCount} unread message${unreadCount===1?"":"s"}</p>` + table(["Message","Details","Action"], rows, "No messages from your manager or administrator.");
+}
+function notificationModal(salesmanId = "") {
+  if (!(admin() || manager())) throw Error("Only Admin or an authorized Manager can send messages.");
+  const sellers = visible(S().salesmen).filter(s => admin() || managerTeamIds(S(), user.id).includes(s.id));
+  const choices = sellers.map(s => [s.id, `${s.name} (${s.id})`]);
+  if (salesmanId && !choices.some(x => x[0] === salesmanId)) throw Error("This salesman is outside your assigned team.");
+  modal(salesmanId ? "Message salesman" : "Team announcement", `<form id="notification-form" data-salesman="${esc(salesmanId)}"><div class="grid">${salesmanId ? `<p>Recipient: <b>${esc(sellers.find(s=>s.id===salesmanId)?.name || salesmanId)}</b></p><input type="hidden" name="recipient_salesman_id" value="${esc(salesmanId)}">` : select("Recipient", "recipient_salesman_id", [["__team__", "All salesmen in my permitted scope"], ...choices], "__team__")}${field("Title", "title", "", "text", 'required maxlength="160"')}${area("Message", "message", "")}${select("Priority", "priority", [["low","Low"],["normal","Normal"],["high","High"],["urgent","Urgent"]], "normal")}${select("Acknowledgement", "requires_acknowledgement", [["false","No acknowledgement required"],["true","Require acknowledgement"]], "false")}${field("Optional expiry date", "expires_at", "", "date")}</div><button class="gold" type="submit">Send message</button></form>`);
+}
+async function areaAssignmentModal(salesmanId) {
+  if (!(admin() || manager())) throw Error("Admin or Manager access required.");
+  const seller = S().salesmen.find(s => s.id === salesmanId);
+  if (!seller || (manager() && !managerTeamIds(S(), user.id).includes(salesmanId))) throw Error("This salesman is outside your assigned team.");
+  if (!client) throw Error("Area assignment requires an online connection.");
+  const { data, error } = await client.from("sales_areas").select("name").eq("active", true).order("name");
+  if (error) throw error;
+  const choices = [["", "Select an area"], ...(data || []).map(a => [a.name,a.name])];
+  if (choices.length === 1) throw Error("No active areas exist. Ask an Admin to create an area in Manage areas.");
+  const current = seller.territory || seller.area || "";
+  modal("Assign sales area · " + seller.name, `<form id="area-assignment-form" data-salesman="${esc(salesmanId)}"><div class="grid">${select("Existing active area", "area_name", choices, choices.some(a=>a[0]===current)?current:"")}${field("Effective from", "effective_from", today(), "date", "required")}${field("Effective until (optional)", "effective_to", "", "date")}${area("Operational instructions", "instructions", "")}</div><p class="muted">Choose an active area from the Admin catalogue. Assignments are effective-dated and historical assignments are preserved.</p><button class="gold" type="submit">Save area assignment</button></form>`);
+}
+async function manageAreasModal() {
+  if (!admin() || !client) throw Error("Only an online Admin can manage area definitions.");
+  const { data, error } = await client.from("sales_areas").select("id,name,description,active,created_at").order("name");
+  if (error) throw error;
+  const rows = (data||[]).map(a=>[`<b>${esc(a.name)}</b><small>${esc(a.description||"")}</small>`,a.active?badge("Active","green"):badge("Inactive","amber"),esc(a.created_at?new Date(a.created_at).toLocaleDateString():"—"),btn(a.active?"Deactivate":"Activate","toggle-area",a.id)]);
+  modal("Manage sales areas", `<section class="panel">${table(["Area","Status","Created","Action"],rows,"No areas yet. Add your first area below.")}</section><form id="sales-area-form"><div class="grid">${field("Area name","name","","text",'required maxlength="120"')}${field("Description / instructions","description","")}</div><button class="gold" type="submit">Add area</button></form><p class="muted">Deactivating an area prevents new assignments but preserves its historical assignments.</p>`);
+}
+
+function attendanceModal(salesmanId) {
+  if (!(admin() || manager())) throw Error("Attendance is manager/admin controlled.");
+  const seller = S().salesmen.find(s => s.id === salesmanId);
+  if (!seller || (manager() && !managerTeamIds(S(), user.id).includes(salesmanId))) throw Error("This salesman is outside your assigned team.");
+  modal("Record attendance · " + seller.name, `<form id="attendance-manager-form" data-salesman="${esc(salesmanId)}"><div class="grid">${field("Attendance date", "attendance_date", today(), "date", "required")}${select("Status", "status", [["present","Present"],["late","Late"],["half_day","Half day"],["absent","Absent"],["leave","Leave"],["pending","Pending"]], "present")}${area("Correction reason / manager remarks", "remarks", "")}</div><p class="muted">Saving creates or updates the single attendance record for this salesman and date. Changes are logged by the database audit trigger where configured.</p><button class="gold" type="submit">Save attendance</button></form>`);
+}
+
+function renderManagerDashboard() {
+  const s = S(), teamIds = new Set(managerTeamIds(s, user.id).map(String));
+  const team = visible(s.salesmen).filter(x => teamIds.has(String(x.id)));
+  const from = monthStart(today()), to = today();
+  const teamOrders = s.orders.filter(o => teamIds.has(String(o.salesman_id)) && o.status === "confirmed" && !o.deleted_at && o.date >= from && o.date <= to);
+  const quantity = orders => orders.reduce((sum, o) => sum + (s.order_items || []).filter(i => i.order_id === o.id).reduce((n, i) => n + num(i.boxes), 0), 0);
+  const targets = targetRows().filter(t => teamIds.has(String(t.id)));
+  const achievedCartons = targets.reduce((sum, t) => sum + num(t.achieved), 0);
+  const teamTarget = num(s.settings.company_monthly_target) || 2000;
+  const attendance = (s.attendance_records || []).filter(a => teamIds.has(String(a.salesman_id)) && a.attendance_date === today());
+  const present = attendance.filter(a => ["present", "late", "half_day"].includes(a.status)).length;
+  const absent = attendance.filter(a => ["absent", "leave"].includes(a.status)).length;
+  const recorded = new Set(attendance.map(a => String(a.salesman_id))).size;
+  const stockIssues = (s.salesman_stock_movements || []).filter(m => teamIds.has(String(m.salesman_id)) && m.kind === "issue" && m.date === today()).reduce((n,m)=>n+num(m.boxes),0);
+  const stockReturns = (s.salesman_stock_movements || []).filter(m => teamIds.has(String(m.salesman_id)) && String(m.kind).startsWith("return_") && m.date === today()).reduce((n,m)=>n+Math.abs(num(m.boxes)),0);
+  const cards = `<div class="cards">${card("Team monthly target", `${teamTarget.toFixed(2)} cartons`, "Configured team target", true)}${card("Team achieved", `${achievedCartons.toFixed(2)} cartons`, `${(achievedCartons / teamTarget * 100 || 0).toFixed(1)}% achieved`)}${card("Remaining target", `${Math.max(0, teamTarget-achievedCartons).toFixed(2)} cartons`, "No negative remaining target")}${card("Salesmen present", present, `${team.length} assigned`)}${card("Salesmen absent / leave", absent, "Attendance records today")}${card("Attendance missing", Math.max(0,team.length-recorded), "Not yet recorded")}${card("Boxes sold today", quantity(teamOrders.filter(o=>o.date===today())), "Confirmed team sales quantity")}${card("Stock issued today", stockIssues.toFixed(2), "Existing stock ledger")}${card("Stock returned today", stockReturns.toFixed(2), "Existing stock ledger")}</div>`;
+  return head("Manager overview", "Operational control for your assigned salesmen. Financial account balances, revenue, wholesale prices and profit are not displayed.", btn("Manage salesmen", "go-staff", "", "", "gold")) + cards +
+    `<section class="panel"><div class="panel-heading"><h2>My team</h2>${btn("Open salesmen & targets", "go-staff")}</div>${table(["Salesman","Area","Attendance","Monthly target","Achieved","Remaining","Actions"], targets.map(t => { const seller=team.find(x=>String(x.id)===String(t.id)); const att=attendance.find(a=>String(a.salesman_id)===String(t.id)); return [`<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b>`,esc(seller?.territory||seller?.area||"Not assigned"),esc(att?.status||"Not recorded"),`${num(t.monthly_target).toFixed(2)} cartons`,`${num(t.achieved).toFixed(2)} cartons`,`${Math.max(0,num(t.monthly_target)-num(t.achieved)).toFixed(2)} cartons`,`${btn("Details","salesman-profile",t.id)}${btn("Attendance","mark-attendance",t.id)}${btn("Message","notify-salesman",t.id)}`]; }), "No salesmen are assigned to this manager. Admin should assign employees from Salesmen & Targets.")}</section>`;
 }
 
 function renderAdminMyProfile() {
@@ -409,7 +516,7 @@ function renderAdminMyProfile() {
   const profile = S().profiles?.find((p) => String(p.id) === String(current.id)) || {};
   return head("My profile & fieldwork", "Administrator account details and a consolidated view of Manager and salesman attendance, documents, customer visits and profile photos.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="admin-profile-avatar">♙</div><div><h2>${esc(current.name || profile.display_name || "Administrator")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Administrator</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="admin-profile-photo">Upload / change administrator profile picture</label><input id="admin-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="admin-profile-photo-upload">Upload profile picture</button></div><p class="muted">Use a JPG, PNG or WebP image up to 5 MB. Your picture is private and visible to authorized users.</p><p class="muted">This page displays the signed-in administrator account. Salesman records and photos below are read-only and do not require the administrator to be linked to a salesman record.</p></section>
-    <section class="panel"><div class="panel-heading"><h2>Manager fieldwork & uploads</h2><span class="muted">Admin view · BABAR ALI KHAN</span></div><div id="admin-manager-fieldwork-data"><p class="muted">Loading Manager attendance, uploads and visits…</p></div></section><section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
+    <section class="panel"><div class="panel-heading"><h2>Manager fieldwork & uploads</h2><span class="muted">Admin view · manager accounts</span></div><div id="admin-manager-fieldwork-data"><p class="muted">Loading Manager attendance, uploads and visits…</p></div></section><section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
 }
 
 function renderManagerMyProfile() {
@@ -434,9 +541,10 @@ function renderMyProfile() {
   const photo = seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="${esc(seller.name)} profile photo">` : "♙";
   return head("My profile", "Your profile and employment documents are managed by your manager. Contact your manager to request a correction.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>Date of birth: <b>${esc(seller.date_of_birth || "Not recorded")}</b></p><p>Assigned area: <b>${esc(seller.territory || seller.area || "Not assigned")}</b></p><p>Status: <b>${seller.active ? "Active" : "Inactive"}</b></p></div></div><p class="notice">Profile details, photograph, date of birth, NIC and education documents can only be changed by authorized management. Please contact your manager if anything needs correction.</p></section>
-    <div class="cards">${card("Quantity sold today", orders.filter(o=>o.date===today()).reduce((n,o)=>n+(s.order_items||[]).filter(i=>i.order_id===o.id).reduce((a,i)=>a+num(i.quantity),0),0), "Confirmed sales quantity")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Recorded quantity against you")}</div>
+    <div class="cards">${card("Quantity sold today", orders.filter(o=>o.date===today()).reduce((n,o)=>n+(s.order_items||[]).filter(i=>i.order_id===o.id).reduce((a,i)=>a+num(i.boxes),0),0), "Confirmed sales quantity")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Recorded quantity against you")}</div>
     <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
     <section class="panel"><h2>Attendance history</h2><p class="muted">Attendance is recorded and corrected by authorized management. This view is read-only.</p><div id="my-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
+    <section class="panel"><h2>Assigned areas & history</h2><div id="my-area-history"><p class="muted">Loading area assignments…</p></div></section>
     <section class="panel"><h2>My employee documents</h2><p class="muted">Documents uploaded by authorized management are listed below. Contact your manager if a document is missing or outdated.</p><div id="my-document-history"><p class="muted">Loading your document list…</p></div></section>
     <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional.</p><div id="my-visit-history"><p class="muted">Loading your visit history…</p></div></section>`;
 }
@@ -874,52 +982,44 @@ function stockOverview() {
 function renderDocs(quote) {
   const s = S(),
     rows = visible(s[quote ? "quotations" : "orders"])
-      .filter((d) =>
-        (d.number + " " + customerName(d.customer_id))
-          .toLowerCase()
-          .includes(filter.search.toLowerCase()),
-      )
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .filter((d) => (d.number + " " + customerName(d.customer_id)).toLowerCase().includes(filter.search.toLowerCase()))
+      .sort((a, b) => b.date.localeCompare(a.date)),
+    showFinancial = admin() || (manager() && can("invoices")) || (!manager() && user.role !== "salesman" && can("invoices"));
+  const headers = ["Document", "Customer", "Date", "Salesman", ...(showFinancial ? ["Amount", "Payment"] : ["Quantity"]), "Status", "Actions"];
   return (
     head(
       quote ? "Quotations" : "Sales orders",
-      quote
-        ? "Create proposals, track acceptance and convert to sales."
-        : "Confirmed sales update stock, invoices and team targets.",
-      btn(
-        quote ? "+ New quotation" : "+ New sale",
-        quote ? "new-quote" : "new-order",
-        "",
-        "",
-        "gold",
-      ),
+      quote ? "Create proposals, track acceptance and convert to sales." : "Confirmed sales update stock, invoices and team targets.",
+      btn(quote ? "+ New quotation" : "+ New sale", quote ? "new-quote" : "new-order", "", "", "gold"),
     ) +
     `<section class="panel"><div class="filters">${field("Search customer or document", "search", filter.search, "search", 'data-filter="search"')}</div>${table(
-      [
-        "Document",
-        "Customer",
-        "Date",
-        "Salesman",
-        "Amount",
-        "Payment",
-        "Status",
-        "Actions",
-      ],
-      rows.map((d) => [
-        `<b>${esc(d.number)}</b>${quote ? "<small>Revision " + d.revision + "</small>" : ""}`,
-        esc(customerName(d.customer_id)),
-        esc(d.date),
-        esc(salesmanName(d.salesman_id)),
-        money(d.total_paisa),
-        quote ? "—" : (() => { const invoice = s.invoices.find(i => i.order_id === d.id); const pay = invoice ? invoiceState(invoice, s.payments) : {status:"UNPAID"}; return badge(d.status === "cancelled" ? "CANCELLED" : pay.status); })(),
-        badge(d.status),
-        `<div class="actions">${btn("View", quote ? "view-quote" : "view-order", d.id)}${(!quote && d.status === "confirmed") || (quote && ["Draft", "Sent"].includes(d.status)) ? btn("Edit", quote ? "edit-quote" : "edit-order", d.id) : ""}${!quote && d.status === "confirmed" && (()=>{const inv=s.invoices.find(i=>i.order_id===d.id);return inv && invoiceState(inv,s.payments).balance>0 && (admin() || s.user_permissions.some(p=>p.user_id===user.id&&p.section==="invoices"&&p.can_create)) ? btn("Receive payment","add-payment",inv.id) : ""})()}${quote && !["Converted", "Expired", "Rejected"].includes(d.status) ? btn("Convert", "convert", d.id) : ""}${quote && ["Draft", "Sent"].includes(d.status) ? btn("Status", "quote-status", d.id) : ""}${admin() ? btn(quote ? "Delete" : "Cancel", quote ? "delete-quote" : "cancel-order", d.id, "", "danger") : ""}</div>`,
-      ]),
+      headers,
+      rows.map((d) => {
+        const qty = (s.order_items || []).filter(i => i.order_id === d.id).reduce((n, i) => n + num(i.boxes), 0);
+        const invoice = !quote ? s.invoices.find(i => i.order_id === d.id) : null;
+        const pay = invoice ? invoiceState(invoice, s.payments) : { status: "UNPAID" };
+        const financial = showFinancial ? [money(d.total_paisa), quote ? "—" : badge(d.status === "cancelled" ? "CANCELLED" : pay.status)] : [quote ? "—" : `${qty} boxes`];
+        return [
+          `<b>${esc(d.number)}</b>${quote ? "<small>Revision " + d.revision + "</small>" : ""}`,
+          esc(customerName(d.customer_id)), esc(d.date), esc(salesmanName(d.salesman_id)), ...financial, badge(d.status),
+          `<div class="actions">${btn("View", quote ? "view-quote" : "view-order", d.id)}${((!quote && d.status === "confirmed") || (quote && ["Draft", "Sent"].includes(d.status))) ? btn("Edit", quote ? "edit-quote" : "edit-order", d.id) : ""}${showFinancial && !quote && d.status === "confirmed" && (()=>{const inv=s.invoices.find(i=>i.order_id===d.id);return inv && invoiceState(inv,s.payments).balance>0 && (admin() || s.user_permissions.some(p=>p.user_id===user.id&&p.section==="invoices"&&p.can_create)) ? btn("Receive payment","add-payment",inv.id) : ""})()}${quote && !["Converted", "Expired", "Rejected"].includes(d.status) ? btn("Convert", "convert", d.id) : ""}${quote && ["Draft", "Sent"].includes(d.status) ? btn("Status", "quote-status", d.id) : ""}${admin() ? btn(quote ? "Delete" : "Cancel", quote ? "delete-quote" : "cancel-order", d.id, "", "danger") : ""}</div>`
+        ];
+      }),
     )}</section>`
   );
 }
+function showOperationalOrder(id) {
+  const s = S(), order = s.orders.find(o => o.id === id);
+  if (!order) throw Error("Sales order not found.");
+  if (user.role === "salesman" && order.salesman_id !== own()?.id) throw Error("You can only view your own sales order.");
+  if (manager() && !can("invoices") && order.salesman_id && !managerTeamIds(s, user.id).includes(order.salesman_id)) throw Error("This order is outside your assigned team.");
+  const items = (s.order_items || []).filter(i => i.order_id === id).map(i => [esc(s.products.find(p => p.id === i.product_id)?.name || i.product_id), num(i.cartons), num(i.boxes), "boxes"]);
+  modal("Sales order · " + order.number, `<section class="panel"><p><b>Customer:</b> ${esc(customerName(order.customer_id))}</p><p><b>Date:</b> ${esc(order.date)} · <b>Status:</b> ${esc(order.status)}</p><p><b>Salesman:</b> ${esc(salesmanName(order.salesman_id))}</p>${table(["Product","Quantity","Boxes","Unit"],items,"No order lines recorded.")}<p class="muted">This operational view intentionally omits selling amounts, payment amounts and profit.</p></section>`);
+}
 
 const CASHBOOK_DEFAULT_ACCOUNTS = [
+  { account_key: "mcb_bank", label: "MCB Bank", account_type: "bank", payment_method: "Bank", opening_balance_paisa: 0, active: true },
+  { account_key: "al_habib_bank", label: "Al Habib Bank", account_type: "bank", payment_method: "Bank", opening_balance_paisa: 0, active: true },
   { account_key: "cash_hand", label: "Cash in Hand", account_type: "cash", opening_balance_paisa: 0, active: true },
   { account_key: "bank_default", label: "Cash in Bank — Default account", account_type: "bank", payment_method: "Bank", opening_balance_paisa: 0, active: true },
   { account_key: "easypaisa", label: "EasyPaisa", account_type: "wallet", payment_method: "Easypaisa", opening_balance_paisa: 0, active: true },
@@ -1153,8 +1253,9 @@ function renderStock() {
     row.boxes += Number(movement.boxes);
     sellerRows.set(key, row);
   }
+  const warehouseWrite = admin() || S().user_permissions.some(permission => permission.user_id === user.id && permission.section === "stock" && (permission.can_create || permission.can_edit));
   const actions =
-    (mgmt() ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
+    (warehouseWrite ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
     (canStockWrite() ? btn("Issue to salesman", "stock-issue", "", "", "gold") : "") +
     (admin() || own() || canStockWrite()
       ? btn("Receive salesman return", "stock-return")
@@ -1258,33 +1359,37 @@ function renderProducts() {
 }
 function renderStaff() {
   const s = S(),
-    targets = targetRows();
+    scope = manager() ? new Set(managerTeamIds(s, user.id).map(String)) : null,
+    sellers = visible(s.salesmen).filter(x => !scope || scope.has(String(x.id))),
+    targets = targetRows().filter(t => !scope || scope.has(String(t.id))),
+    attendanceDate = today();
   return (
     head(
       "Salesmen & targets",
-      "Daily shortfalls carry to the next working day, including month boundaries.",
-      admin() ? btn("+ Salesman", "add-staff", "", "", "gold") : "",
+      manager() ? "Manage your assigned team, attendance, areas, stock accountability and operational messages." : "Manage employee profiles, assign managers, monitor targets and review fieldwork.",
+      (admin() || manager()) ? btn("+ Create salesman", "add-staff", "", "", "gold") + (admin() ? btn("Manage areas", "manage-areas") : "") : "",
     ) +
-    `<section class="panel"><div class="panel-heading"><h2>Monthly leaderboard</h2><span>${esc(today().slice(0, 7))}</span></div>${table(
-      [
-        "Salesman",
-        "Today target / achieved",
-        "MTD cartons",
-        "Achievement",
-        ...(admin() || can("pnl") ? ["Incentive", "Salary projection"] : []),
-        "Actions",
-      ],
-      targets.map((t, i) => [
-        `${i + 1}. <b>${esc(t.name)}</b><small>${t.active ? "Active" : "Inactive"} · ${esc(t.phone)}</small>`,
-        `${num(t.day?.effective_target).toFixed(2)} / ${num(t.day?.achieved_cartons).toFixed(2)}`,
-        `${t.achieved.toFixed(2)} / ${t.monthly_target}`,
-        `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`,
-        ...(admin() || can("pnl") ? [money(t.incentive), money(t.total)] : []),
-        `<div class="actions">${btn("Daily tracking", "targets", t.id)}${admin() ? btn("Edit", "edit-staff", t.id) + btn("Post salary", "post-salary", t.id) : ""}</div>`,
-      ]),
-    )}</section>${admin() ? `<section class="panel"><div class="panel-heading"><h2>Salesman profile & fieldwork records</h2><span class="muted">Admin-only view of submitted records and private uploads</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>` : ""}`
+    `<section class="panel"><div class="panel-heading"><h2>Team overview</h2><span>${esc(attendanceDate)} · ${sellers.length} assigned salesman${sellers.length===1?"":"men"}</span></div>${table(
+      ["Salesman", "Attendance", "Assigned area", "Today / target", "Monthly progress", "Stock in hand", "Actions"],
+      targets.map((t, i) => {
+        const seller = sellers.find(x => String(x.id) === String(t.id));
+        const att = (s.attendance_records || []).find(a => String(a.salesman_id)===String(t.id) && a.attendance_date===attendanceDate);
+        const held = visible(s.products).reduce((sum, product) => sum + heldStock(product.id, t.id), 0);
+        return [
+          `<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b><small>${esc(t.id)} · ${esc(t.phone||"No phone")}</small>`,
+          esc(att?.status || "Not recorded"),
+          esc(seller?.territory || seller?.area || "Not assigned"),
+          `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`,
+          `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons · ${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100,t.percent)}%"></span></div>`,
+          `${held.toFixed(2)} boxes`,
+          `<div class="actions">${btn("Details", "salesman-profile", t.id)}${(admin()||manager())?btn("Assign area", "assign-area", t.id):""}${(admin()||manager())?btn("Attendance", "mark-attendance", t.id):""}${(admin()||manager())?btn("Message", "notify-salesman", t.id):""}${(admin())?btn("Edit", "edit-staff", t.id)+btn("Post salary", "post-salary", t.id):manager()?btn("Edit", "edit-staff", t.id):""}</div>`
+        ];
+      }), "No salesman profiles are assigned to this account.")}</section>
+    ${admin() ? `<section class="panel"><div class="panel-heading"><h2>Employee fieldwork & documents</h2><span class="muted">Administrator access</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>` : ""}
+    <section class="panel"><div class="panel-heading"><h2>Team notifications</h2>${btn("Send team announcement", "notify-team", "", "", "gold")}</div><p class="muted">Messages are stored in Supabase and appear in the recipient's salesman dashboard.</p><div id="team-notification-history"><p class="muted">Loading messages…</p></div></section>`
   );
 }
+
 async function resolveSalesmanPhoto(seller) {
   const bucket = client.storage.from("employee-private");
   let path = seller.photo_path || "";
@@ -1357,35 +1462,41 @@ async function hydrateAdminFieldwork() {
   root.innerHTML = `<h3>Employee profile photos</h3>${photoHtml}<h3>Attendance</h3>${attendanceHtml}<h3>Uploaded employee documents</h3><p class="muted">Private links expire after one hour.</p>${documentsHtml}<h3>Customer visits & optional GPS</h3>${visitsHtml}`;
   const managerRoot = $("admin-manager-fieldwork-data");
   if (managerRoot) {
-    const managerUserId = "d2cf42d4-3806-44f1-9deb-369920e2f152";
-    const [ma, md, mv, mp] = await Promise.all([
-      client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id",managerUserId).order("attendance_date",{ascending:false}).limit(200),
-      client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id",managerUserId).order("created_at",{ascending:false}).limit(200),
-      client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id",managerUserId).order("visited_at",{ascending:false}).limit(200),
-      client.from("profiles").select("avatar_path,display_name").eq("id",managerUserId).maybeSingle()
-    ]);
+    const managerProfiles = S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager"));
     const errHtml = r => r.error ? `<p class="notice danger">Could not load: ${esc(r.error.message)}. Apply <code>supabase/manager_profile_fieldwork.sql</code>.</p>` : "";
-    const docRows = md.error ? [] : await Promise.all((md.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];}));
-    let avatarHtml = "No profile photo uploaded.";
-    if (!mp.error && mp.data?.avatar_path) { const signed=await client.storage.from("employee-private").createSignedUrl(mp.data.avatar_path,3600); if(signed.data?.signedUrl) avatarHtml=`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open Manager profile photo</a>`; }
-    managerRoot.innerHTML = `<h3>Manager profile</h3><p><b>BABAR ALI KHAN</b> · ${avatarHtml}</p><h3>Manager attendance</h3>${errHtml(ma)||table(["Date","Check-in","Check-out","Status","GPS"],(ma.data||[]).map(r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager attendance records.")}<h3>Manager uploads</h3><p class="muted">Private links expire after one hour.</p>${errHtml(md)||table(["Document","Type","Uploaded","Size","File"],docRows,"No Manager documents uploaded.")}<h3>Manager fieldwork visits</h3>${errHtml(mv)||table(["Visited","Customer","Area","Purpose","Notes","GPS"],(mv.data||[]).map(r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager fieldwork visits.")}`;
+    const sections = await Promise.all(managerProfiles.map(async managerProfile => {
+      const managerUserId = managerProfile.id;
+      const [ma, md, mv, mp] = await Promise.all([
+        client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id",managerUserId).order("attendance_date",{ascending:false}).limit(200),
+        client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id",managerUserId).order("created_at",{ascending:false}).limit(200),
+        client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id",managerUserId).order("visited_at",{ascending:false}).limit(200),
+        client.from("profiles").select("avatar_path,display_name").eq("id",managerUserId).maybeSingle()
+      ]);
+      const docRows = md.error ? [] : await Promise.all((md.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];}));
+      let avatarHtml = "No profile photo uploaded.";
+      if (!mp.error && mp.data?.avatar_path) { const signed=await client.storage.from("employee-private").createSignedUrl(mp.data.avatar_path,3600); if(signed.data?.signedUrl) avatarHtml=`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open profile photo</a>`; }
+      return `<section class="panel"><h3>${esc(managerProfile.display_name || managerProfile.id)}</h3><p>${avatarHtml}</p><h4>Attendance</h4>${errHtml(ma)||table(["Date","Check-in","Check-out","Status","GPS"],(ma.data||[]).map(r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No attendance records.")}<h4>Documents</h4>${errHtml(md)||table(["Document","Type","Uploaded","Size","File"],docRows,"No documents uploaded.")}<h4>Fieldwork visits</h4>${errHtml(mv)||table(["Visited","Customer","Area","Purpose","Notes","GPS"],(mv.data||[]).map(r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No fieldwork visits.")}</section>`;
+    }));
+    managerRoot.innerHTML = sections.join("") || `<p class="muted">No Manager accounts are configured. Create a Manager login in Users & Access.</p>`;
   }
 }
 async function openAdminSalesmanProfile(salesmanId) {
-  if (!admin()) throw Error("Administrator access is required to view employee profiles.");
+  if (!(admin() || manager())) throw Error("Authorized management access is required to view employee profiles.");
+  if (manager() && !managerTeamIds(S(), user.id).includes(salesmanId)) throw Error("This salesman is outside your assigned team.");
   if (!client) throw Error("Employee profiles require a connected Supabase session.");
   modal("Salesman profile", '<p class="muted">Loading saved profile and fieldwork details…</p>');
-  const sellerResult = await client.from("salesmen").select("id,name,phone,territory,area,photo_path,user_id,joining_date,active").eq("id", salesmanId).maybeSingle();
+  const sellerResult = await client.from("salesmen").select("id,name,phone,date_of_birth,territory,area,photo_path,user_id,joining_date,active,manager_user_id").eq("id", salesmanId).maybeSingle();
   if (sellerResult.error) {
     modal("Salesman profile", `<p class="notice danger">Unable to load salesman profile: ${esc(sellerResult.error.message)}. Apply the updated <code>supabase/salesman_self_service.sql</code> migration and confirm the current login has the admin role.</p>`);
     return;
   }
   const seller = sellerResult.data;
   if (!seller) { modal("Salesman profile", '<p class="notice">No linked salesman profile was found. Use Edit access to link or create the salesman profile.</p>'); return; }
-  const [attendance, documents, visits] = await Promise.all([
-    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", {ascending:false}).limit(100),
+  const [attendance, documents, visits, assignments] = await Promise.all([
+    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,remarks,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", {ascending:false}).limit(100),
     client.from("employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", {ascending:false}).limit(100),
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", {ascending:false}).limit(100),
+    client.from("salesman_area_assignments").select("area_name,effective_from,effective_to,instructions").eq("salesman_id", seller.id).order("effective_from", {ascending:false}).limit(100),
   ]);
   const sectionError = (r) => r.error ? `<p class="notice danger">Could not load this section: ${esc(r.error.message)}</p>` : "";
   const photoResult = await resolveSalesmanPhoto(seller);
@@ -1396,11 +1507,24 @@ async function openAdminSalesmanProfile(salesmanId) {
     const r = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
     return [esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, r.data?.signedUrl ? `<a href="${esc(r.data.signedUrl)}" target="_blank" rel="noopener">Open file</a>` : esc(r.error?.message || "Unavailable")];
   }));
-  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status","Check-in location"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), r.check_in_latitude == null || r.check_in_longitude == null ? "Location not recorded" : `<a href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}" target="_blank" rel="noopener">View check-in map</a><small>${num(r.check_in_latitude).toFixed(5)}, ${num(r.check_in_longitude).toFixed(5)}${r.check_in_location_accuracy_m ? ` · ±${Math.round(num(r.check_in_location_accuracy_m))} m` : ""}</small>`]), "No attendance submitted yet.");
+  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status","Remarks","Check-in location"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), esc(r.remarks || "—"), r.check_in_latitude == null || r.check_in_longitude == null ? "Location not recorded" : `<a href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}" target="_blank" rel="noopener">View check-in map</a><small>${num(r.check_in_latitude).toFixed(5)}, ${num(r.check_in_longitude).toFixed(5)}${r.check_in_location_accuracy_m ? ` · ±${Math.round(num(r.check_in_location_accuracy_m))} m` : ""}</small>`]), "No attendance submitted yet.");
   const documentsHtml = sectionError(documents) || table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded yet.");
   const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted yet.");
-  const role = S().user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
-  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+  const state = S(), target = targetRows().find(t => String(t.id) === String(seller.id));
+  const targetDays = state.salesman_daily_targets.filter(d => String(d.salesman_id) === String(seller.id) && d.date >= monthStart(today()) && d.date <= today()).sort((a,b)=>a.date.localeCompare(b.date));
+  const targetHtml = table(["Date","Target (ct)","Achieved (ct)","Boxes","Remaining (ct)"], targetDays.map(d=>[esc(d.date),num(d.effective_target).toFixed(2),num(d.achieved_cartons).toFixed(2),num(d.achieved_boxes),Math.max(0,num(d.effective_target)-num(d.achieved_cartons)).toFixed(2)]),"No daily target records for this month.");
+  const eligibleOrders = state.orders.filter(o=>String(o.salesman_id)===String(seller.id)&&o.status==="confirmed"&&!o.deleted_at&&o.date>=monthStart(today())&&o.date<=today());
+  const dailySales = new Map(); const productSales = new Map();
+  for (const order of eligibleOrders) for (const line of (state.order_items||[]).filter(i=>i.order_id===order.id)) {
+    const day=dailySales.get(order.date)||{boxes:0,cartons:0,orders:0}; day.boxes+=num(line.boxes); day.cartons+=num(line.cartons); day.orders+=1; dailySales.set(order.date,day);
+    const product=productSales.get(line.product_id)||{boxes:0,cartons:0}; product.boxes+=num(line.boxes); product.cartons+=num(line.cartons); productSales.set(line.product_id,product);
+  }
+  const salesHtml = `<h4>Daily sales quantities</h4>${table(["Date","Orders / lines","Cartons","Boxes"],[...dailySales.entries()].sort((a,b)=>b[0].localeCompare(a[0])).map(([date,v])=>[esc(date),v.orders,num(v.cartons).toFixed(2),num(v.boxes).toFixed(2)]),"No confirmed sales quantities this month.")}<h4>Product-wise quantities</h4>${table(["Product","Cartons","Boxes"],[...productSales.entries()].map(([pid,v])=>[esc(state.products.find(p=>p.id===pid)?.name||pid),num(v.cartons).toFixed(2),num(v.boxes).toFixed(2)]),"No product sales recorded this month.")}`;
+  const stockRows = (state.salesman_stock_movements||[]).filter(m=>String(m.salesman_id)===String(seller.id)).sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,200).map(m=>[esc(m.date),esc(state.products.find(p=>p.id===m.product_id)?.name||m.product_id),esc(m.kind==="issue"?"Issued":String(m.kind).replace(/^return_/,"Returned · ")),Math.abs(num(m.boxes)).toFixed(2),esc(m.reference||"—"),esc(m.note||"—")]);
+  const stockBalanceHtml = table(["Product","Current balance (boxes)"],visible(state.products).map(p=>[esc(p.name),heldStock(p.id,seller.id)]).filter(r=>num(r[1])!==0),"No stock is currently held by this salesman.");
+  const stockMovementHtml = table(["Date","Product","Movement","Boxes","Reference","Notes"],stockRows,"No stock issue/return movements recorded.");
+  const role = state.user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
+  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Date of birth:</b> ${esc(seller.date_of_birth || "Not recorded")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Monthly target progress</h3><div class="cards">${card("Monthly target",`${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved",`${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining",`${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement",`${num(target?.percent).toFixed(1)}%`)}</div>${targetHtml}</section><section class="panel"><h3>Sales quantity breakdown</h3>${salesHtml}</section><section class="panel"><h3>Stock accountability</h3>${stockBalanceHtml}${stockMovementHtml}</section><section class="panel"><h3>Attendance history</h3>${admin() || manager() ? btn("Record / correct attendance", "mark-attendance", seller.id) : ""}${attendanceHtml}</section><section class="panel"><h3>Area assignment history</h3>${sectionError(assignments)||table(["Area","Effective from","Effective until","Instructions"],(assignments.data||[]).map(a=>[esc(a.area_name),esc(a.effective_from),esc(a.effective_to||"Current"),esc(a.instructions||"—")]),"No area assignments yet.")}</section><section class="panel"><h3>Upload employee documents</h3>${seller.user_id ? `<div class="grid">${select("Document type","employee-document-type",[["identity","NIC / identity"],["education","Educational certificate"],["employment","Employment document"],["other","Other" ]],"identity")}<div class="field"><label for="employee-document-file">PDF or photo (max 10 MB)</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-manager-document-upload" data-id="${esc(seller.id)}">Upload private document</button><p class="muted">Documents are private and accessible only to authorized management and the linked employee.</p>` : `<p class="notice">Link this employee to a login in Admin → Users & Access before uploading private documents.</p>`}<p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Profile photograph</h3>${seller.user_id ? `<div class="field"><label for="employee-profile-photo">JPG, PNG or WebP up to 5 MB</label><input id="employee-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="employee-manager-photo-upload" data-id="${esc(seller.id)}">Upload / replace profile photo</button>` : `<p class="notice">Link this employee to a login before uploading a private profile photograph.</p>`}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
 }
 
 function filters(category = false) {
@@ -2004,16 +2128,11 @@ function masterForm(kind, id) {
       r.active === false ? "false" : "true",
     )}</div><hr><div class="checkbox"><input id="product-override" name="product_override" type="checkbox" ${s.price_tiers.some((t) => t.product_id === id && !t.deleted_at) ? "checked" : ""}><label for="product-override">Use product-specific wholesale tier overrides (Rani products)</label></div><div class="grid" style="margin-top:16px">${(() => { const saved = s.price_tiers.filter(pt => pt.product_id === id && !pt.deleted_at).sort((a,b) => num(a.min_cartons)-num(b.min_cartons)); const rows = saved.length ? saved : s.settings.tiers; return rows.map((t, i) => field("Tier " + (i + 1) + " minimum cartons", "pt_min_" + i, t.min_cartons ?? t.min, "number", 'min="0" step="0.01" required') + field("Tier " + (i + 1) + " label", "pt_label_" + i, t.label, "text", "required") + field("Tier " + (i + 1) + " rate (Rs.)", "tier_" + i, (t.rate_paisa ?? 0) / 100, "number", 'min="0" step="0.01" required')).join(""); })()}</div><p class="muted">Tier minimums can be edited directly. Use unique minimums, including a first tier at 0 cartons.</p>`;
   }
-  if (kind === "staff")
-    html = `<div class="grid">${field("Name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Joining date", "joining_date", r.joining_date || today(), "date", 'min="2000-01-01" required')}${field("Base salary (Rs.)", "base_salary", num(r.base_salary_paisa ?? s.settings.base_salary_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Monthly target (cartons)", "monthly_target", r.monthly_target || s.settings.monthly_target, "number", 'min="1" step="0.01" required')}${select(
-      "Status",
-      "active",
-      [
-        ["true", "Active"],
-        ["false", "Inactive"],
-      ],
-      r.active === false ? "false" : "true",
-    )}${select("Link existing login (optional)", "user_id", [["", "No login"], ...s.profiles.map((p) => [p.id, p.display_name])], r.user_id || "")}${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", (r.off_days || []).join("\n"))}</div>`;
+  if (kind === "staff") {
+    const managers = s.profiles.filter(p => s.user_roles.some(role => role.user_id === p.id && role.role === "manager") && p.active !== false);
+    const assignedManager = manager() ? user.id : (r.manager_user_id || "");
+    html = `<div class="grid">${field("Employee ID", "id", r.id || "", "text", existing ? "readonly" : "required")}${field("Full name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Date of birth", "date_of_birth", r.date_of_birth || "", "date")}${field("Joining date", "joining_date", r.joining_date || today(), "date", 'min="2000-01-01" required')}<p class="notice">Area assignments are managed through the effective-dated Assign area workflow so historical assignments are preserved.</p>${admin() ? field("Base salary (Rs.)", "base_salary", num(r.base_salary_paisa ?? s.settings.base_salary_paisa) / 100, "number", 'min="0" step="0.01" required') : ""}${field("Monthly target (cartons)", "monthly_target", r.monthly_target || s.settings.monthly_target, "number", 'min="1" step="0.01" required')}${select("Status", "active", [["true", "Active"],["false", "Inactive"]], r.active === false ? "false" : "true")}${admin() ? select("Link login account", "user_id", [["", "No login linked"], ...s.profiles.filter(p => !s.salesmen.some(sm => sm.user_id===p.id && sm.id!==r.id)).map(p => [p.id, `${p.display_name || p.email} (${s.user_roles.find(role=>role.user_id===p.id)?.role || "user"})`])], r.user_id || "") : ""}${manager() ? `<input type="hidden" name="manager_user_id" value="${esc(user.id)}"><p class="notice">This salesman will be assigned to your manager account.</p>` : select("Assigned manager", "manager_user_id", [["", "Unassigned"], ...managers.map(p => [p.id, p.display_name || p.email])], assignedManager)}${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", (r.off_days || []).join("\n"))}</div><p class="muted">Managers create the employee record and assign it to their team. Admin links the login from Users & Access. Private photo, NIC and education uploads are part of the employee record workflow.</p>`;
+  }
   if (kind === "customer")
     html = `<div class="grid">${field("Customer name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Email", "email", r.email || "", "email")}${field("Address", "address", r.address || "")}${select("Assigned salesman", "salesman_id", [["", "Unassigned"], ...visible(s.salesmen).map((x) => [x.id, x.name])], r.salesman_id || own()?.id || "")}</div>`;
   if (kind === "expense") {
@@ -2082,15 +2201,25 @@ async function saveMaster(form) {
     });
   if (kind === "staff")
     Object.assign(r, {
+      id: String(f.id || old?.id || r.id).trim(),
       name: f.name.trim(),
       phone: f.phone,
+      date_of_birth: f.date_of_birth || null,
       joining_date: f.joining_date,
-      base_salary_paisa: paisa(f.base_salary),
+      ...(admin() ? { base_salary_paisa: paisa(f.base_salary) } : {}),
       monthly_target: num(f.monthly_target),
       active: f.active === "true",
-      user_id: f.user_id || null,
+      ...(admin() ? { user_id: f.user_id || null } : {}),
+      manager_user_id: manager() ? user.id : (f.manager_user_id || null),
       off_days: dates(f.off_days),
     });
+  if (kind === "staff") {
+    if (!r.id || !/^[A-Za-z0-9._:-]{1,180}$/.test(r.id)) throw Error("Employee ID is required and may contain letters, numbers, dot, underscore, colon or hyphen.");
+    if (S().salesmen.some(seller => String(seller.id).toLowerCase() === String(r.id).toLowerCase() && String(seller.id) !== String(old?.id || ""))) throw Error("This employee ID is already in use.");
+    if (!Number.isFinite(r.monthly_target) || r.monthly_target <= 0) throw Error("Monthly target must be greater than zero.");
+    if (!r.name) throw Error("Employee name is required.");
+    if (manager() && r.manager_user_id !== user.id) throw Error("Managers may assign employees only to their own account.");
+  }
   if (kind === "customer")
     Object.assign(r, {
       name: f.name.trim(),
@@ -2265,13 +2394,13 @@ function stockIssueModal() {
   stockIssueLineCount = 1;
   modal(
     "Issue stock to salesman",
-    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active).map((row) => [row.id, row.name]))}${field("Issue date", "date", today(), "date", "required")}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products to issue</h3>${btn("+ Add product", "stock-add-line", "issue", 'type="button"')}</div><div id="stock-issue-lines"></div>${area("Notes", "note")}<p class="muted">All lines are validated and saved together. Cartons use each product's own pack size.</p><div id="stock-operation-error" class="notice danger" role="alert" style="display:none"></div><button type="submit" class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
+    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active && (!manager() || managerTeamIds(S(), user.id).includes(row.id))).map((row) => [row.id, row.name]))}${field("Issue date", "date", today(), "date", "required")}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products to issue</h3>${btn("+ Add product", "stock-add-line", "issue", 'type="button"')}</div><div id="stock-issue-lines"></div>${area("Notes", "note")}<p class="muted">All lines are validated and saved together. Cartons use each product's own pack size.</p><div id="stock-operation-error" class="notice danger" role="alert" style="display:none"></div><button type="submit" class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
   );
   renderStockOperationLines("issue");
 }
 function stockReturnModal() {
   stockReturnLineCount = 1;
-  const sellers = visible(S().salesmen).filter((row) => row.active);
+  const sellers = visible(S().salesmen).filter((row) => row.active && (!manager() || managerTeamIds(S(), user.id).includes(row.id)));
   const chosen = own()?.id || sellers[0]?.id || "";
   modal(
     "Receive stock return",
@@ -2316,7 +2445,7 @@ function closingBalanceTotal(closing) {
   );
 }
 function closingModal() {
-  const sellers = visible(S().salesmen).filter((row) => row.active);
+  const sellers = visible(S().salesmen).filter((row) => row.active && (!manager() || managerTeamIds(S(), user.id).includes(row.id)));
   const salesmanId = own()?.id || (mgmt() ? sellers[0]?.id : "") || "";
   const date = today();
   const opening = openingCashFor(salesmanId, date);
@@ -2730,7 +2859,8 @@ async function action(act, id, element) {
       openEditor(true, id);
       break;
     case "view-order":
-      showDocument(id);
+      if (user.role === "salesman" || (manager() && !can("invoices"))) showOperationalOrder(id);
+      else showDocument(id);
       break;
     case "view-quote":
       showDocument(id, true);
@@ -3113,6 +3243,59 @@ async function action(act, id, element) {
     case "salesman-profile":
       await openAdminSalesmanProfile(id);
       break;
+    case "my-target-details": salesmanTargetDetails(id); break;
+    case "my-salary-details": {
+      if (user?.role !== "salesman" || own()?.id !== id) throw Error("You can only view your own salary details.");
+      const result = await client.rpc("own_salary_snapshot"); if (result.error) throw result.error;
+      const pay = result.data || {};
+      modal("My salary breakdown · " + esc(pay.salary_period || today().slice(0,7)), `<section class="panel"><p><b>Status:</b> ${esc(pay.status === "posted" ? "Posted" : "Estimate — pending Admin approval")}</p>${table(["Component","Amount"], [["Base salary",money(pay.base_salary_paisa||0)],["Target incentive",money(pay.incentive_paisa||0)],["Total",money(pay.total_paisa||0)],["Monthly target",`${num(pay.monthly_target).toFixed(2)} cartons`],["Eligible quantity achieved",`${num(pay.achieved_cartons).toFixed(2)} cartons`],["Achievement",`${num(pay.achievement_percent).toFixed(1)}%`]], "Salary calculation unavailable.")}<p class="muted">This is an estimate unless marked Posted. Advances and deductions are not included unless separately configured.</p></section>`); break;
+    }
+    case "notify-salesman": notificationModal(id); break;
+    case "notify-team": notificationModal(""); break;
+    case "mark-attendance": attendanceModal(id); break;
+    case "assign-area": await areaAssignmentModal(id); break;
+    case "manage-areas": await manageAreasModal(); break;
+    case "toggle-area": {
+      if (!admin() || !client) throw Error("Only Admin can manage areas.");
+      const current = await client.from("sales_areas").select("id,active").eq("id", id).single(); if (current.error) throw current.error;
+      const changed = await client.from("sales_areas").update({active:!current.data.active,updated_at:new Date().toISOString()}).eq("id",id); if (changed.error) throw changed.error;
+      toast(current.data.active ? "Area deactivated; history retained." : "Area activated."); await manageAreasModal(); break;
+    }
+    case "read-notification": {
+      const seller = own(); if (!seller || !client) throw Error("Salesman account required.");
+      const { error } = await client.from("employee_notifications").update({ read_at: new Date().toISOString() }).eq("id", id).eq("recipient_salesman_id", seller.id);
+      if (error) throw error; await hydrateSalesmanNotifications(); toast("Message marked as read."); break;
+    }
+    case "employee-manager-photo-upload": {
+      if (!(admin() || manager()) || (manager() && !managerTeamIds(S(), user.id).includes(id))) throw Error("Authorized management access required.");
+      const seller = S().salesmen.find(x => x.id === id); const file = $("employee-profile-photo")?.files?.[0];
+      if (!seller?.user_id) throw Error("Link this employee to a login before uploading a private profile photo.");
+      if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 5*1024*1024) throw Error("Choose a JPG, PNG or WebP image up to 5 MB.");
+      const path = `${seller.user_id}/salesman-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const saved = await client.rpc("set_salesman_photo", { p_salesman_id: id, p_photo_path: path });
+      if(saved.error) { await bucket.remove([path]); throw saved.error; }
+      toast("Salesman profile photo saved privately."); await openAdminSalesmanProfile(id); break;
+    }
+    case "employee-manager-document-upload": {
+      if (!(admin() || manager()) || (manager() && !managerTeamIds(S(), user.id).includes(id))) throw Error("Authorized management access required.");
+      const seller = S().salesmen.find(x => x.id === id); const file = $("employee-document-file")?.files?.[0];
+      if (!seller?.user_id) throw Error("Link this employee to a login before uploading private documents.");
+      if (!file || !(file.type === "application/pdf" || /^image\/(jpeg|png|webp)$/.test(file.type)) || file.size > 10*1024*1024) throw Error("Choose a PDF, JPG, PNG or WebP file up to 10 MB.");
+      const path = `${seller.user_id}/salesman-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const docType = $("employee-document-type")?.value || "identity";
+      const saved = await client.from("employee_documents").insert({salesman_id:id,document_type:docType,file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size});
+      if(saved.error) { await bucket.remove([path]); throw saved.error; }
+      toast("Employee document uploaded privately."); await openAdminSalesmanProfile(id); break;
+    }
+    case "ack-notification": {
+      const seller = own();
+      if (!seller || !client) throw Error("Salesman account required.");
+      const { error } = await client.from("employee_notifications").update({ read_at: new Date().toISOString(), acknowledged_at: new Date().toISOString() }).eq("id", id).eq("recipient_salesman_id", seller.id);
+      if (error) throw error;
+      await hydrateSalesmanNotifications(); toast("Acknowledgement saved."); break;
+    }
     case "audit-detail": {
       const a = S().audit_log.find((a) => String(a.id) === id);
       modal(
@@ -3591,6 +3774,48 @@ document.addEventListener("submit", async (e) => {
       case "master-form":
         await saveMaster(form);
         break;
+      case "notification-form": {
+        if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
+        const selected = f.recipient_salesman_id || form.dataset.salesman;
+        const recipients = selected === "__team__" ? visible(S().salesmen).filter(x => admin() || managerTeamIds(S(), user.id).includes(x.id)).map(x => x.id) : [selected];
+        if (!recipients.length || recipients.some(id => !id)) throw Error("Choose at least one valid recipient.");
+        const message = String(f.message || "").trim();
+        if (!message) throw Error("Message body is required.");
+        const expires = f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null;
+        const payload = recipients.map(recipient_salesman_id => ({ recipient_salesman_id, title: String(f.title || "").trim(), message, priority: f.priority || "normal", requires_acknowledgement: f.requires_acknowledgement === "true", expires_at: expires, created_by: user.id }));
+        const { error } = await client.from("employee_notifications").insert(payload);
+        if (error) throw error;
+        close(); render(); toast(`Message sent to ${recipients.length} salesman${recipients.length===1?"":"men"}.`); break;
+      }
+      case "sales-area-form": {
+        if (!admin() || !client) throw Error("Only Admin can create areas.");
+        const name = String(f.name || "").trim(); if (!name) throw Error("Area name is required.");
+        const { error } = await client.from("sales_areas").insert({name,description:String(f.description||"").trim(),created_by:user.id});
+        if (error) throw error;
+        close(); await manageAreasModal(); toast("Area added to the active catalogue."); break;
+      }
+      case "area-assignment-form": {
+        if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
+        const salesmanId = form.dataset.salesman;
+        if (manager() && !managerTeamIds(S(), user.id).includes(salesmanId)) throw Error("This salesman is outside your assigned team.");
+        const areaName = String(f.area_name || "").trim();
+        if (!areaName) throw Error("Area name is required.");
+        if (f.effective_to && f.effective_to < f.effective_from) throw Error("Effective-until date cannot be before the start date.");
+        const { error } = await client.rpc("assign_salesman_area", { p_salesman_id: salesmanId, p_area_name: areaName, p_effective_from: f.effective_from, p_effective_to: f.effective_to || null, p_instructions: String(f.instructions || "").trim() });
+        if (error) throw error;
+        close(); await store.refresh?.(); render(); toast("Area assignment saved with historical dates."); break;
+      }
+      case "attendance-manager-form": {
+        if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
+        const salesmanId = form.dataset.salesman;
+        if (manager() && !managerTeamIds(S(), user.id).includes(salesmanId)) throw Error("This salesman is outside your assigned team.");
+        const payload = { salesman_id: salesmanId, attendance_date: f.attendance_date, status: f.status, remarks: String(f.remarks || "").trim(), updated_at: new Date().toISOString() };
+        const existing = await client.from("attendance_records").select("id").eq("salesman_id", salesmanId).eq("attendance_date", f.attendance_date).maybeSingle();
+        if (existing.error) throw existing.error;
+        const saved = existing.data ? await client.from("attendance_records").update(payload).eq("id", existing.data.id) : await client.from("attendance_records").insert(payload);
+        if (saved.error) throw saved.error;
+        close(); await store.refresh?.(); render(); toast("Attendance saved."); break;
+      }
       case "settings-form":
         await saveSettings(form);
         break;

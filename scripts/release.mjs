@@ -22,3 +22,7 @@ for (const item of [
 console.log(
   "Static deployment folder prepared: web/ (no compilation required).",
 );
+
+// Supabase SQL and Edge Functions remain in the project root; never ship a stale duplicate
+// of database scripts inside the public static deployment folder.
+await fs.rm(path.join(dest, "supabase"), { recursive: true, force: true });

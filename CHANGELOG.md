@@ -1,5 +1,25 @@
 # Changelog
 
+## v54 — Connected Admin → Manager → Salesman workflow (2026-10-20)
+
+- Added manager-scoped salesman creation/editing with explicit assignment to a manager; restricted manager editing so salary and login linkage remain administrator-controlled.
+- Added an operational-only manager dashboard with assigned-team target, quantity, attendance and stock movement summaries; no default financial totals are shown.
+- Added manager/admin attendance recording and correction workflow with one authoritative record per salesman/date.
+- Added persistent management-to-salesman notifications with priority, optional expiry, read state and acknowledgement.
+- Added an Admin-maintained area catalogue with case-insensitive uniqueness, seeded from existing territory labels without changing employee history.
+- Added effective-dated area assignment through an atomic database RPC, preserving previous assignments and keeping current area fields aligned.
+- Added a server-calculated own-salary estimate/posted breakdown for the salesman; it does not expose other employees' salary records.
+- Added safe, label-aware MCB Bank and Al Habib Bank defaults without replacing existing account keys, balances or ledger history.
+- Scoped the shared business snapshot to assigned Manager teams and redacted monetary fields from operational order/target views; invoice/payment access remains Admin-only or explicitly permitted and record-scoped.
+- Added assigned-team checks to direct order/quotation, payment and stock issue/return RPC paths, not just the browser UI.
+- Removed broad Manager-role access to cashbook tables and restricted account adjustment/transfer operations to Admin or explicit permissions.
+- Added manager/admin private employee document and profile-photo uploads after the employee login is linked; profile photo path is updated through a role-checked RPC.
+- Removed hard-coded Manager account selection from the administrator fieldwork view.
+- Preserved existing Product Pricing and Stock Update screens and data; no business-data reset is included.
+- Added database audit triggers for attendance, employee documents, visits, area assignments and notifications.
+
+**Validation limitation:** JavaScript syntax checks are run locally. Automated Vitest and the repository check script could not run in this environment because the dependencies in `node_modules` are incomplete; live Supabase policies, storage uploads and ledger/inventory transactions still require staging verification.
+
 ## v53 — 2026-10-19
 - Reworked the salesman overview to emphasize profile identity, quantities, targets, and stock accountability instead of financial amount cards.
 - Made salesman profile identity, photo, employee documents, and attendance read-only in the salesman interface.
