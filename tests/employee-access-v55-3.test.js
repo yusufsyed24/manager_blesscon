@@ -2,18 +2,24 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 const app = fs.readFileSync(new URL("../js/app.js", import.meta.url), "utf8");
 const migration = fs.readFileSync(new URL("../supabase/employee_profile_access_v55_3.sql", import.meta.url), "utf8");
-const directory = fs.readFileSync(new URL("../supabase/functions/admin-user-directory/index.ts", import.meta.url), "utf8");
 const reset = fs.readFileSync(new URL("../supabase/functions/admin-reset-user-password/index.ts", import.meta.url), "utf8");
 
 describe("v55.3 account access and salesman documents", () => {
-  it("shows registered login email to Admin and allows copying it", () => {
-    expect(app).toContain('invoke("admin-user-directory"');
-    expect(app).toContain('"Registered login email"');
-    expect(app).toContain('case "copy-user-email"');
-    expect(app).toContain('if (!admin()) throw Error("Only Admin can view or copy registered login emails.")');
-    expect(directory).toContain('caller.rpc("is_admin")');
-    expect(directory).toContain('service.auth.admin.listUsers');
-    expect(directory).toContain('Active admin required');
+  it("does not request or display registered login emails", () => {
+    expect(app).not.toContain('invoke("admin-user-directory"');
+    expect(app).not.toContain('"Registered login email"');
+    expect(app).not.toContain('case "copy-user-email"');
+    expect(app).not.toContain('adminUserEmails');
+    expect(app).toContain('"Name", "Role", "Linked salesman", "Status", "Actions"');
+  });
+  it("shows Admin warehouse valuation and separates period profit from loss", () => {
+    expect(app).toContain('"Warehouse cartons"');
+    expect(app).toContain('"Warehouse boxes"');
+    expect(app).toContain('"Estimated market value"');
+    expect(app).toContain('"Potential stock profit"');
+    expect(app).toContain('"Net profit (period)"');
+    expect(app).toContain('"Net loss (period)"');
+    expect(app).toContain('warehouse.incompleteProducts');
   });
   it("keeps password resets Admin-only and supports manager/salesman user IDs", () => {
     expect(app).toContain('if (!admin()) throw Error("Only an administrator can reset another user\'s password.")');

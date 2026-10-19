@@ -1,5 +1,13 @@
 # Changelog
 
+## v55.4 — Admin warehouse overview and email-view removal
+
+- Removed registered login email display and Copy email action from Users & Access; the page no longer invokes `admin-user-directory`, eliminating the browser CORS failure from that workflow. Admin password reset remains available and no longer displays an email in its prompt or success message.
+- Added Admin-only warehouse totals for cartons, boxes, and loose boxes, plus estimated retail market value and potential gross profit based on saved retail and cost prices.
+- Warehouse valuation flags products with stock but missing retail/cost pricing; market value only includes boxes with a saved retail price, and potential stock profit only includes boxes with both retail and cost prices.
+- Added explicit selected-period net profit and net loss cards, while retaining operating expenses for the selected date range. These are accounting results from confirmed sales, saved item costs and recorded expenses, not a cash balance.
+- Updated account-access regression checks and kept root `js/` and deployed `web/js/` copies synchronized.
+
 ## v55.2 — Hide salesman collection account cards (2026-10-20)
 - Removed the separate “Salesman Collection — …” cards from the Cash & Bank Book overview, including Cash, Bank Account, EasyPaisa and JazzCash variants.
 - Kept salesman collection ledger entries and included balances in the overall liquid-funds calculation; this is a display-only change and does not delete or alter transaction history.

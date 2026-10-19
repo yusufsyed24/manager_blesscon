@@ -1,3 +1,5 @@
+> Superseded for the current v55.4 build: Users & Access no longer calls `admin-user-directory`, so this deployment procedure is not needed for the email-viewing feature. Use `DEPLOY_V55_4.md` for the current release. The instructions below apply only if you are deliberately maintaining the older v55.3 email-directory feature.
+
 # Deploy fix: admin-user-directory CORS preflight
 
 This patch fixes the `OPTIONS` preflight flow for `admin-user-directory` while preserving JWT authentication and the `is_admin` permission check for `POST`. Origins are still restricted to an exact allowlist.

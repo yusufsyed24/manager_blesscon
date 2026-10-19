@@ -46,8 +46,7 @@ let store,
   stockIssueLineCount = 1,
   stockReturnLineCount = 1,
   reportDate = today(),
-  reportSalesman = "",
-  adminUserEmails = Object.create(null);
+  reportSalesman = "";
 const NAV = [
   ["dashboard", "Overview", "◫"],
   ["myprofile", "My profile & fieldwork", "♙"],
@@ -323,7 +322,6 @@ function render() {
     import: renderImport,
   };
   $("page").innerHTML = methods[page]();
-  if (page === "users" && admin()) hydrateAdminUserEmails().catch((e) => toast("Could not load registered login emails: " + e.message));
   if (page === "myprofile" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load admin fieldwork: " + e.message));
   else if (page === "myprofile" && manager()) hydrateManagerFieldwork().catch((e) => toast("Could not load Manager fieldwork: " + e.message));
   else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
@@ -704,6 +702,26 @@ function renderDashboard() {
   const exp = visible(s.products).filter((p) =>
     ["Expired", "≤30 days"].includes(expiryStatus(p.expiry_date)),
   );
+  const warehouse = { cartons: 0, loose: 0, boxes: 0, marketValuePaisa: 0, potentialProfitPaisa: 0, pricedBoxes: 0, incompleteProducts: 0 };
+  if (admin()) {
+    for (const product of visible(s.products)) {
+      const boxes = Math.max(0, balance(product.id, null));
+      const perCarton = Math.max(1, num(product.boxes_per_carton) || 1);
+      warehouse.cartons += Math.floor(boxes / perCarton);
+      warehouse.loose += boxes % perCarton;
+      warehouse.boxes += boxes;
+      const retail = num(product.retail_paisa);
+      const cost = num(product.cost_paisa);
+      if (boxes > 0 && retail > 0) {
+        warehouse.marketValuePaisa += boxes * retail;
+        warehouse.pricedBoxes += boxes;
+      }
+      if (boxes > 0 && retail > 0 && cost > 0) {
+        warehouse.potentialProfitPaisa += boxes * (retail - cost);
+      }
+      if (boxes > 0 && (retail <= 0 || cost <= 0)) warehouse.incompleteProducts += 1;
+    }
+  }
   const dailyRows = report.days.map((day) => [
     esc(day.date),
     money(day.sales_paisa),
@@ -721,7 +739,7 @@ function renderDashboard() {
             btn("New quotation", "new-quote") +
               btn("+ New sale", "new-order", "", "", "gold"),
           ) +
-          `${companyPanel}<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${p ? card("Profit in period", money(p.net), "Restricted management figure") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
+          `${companyPanel}<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${p ? card(admin() ? "Net profit (period)" : p.net < 0 ? "Loss in period" : "Profit in period", money(admin() ? Math.max(0, p.net) : Math.abs(p.net)), admin() ? "After cost of goods and operating expenses" : "Restricted management figure") : ""}${admin() && p ? card("Net loss (period)", money(Math.max(0, -p.net)), "Loss after cost of goods and operating expenses") : ""}${admin() ? card("Warehouse cartons", warehouse.cartons, `${warehouse.loose} loose boxes · current warehouse stock`) + card("Warehouse boxes", warehouse.boxes, "Total boxes physically held in warehouse") + card("Estimated market value", money(warehouse.marketValuePaisa), `${warehouse.pricedBoxes} boxes valued at saved retail prices${warehouse.incompleteProducts ? ` · ${warehouse.incompleteProducts} products need pricing` : ""}`) + card("Potential stock profit", money(warehouse.potentialProfitPaisa), "Retail value less saved cost; before operating expenses") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
   );
 }
 function renderDailyReport() {
@@ -1912,19 +1930,17 @@ function renderUsers() {
   return (
     head(
       "Users & access",
-      "Review registered emails, roles and access. Only Admin can reset another user's password; database and server checks enforce these restrictions.",
+      "Manage user roles, access and employee profiles. Only Admin can reset another user's password; database and server checks enforce these restrictions.",
       btn("+ Create login", "create-user", "", "", "gold"),
     ) +
     managersPanel() +
-    `<section class="panel"><p class="muted">Registered email addresses are retrieved securely from Supabase Auth for Admin only. Use Copy email to share the login address; passwords should be shared separately and securely.</p>${table(
-      ["Name", "Registered login email", "Role", "Linked salesman", "Status", "Actions"],
+    `<section class="panel"><p class="muted">Login email addresses are not displayed here. To help a user sign in, share their login details through your approved secure process. Password resets remain available to Admin.</p>${table(
+      ["Name", "Role", "Linked salesman", "Status", "Actions"],
       s.profiles.map((p) => {
-        const email = adminUserEmails[p.id] || p.email || "";
         const role = s.user_roles.find((r) => r.user_id === p.id)?.role || "user";
         const linked = s.salesmen.find((x) => x.user_id === p.id);
         return [
           esc(p.display_name),
-          `<span id="user-email-${esc(p.id)}">${esc(email || "Loading email…")}</span>${email ? ` ${btn("Copy email", "copy-user-email", p.id)}` : ""}`,
           esc(role),
           esc(linked?.name || "Not linked"),
           badge(p.active ? "Active" : "Inactive"),
@@ -1935,27 +1951,6 @@ function renderUsers() {
       }),
     )}</section>`
   );
-}
-
-async function hydrateAdminUserEmails() {
-  if (!admin() || !client || page !== "users") return;
-  const { data, error } = await client.functions.invoke("admin-user-directory", { body: {} });
-  if (error) {
-    let message = error.message;
-    try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
-    throw Error(message);
-  }
-  if (data?.error) throw Error(data.error);
-  adminUserEmails = Object.assign(Object.create(null), ...((data?.users || []).map(x => ({ [x.user_id]: x.email || "" }))));
-  for (const profile of S().profiles) {
-    const el = $("user-email-" + profile.id);
-    if (!el?.isConnected) continue;
-    const email = adminUserEmails[profile.id] || "";
-    el.textContent = email || "No email returned";
-    if (email && !el.parentElement.querySelector(`[data-act="copy-user-email"][data-id="${profile.id}"]`)) {
-      el.insertAdjacentHTML("afterend", ` ${btn("Copy email", "copy-user-email", profile.id)}`);
-    }
-  }
 }
 function renderAudit() {
   return (
@@ -3337,22 +3332,13 @@ async function action(act, id, element) {
     case "edit-user":
       userModal(id);
       break;
-    case "copy-user-email": {
-      if (!admin()) throw Error("Only Admin can view or copy registered login emails.");
-      const email = adminUserEmails[id];
-      if (!email) throw Error("Registered email is not loaded. Refresh Users & Access and try again.");
-      await navigator.clipboard.writeText(email);
-      toast("Registered login email copied.");
-      break;
-    }
     case "reset-user-password": {
       if (!admin()) throw Error("Only an administrator can reset another user's password.");
       if (!client) throw Error("Password resets require a configured Supabase connection.");
       const target = S().profiles.find((p) => String(p.id) === String(id));
       if (!target || target.id === user.id) throw Error("Choose another valid user account.");
       const targetRole = S().user_roles.find(r => r.user_id === target.id)?.role || "user";
-      const targetEmail = adminUserEmails[target.id] || target.email || "email still loading";
-      const temporaryPassword = window.prompt(`Admin password reset for ${targetRole}: ${target.display_name || target.id}\nLogin email: ${targetEmail}\nSet a temporary password (12–128 characters). Share it securely with the user:`);
+      const temporaryPassword = window.prompt(`Admin password reset for ${targetRole}: ${target.display_name || target.id}\nSet a temporary password (12–128 characters). Share it securely with the user through your approved process:`);
       if (temporaryPassword === null) break;
       if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Password must be 12–128 characters.");
       const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: temporaryPassword } });
@@ -3362,7 +3348,7 @@ async function action(act, id, element) {
         throw Error(message);
       }
       if (data?.error) throw Error(data.error);
-      toast(`Password reset successfully for ${targetRole} ${target.display_name || "user"}. Login email: ${targetEmail}. Share the password securely.`);
+      toast(`Password reset successfully for ${targetRole} ${target.display_name || "user"}. Share the temporary password securely.`);
       break;
     }
     case "salesman-profile":
