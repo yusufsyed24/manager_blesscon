@@ -46,7 +46,8 @@ let store,
   stockIssueLineCount = 1,
   stockReturnLineCount = 1,
   reportDate = today(),
-  reportSalesman = "";
+  reportSalesman = "",
+  adminUserEmails = Object.create(null);
 const NAV = [
   ["dashboard", "Overview", "◫"],
   ["myprofile", "My profile & fieldwork", "♙"],
@@ -322,6 +323,7 @@ function render() {
     import: renderImport,
   };
   $("page").innerHTML = methods[page]();
+  if (page === "users" && admin()) hydrateAdminUserEmails().catch((e) => toast("Could not load registered login emails: " + e.message));
   if (page === "myprofile" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load admin fieldwork: " + e.message));
   else if (page === "myprofile" && manager()) hydrateManagerFieldwork().catch((e) => toast("Could not load Manager fieldwork: " + e.message));
   else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
@@ -377,7 +379,7 @@ async function hydrateSalesmanProfile() {
   }
   const [attendance, documents, visits, assignments] = await Promise.all([
     client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", { ascending: false }).limit(30),
-    client.from("employee_documents").select("document_type,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", { ascending: false }).limit(50),
+    client.from("employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", { ascending: false }).limit(50),
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", { ascending: false }).limit(30),
     client.from("salesman_area_assignments").select("area_name,effective_from,effective_to,instructions").eq("salesman_id", seller.id).order("effective_from", { ascending: false }).limit(50),
   ]);
@@ -387,7 +389,18 @@ async function hydrateSalesmanProfile() {
     el.innerHTML = table(headers, result.data.map(rows), emptyText);
   };
   history("my-attendance-history", attendance, ["Date","Check-in","Check-out","Status"], r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleTimeString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleTimeString() : "—"), esc(r.status)], "No attendance records yet.");
-  history("my-document-history", documents, ["Document","Type","Uploaded","Size"], r => [esc(r.file_name), esc(r.document_type), esc(new Date(r.created_at).toLocaleDateString()), `${Math.ceil(num(r.size_bytes)/1024)} KB`], "No documents uploaded yet.");
+  const docsEl = $("my-document-history");
+  if (docsEl?.isConnected) {
+    if (documents.error) docsEl.innerHTML = `<p class="notice danger">Unable to load your documents: ${esc(documents.error.message)}. Ask Admin to verify employee-document permissions.</p>`;
+    else {
+      const docRows = await Promise.all((documents.data || []).map(async d => {
+        const signed = d.file_path ? await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600) : { data: null, error: { message: "File path missing" } };
+        const link = signed.data?.signedUrl ? `<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">View / download</a>` : `<span class="muted">${esc(signed.error?.message || "File unavailable")}</span>`;
+        return [esc(d.file_name), esc(({identity:"NIC / identity",education:"Educational certificate",employment:"Employment document",appointment:"Appointment letter",contract:"Employment contract",salary_bank:"Salary / bank document",other:"Other"})[d.document_type] || d.document_type), esc(new Date(d.created_at).toLocaleDateString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, link];
+      }));
+      docsEl.innerHTML = table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded yet. Contact your manager to upload your NIC, education and employment documents.");
+    }
+  }
   history("my-visit-history", visits, ["Visited","Customer","Area","Purpose","Location"], r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(4)}, ${num(r.longitude).toFixed(4)}`], "No customer visits recorded yet.");
   history("my-area-history", assignments, ["Area","Effective from","Effective until","Instructions"], r => [esc(r.area_name), esc(r.effective_from), esc(r.effective_to || "Current"), esc(r.instructions || "—")], "No area assignments recorded yet.");
 }
@@ -1575,7 +1588,7 @@ async function openAdminSalesmanProfile(salesmanId) {
   const stockBalanceHtml = table(["Product","Current balance (boxes)"],visible(state.products).map(p=>[esc(p.name),heldStock(p.id,seller.id)]).filter(r=>num(r[1])!==0),"No stock is currently held by this salesman.");
   const stockMovementHtml = table(["Date","Product","Movement","Boxes","Reference","Notes"],stockRows,"No stock issue/return movements recorded.");
   const role = state.user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
-  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Date of birth:</b> ${esc(seller.date_of_birth || "Not recorded")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Monthly target progress</h3><div class="cards">${card("Monthly target",`${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved",`${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining",`${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement",`${num(target?.percent).toFixed(1)}%`)}</div>${targetHtml}</section><section class="panel"><h3>Sales quantity breakdown</h3>${salesHtml}</section><section class="panel"><h3>Stock accountability</h3>${stockBalanceHtml}${stockMovementHtml}</section><section class="panel"><h3>Attendance history</h3>${admin() || manager() ? btn("Record / correct attendance", "mark-attendance", seller.id) : ""}${attendanceHtml}</section><section class="panel"><h3>Area assignment history</h3>${sectionError(assignments)||table(["Area","Effective from","Effective until","Instructions"],(assignments.data||[]).map(a=>[esc(a.area_name),esc(a.effective_from),esc(a.effective_to||"Current"),esc(a.instructions||"—")]),"No area assignments yet.")}</section><section class="panel"><h3>Upload employee documents</h3>${seller.user_id ? `<div class="grid">${select("Document type","employee-document-type",[["identity","NIC / identity"],["education","Educational certificate"],["employment","Employment document"],["other","Other" ]],"identity")}<div class="field"><label for="employee-document-file">PDF or photo (max 10 MB)</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-manager-document-upload" data-id="${esc(seller.id)}">Upload private document</button><p class="muted">Documents are private and accessible only to authorized management and the linked employee.</p>` : `<p class="notice">Link this employee to a login in Admin → Users & Access before uploading private documents.</p>`}<p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Profile photograph</h3>${seller.user_id ? `<div class="field"><label for="employee-profile-photo">JPG, PNG or WebP up to 5 MB</label><input id="employee-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="employee-manager-photo-upload" data-id="${esc(seller.id)}">Upload / replace profile photo</button>` : `<p class="notice">Link this employee to a login before uploading a private profile photograph.</p>`}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Date of birth:</b> ${esc(seller.date_of_birth || "Not recorded")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Monthly target progress</h3><div class="cards">${card("Monthly target",`${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved",`${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining",`${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement",`${num(target?.percent).toFixed(1)}%`)}</div>${targetHtml}</section><section class="panel"><h3>Sales quantity breakdown</h3>${salesHtml}</section><section class="panel"><h3>Stock accountability</h3>${stockBalanceHtml}${stockMovementHtml}</section><section class="panel"><h3>Attendance history</h3>${admin() || manager() ? btn("Record / correct attendance", "mark-attendance", seller.id) : ""}${attendanceHtml}</section><section class="panel"><h3>Area assignment history</h3>${sectionError(assignments)||table(["Area","Effective from","Effective until","Instructions"],(assignments.data||[]).map(a=>[esc(a.area_name),esc(a.effective_from),esc(a.effective_to||"Current"),esc(a.instructions||"—")]),"No area assignments yet.")}</section><section class="panel"><h3>Upload employee documents</h3>${seller.user_id ? `<div class="grid">${select("Document type","employee-document-type",[["identity","NIC / identity document"],["education","Educational certificate"],["appointment","Appointment letter"],["contract","Employment contract"],["employment","Other employment document"],["salary_bank","Salary / bank document"],["other","Other important document" ]],"identity")}<div class="field"><label for="employee-document-file">PDF or photo (max 10 MB)</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-manager-document-upload" data-id="${esc(seller.id)}">Upload private document</button><p class="muted">Documents are private and accessible only to authorized management and the linked employee.</p>` : `<p class="notice">Link this employee to a login in Admin → Users & Access before uploading private documents.</p>`}<p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Profile photograph</h3>${seller.user_id ? `<div class="field"><label for="employee-profile-photo">JPG, PNG or WebP up to 5 MB</label><input id="employee-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="employee-manager-photo-upload" data-id="${esc(seller.id)}">Upload / replace profile photo</button>` : `<p class="notice">Link this employee to a login before uploading a private profile photograph.</p>`}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
 }
 
 function filters(category = false) {
@@ -1899,23 +1912,50 @@ function renderUsers() {
   return (
     head(
       "Users & access",
-      "Admin permissions are enforced by the database, including direct API requests.",
+      "Review registered emails, roles and access. Only Admin can reset another user's password; database and server checks enforce these restrictions.",
       btn("+ Create login", "create-user", "", "", "gold"),
     ) +
     managersPanel() +
-    `<section class="panel">${table(
-      ["Name", "Role", "Linked salesman", "Status", "Actions"],
-      s.profiles.map((p) => [
-        esc(p.display_name),
-        esc(s.user_roles.find((r) => r.user_id === p.id)?.role || "user"),
-        esc(s.salesmen.find((x) => x.user_id === p.id)?.name || "Not linked"),
-        badge(p.active ? "Active" : "Inactive"),
-        p.id === user.id
-          ? "Current user"
-          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
-      ]),
+    `<section class="panel"><p class="muted">Registered email addresses are retrieved securely from Supabase Auth for Admin only. Use Copy email to share the login address; passwords should be shared separately and securely.</p>${table(
+      ["Name", "Registered login email", "Role", "Linked salesman", "Status", "Actions"],
+      s.profiles.map((p) => {
+        const email = adminUserEmails[p.id] || p.email || "";
+        const role = s.user_roles.find((r) => r.user_id === p.id)?.role || "user";
+        const linked = s.salesmen.find((x) => x.user_id === p.id);
+        return [
+          esc(p.display_name),
+          `<span id="user-email-${esc(p.id)}">${esc(email || "Loading email…")}</span>${email ? ` ${btn("Copy email", "copy-user-email", p.id)}` : ""}`,
+          esc(role),
+          esc(linked?.name || "Not linked"),
+          badge(p.active ? "Active" : "Inactive"),
+          p.id === user.id
+            ? "Current user (use Account to change your own password)"
+            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+        ];
+      }),
     )}</section>`
   );
+}
+
+async function hydrateAdminUserEmails() {
+  if (!admin() || !client || page !== "users") return;
+  const { data, error } = await client.functions.invoke("admin-user-directory", { body: {} });
+  if (error) {
+    let message = error.message;
+    try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
+    throw Error(message);
+  }
+  if (data?.error) throw Error(data.error);
+  adminUserEmails = Object.assign(Object.create(null), ...((data?.users || []).map(x => ({ [x.user_id]: x.email || "" }))));
+  for (const profile of S().profiles) {
+    const el = $("user-email-" + profile.id);
+    if (!el?.isConnected) continue;
+    const email = adminUserEmails[profile.id] || "";
+    el.textContent = email || "No email returned";
+    if (email && !el.parentElement.querySelector(`[data-act="copy-user-email"][data-id="${profile.id}"]`)) {
+      el.insertAdjacentHTML("afterend", ` ${btn("Copy email", "copy-user-email", profile.id)}`);
+    }
+  }
 }
 function renderAudit() {
   return (
@@ -3297,12 +3337,22 @@ async function action(act, id, element) {
     case "edit-user":
       userModal(id);
       break;
+    case "copy-user-email": {
+      if (!admin()) throw Error("Only Admin can view or copy registered login emails.");
+      const email = adminUserEmails[id];
+      if (!email) throw Error("Registered email is not loaded. Refresh Users & Access and try again.");
+      await navigator.clipboard.writeText(email);
+      toast("Registered login email copied.");
+      break;
+    }
     case "reset-user-password": {
       if (!admin()) throw Error("Only an administrator can reset another user's password.");
       if (!client) throw Error("Password resets require a configured Supabase connection.");
       const target = S().profiles.find((p) => String(p.id) === String(id));
       if (!target || target.id === user.id) throw Error("Choose another valid user account.");
-      const temporaryPassword = window.prompt(`Set the password for ${target.display_name || target.email || target.id}. They will keep using this password until Admin changes it. Use at least 12 characters:`);
+      const targetRole = S().user_roles.find(r => r.user_id === target.id)?.role || "user";
+      const targetEmail = adminUserEmails[target.id] || target.email || "email still loading";
+      const temporaryPassword = window.prompt(`Admin password reset for ${targetRole}: ${target.display_name || target.id}\nLogin email: ${targetEmail}\nSet a temporary password (12–128 characters). Share it securely with the user:`);
       if (temporaryPassword === null) break;
       if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Password must be 12–128 characters.");
       const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: temporaryPassword } });
@@ -3312,7 +3362,7 @@ async function action(act, id, element) {
         throw Error(message);
       }
       if (data?.error) throw Error(data.error);
-      toast(`Password set for ${target.display_name || target.email || "user"}. The user can sign in with this password and cannot change it from the app. Share it securely.`);
+      toast(`Password reset successfully for ${targetRole} ${target.display_name || "user"}. Login email: ${targetEmail}. Share the password securely.`);
       break;
     }
     case "salesman-profile":

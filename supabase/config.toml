@@ -8,3 +8,7 @@ verify_jwt = false
 verify_jwt = false
 # The function validates the bearer token, requires an active Admin via is_admin(),
 # and uses the service role only server-side to reset another user's password.
+
+[functions.admin-user-directory]
+verify_jwt = false
+# The function verifies the bearer token and requires an active Admin before exposing Auth emails.

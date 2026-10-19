@@ -503,3 +503,11 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Bank-specific methods are mapped as bank receipts in the cashbook posting trigger; destination account keys remain authoritative.
 - Removed the stale hardcoded MCB expense account fallback and limited expense account choices to active company cash/bank/wallet accounts.
 - No business records, account balances, or historical ledger entries are deleted or rewritten by the patch.
+
+## v55.3 — Admin account recovery and employee document access (2026-10-20)
+- Added an Admin-only Supabase Edge Function to retrieve registered Auth email addresses; the browser never receives a service-role key or queries `auth.users` directly.
+- Added registered login email to Users & Access with a Copy email action. Admin can reset a Manager or Salesman password through the existing server-side function; self-reset remains in Account and all resets require an active Admin.
+- Fixed the Salesman profile's document list to create expiring private links so the employee can view/download documents uploaded by management.
+- Expanded manager upload categories for NIC/identity, education, appointment letter, employment contract, salary/bank and other important documents.
+- Added additive SQL to reapply employee-document/storage access policies: Salesmen can read their own document metadata/files; Admins and assigned Managers can upload/manage employee files. No business data is deleted.
+- Verification: JavaScript syntax checks and release-copy sync passed. Full Vitest suite and live Supabase/RLS/Edge Function checks were not run in this environment.
