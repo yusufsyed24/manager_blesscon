@@ -1935,18 +1935,20 @@ function renderUsers() {
     ) +
     managersPanel() +
     `<section class="panel"><p class="muted">Login email addresses are not displayed here. To help a user sign in, share their login details through your approved secure process. Password resets remain available to Admin.</p>${table(
-      ["Name", "Role", "Linked salesman", "Status", "Actions"],
+      ["Name", "Role", "Linked salesman", "Assigned manager", "Status", "Actions"],
       s.profiles.map((p) => {
         const role = s.user_roles.find((r) => r.user_id === p.id)?.role || "user";
         const linked = s.salesmen.find((x) => x.user_id === p.id);
+        const managerProfile = linked?.manager_user_id ? s.profiles.find((x) => x.id === linked.manager_user_id) : null;
         return [
           esc(p.display_name),
           esc(role),
           esc(linked?.name || "Not linked"),
+          esc(managerProfile?.display_name || (linked ? "Unassigned" : "—")),
           badge(p.active ? "Active" : "Inactive"),
           p.id === user.id
             ? "Current user (use Account to change your own password)"
-            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${btn("Delete user", "delete-user", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
         ];
       }),
     )}</section>`
@@ -2706,12 +2708,12 @@ function userModal(id) {
         "Link salesman (optional)",
         "salesman_id",
         [
-          ["", "No link"],
+          ["", "Create a new salesman profile"],
           ...S()
             .salesmen.filter((x) => !x.user_id)
             .map((s) => [s.id, s.name]),
         ],
-      )}</div><p class="muted">The login is created without sending an email. Share the password securely. Non-admin users must contact Admin if they need a password change.</p><button class="gold">Create login</button></form>`,
+      )}${select("Assign salesman to manager (optional)", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], "")}</div><p class="muted">The login is created without sending an email. Share the password securely. If a manager is selected, the salesman appears in that manager's team overview. Deleting a login later preserves linked business history.</p><button class="gold">Create login</button></form>`,
     );
     return;
   }
@@ -2732,7 +2734,7 @@ function userModal(id) {
         ["false", "Inactive"],
       ],
       String(p.active),
-    )}${select("Link salesman profile", "salesman_id", sellerChoices, linkedSeller?.id || "__create__")}</div><p class="muted">For a salesman login, select an existing unlinked salesman or create a linked profile. This makes the account available in Salesmen & Targets, stock assignment and sales dropdowns.</p><p>Optional payment collection permission:</p><div class="checkbox"><input id="can-collect" name="can_collect" type="checkbox" ${S().user_permissions.some((x) => x.user_id === id && x.section === "invoices" && x.can_create) ? "checked" : ""}><label for="can-collect">Allow collecting invoice payments</label></div><button class="gold" style="margin-top:20px">Save access</button></form>`,
+    )}${select("Link salesman profile", "salesman_id", sellerChoices, linkedSeller?.id || "__create__")}${select("Assigned manager", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(rr => rr.user_id === profile.id && rr.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], linkedSeller?.manager_user_id || "")}</div><p class="muted">For a salesman login, link an existing salesman profile or create one. Assigning a manager places that salesman in the manager's team overview, while the Admin can still see and manage the assignment here.</p><p>Optional payment collection permission:</p><div class="checkbox"><input id="can-collect" name="can_collect" type="checkbox" ${S().user_permissions.some((x) => x.user_id === id && x.section === "invoices" && x.can_create) ? "checked" : ""}><label for="can-collect">Allow collecting invoice payments</label></div><button class="gold" style="margin-top:20px">Save access</button></form>`,
   );
 }
 async function previewImport(file) {
@@ -3349,6 +3351,23 @@ async function action(act, id, element) {
       }
       if (data?.error) throw Error(data.error);
       toast(`Password reset successfully for ${targetRole} ${target.display_name || "user"}. Share the temporary password securely.`);
+      break;
+    }
+    case "delete-user": {
+      if (!admin()) throw Error("Only Admin can delete user accounts.");
+      if (!client) throw Error("Deleting user accounts requires Supabase.");
+      const target = S().profiles.find((profile) => String(profile.id) === String(id));
+      if (!target || target.id === user.id) throw Error("You cannot delete your own signed-in account.");
+      const targetRole = S().user_roles.find((r) => r.user_id === target.id)?.role || "user";
+      const linkedSeller = S().salesmen.find((seller) => seller.user_id === target.id);
+      const promptText = `Permanently delete login for ${target.display_name || "this user"} (${targetRole})?\n\nThe login and access roles will be removed. Sales and other historical business records will be preserved; a linked salesman profile will be unlinked from this login. Deleting a manager may also remove that manager's attendance, documents and visit records according to database rules.\n\nType DELETE to confirm.`;
+      if (window.prompt(promptText) !== "DELETE") break;
+      const { data, error } = await client.functions.invoke("admin-delete-user", { body: { user_id: target.id } });
+      if (error) { let message = error.message; try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {} throw Error(message); }
+      if (data?.error) throw Error(data.error);
+      await store.refresh();
+      render();
+      toast(`Login deleted for ${target.display_name || "user"}; business history preserved.`);
       break;
     }
     case "salesman-profile":
@@ -4146,6 +4165,7 @@ document.addEventListener("submit", async (e) => {
               name: String(f.display_name || "").trim(),
               phone: "",
               user_id: data.user_id,
+              manager_user_id: f.manager_user_id || null,
               active: true,
               joining_date: today(),
               base_salary_paisa: num(S().settings.base_salary_paisa) || 4500000,
@@ -4155,10 +4175,16 @@ document.addEventListener("submit", async (e) => {
             expected_version: undefined,
           });
         }
+        if (f.role === "salesman" && f.salesman_id) {
+          const linked = S().salesmen.find((seller) => seller.id === f.salesman_id || seller.user_id === data.user_id);
+          if (linked && linked.manager_user_id !== (f.manager_user_id || null)) {
+            await store.run("master.save", { table: "salesmen", record: { ...linked, user_id: data.user_id, manager_user_id: f.manager_user_id || null }, expected_version: linked.version });
+          }
+        }
         await store.refresh();
         close();
         render();
-        toast("Login created and salesman profile linked");
+        toast("Login created and salesman linked to the selected manager");
         break;
       }
       case "user-form": {
@@ -4192,7 +4218,7 @@ document.addEventListener("submit", async (e) => {
             }
             await store.run("master.save", {
               table: "salesmen",
-              record: { ...chosen, user_id: targetUserId, name: chosen.name || targetProfile?.display_name || "Salesman" },
+              record: { ...chosen, user_id: targetUserId, manager_user_id: f.manager_user_id || null, name: chosen.name || targetProfile?.display_name || "Salesman" },
               expected_version: chosen.version,
             });
           } else if (!oldLinkedSeller) {
@@ -4214,10 +4240,14 @@ document.addEventListener("submit", async (e) => {
             });
           }
         }
+        const finalLinkedSeller = S().salesmen.find((seller) => seller.user_id === targetUserId);
+        if (f.role === "salesman" && finalLinkedSeller && finalLinkedSeller.manager_user_id !== (f.manager_user_id || null)) {
+          await store.run("master.save", { table: "salesmen", record: { ...finalLinkedSeller, manager_user_id: f.manager_user_id || null }, expected_version: finalLinkedSeller.version });
+        }
         await store.refresh();
         close();
         render();
-        toast("Access and salesman link saved");
+        toast("Access, salesman link and manager assignment saved");
         break;
       }
       case "password-form": {

@@ -12,3 +12,7 @@ verify_jwt = false
 [functions.admin-user-directory]
 verify_jwt = false
 # The function verifies the bearer token and requires an active Admin before exposing Auth emails.
+
+[functions.admin-delete-user]
+verify_jwt = false
+# The function validates the caller JWT and requires an active Admin; service role stays server-side.
