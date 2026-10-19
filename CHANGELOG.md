@@ -1,3 +1,10 @@
+## v55.8 — Prevent Manager-to-Salesman duplicate profiles
+
+- Blocked changing an existing Manager login to the Salesman role from the user-access editor; a Manager must retain their Manager login and be assigned a separate salesman profile/login.
+- Added a validation guard against assigning a login as its own Manager-linked salesman.
+- Added a guarded, data-preserving SQL repair for the reported duplicate Yusuf profile IDs. It verifies that the second profile is actually the Manager's own login and that both profiles share the expected Manager before merging foreign-key references into the canonical salesman profile and soft-deleting the duplicate. If any unique constraint conflicts or the records do not match, the transaction fails without applying partial changes.
+- Updated deployment instructions and regression checks for the duplicate-profile incident.
+
 # Changelog
 
 ## v55.4 — Admin warehouse overview and email-view removal

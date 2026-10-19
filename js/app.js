@@ -4193,7 +4193,17 @@ document.addEventListener("submit", async (e) => {
       case "user-form": {
         const targetUserId = form.dataset.id;
         const targetProfile = S().profiles.find((profile) => profile.id === targetUserId);
+        const currentRole = S().user_roles.find((role) => role.user_id === targetUserId)?.role || "user";
         const oldLinkedSeller = S().salesmen.find((seller) => seller.user_id === targetUserId);
+        // A Manager login must never be repurposed as a Salesman login while assigning
+        // a team member. Doing so creates a second salesman profile owned by the Manager
+        // account and can remove the Manager's own team permissions.
+        if (f.role === "salesman" && currentRole === "manager") {
+          throw Error("This login is a Manager account. Keep its Manager role and assign a separate Salesman login/profile instead. Changing the Manager login into a Salesman creates a duplicate employee record and can hide the team.");
+        }
+        if (f.role === "salesman" && f.manager_user_id === targetUserId) {
+          throw Error("A Manager account cannot be linked as its own Salesman login. Select the actual Salesman login and assign the Manager separately.");
+        }
         await store.run("user.update", {
           id: targetUserId,
           role: f.role,
