@@ -1,18 +1,32 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.3";
 
 Deno.serve(async (req: Request) => {
-  const allowed = Deno.env.get("ALLOWED_ORIGIN") || "";
-  const origin = req.headers.get("Origin") || "";
-  const headers = {
+  // Configure ALLOWED_ORIGIN (single origin) or ALLOWED_ORIGINS (comma-separated
+  // exact origins). Do not use a wildcard: this function exposes registered emails.
+  const configuredOrigins = Deno.env.get("ALLOWED_ORIGINS") || Deno.env.get("ALLOWED_ORIGIN") || "";
+  const allowedOrigins = configuredOrigins
+    .split(",")
+    .map((value) => value.trim().replace(/\/$/, ""))
+    .filter((value) => value.length > 0 && value !== "*");
+  const origin = (req.headers.get("Origin") || "").trim().replace(/\/$/, "");
+  const originAllowed = Boolean(origin) && allowedOrigins.includes(origin);
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Vary: "Origin",
-    "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Headers": "authorization,x-client-info,apikey,content-type",
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Vary": "Origin",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Max-Age": "86400",
   };
+  // Only echo an origin that exactly matches the configured allowlist.
+  if (originAllowed) headers["Access-Control-Allow-Origin"] = origin;
   const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
-  if (!allowed || allowed === "*" || origin !== allowed) return reply({ error: "Origin not allowed" }, 403);
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
+
+  // Browsers send OPTIONS before POST. Return a successful preflight for approved
+  // origins, before authentication (preflight requests do not carry the user JWT).
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: originAllowed ? 204 : 403, headers });
+  }
+  if (!originAllowed) return reply({ error: "Origin not allowed" }, 403);
   if (req.method !== "POST") return reply({ error: "POST required" }, 405);
 
   const url = Deno.env.get("SUPABASE_URL");
