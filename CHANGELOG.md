@@ -1,3 +1,12 @@
+# Changelog
+
+## v53 — 2026-10-19
+- Reworked the salesman overview to emphasize profile identity, quantities, targets, and stock accountability instead of financial amount cards.
+- Made salesman profile identity, photo, employee documents, and attendance read-only in the salesman interface.
+- Added DOB, effective-dated area assignments, employee notifications, and manager/admin-focused RLS/storage policy migration in `supabase/revamp_v53.sql`.
+- Preserved existing Product Pricing and Stock Update source workflows and business data.
+- See `CHANGELOG_V53.md`, `DEPLOY_V53.md`, and `TEST_REPORT_V53.md` for scope and verification status.
+
 ## v52 — Expense account save confirmation
 
 - Fixed expense persistence at the store/RPC layer: online `master.save` calls for `expenses` now wait for Supabase confirmation before the editor closes.

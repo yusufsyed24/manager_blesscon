@@ -1,3 +1,9 @@
+# Blesscon Candy Business Manager — v53 Revamp Build
+
+This package is an upgrade of the supplied Blesscon Candy Business Manager repository. It preserves existing product pricing and stock update workflows and does not reset existing business records. Review `CHANGELOG_V53.md`, `DEPLOY_V53.md`, and `TEST_REPORT_V53.md` before deployment. The migration must be tested against a staging Supabase project; this build has not been live-verified.
+
+---
+
 # manager_blesscon
 
 ## v42 migration compatibility note

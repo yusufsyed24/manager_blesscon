@@ -4,20 +4,48 @@
     "sha256": "2bc1aa56bd60443cf71060125a2f84aefb42b7ebec34e8d53d24af4beef74550"
   },
   {
+    "path": "CASH_BANK_RECOVERY_TRANSFER_FIX_V48.md",
+    "sha256": "539234f672f38bda35f0681f6823ad3a1dfaba9bf37225d45acfb98532e51b5e"
+  },
+  {
     "path": "CHANGELOG.md",
-    "sha256": "57a57c8ab76d81cb74ca996d7df65a0b9904ffa5ab91a340270230c8f0c78e54"
+    "sha256": "bd0b9dbfdeb345dcdf3d1b54a5a573b1cf40d8e7fd84adce4b67d2341ed247e3"
+  },
+  {
+    "path": "CHANGELOG_V53.md",
+    "sha256": "141503a0cc7070f62dda0863e856b9123d15f43bdb9cfc198fcbe00cfbd7991e"
   },
   {
     "path": "DEPLOY_V40_MANAGER_CLOSING.md",
-    "sha256": "3098f28182c7b1751a121855dd0ae8ab6c4eb3d737f3aa6f4803634484792812"
+    "sha256": "a2dd9aa3645b53da556204d5f189340a5a69befcd69010238cb6c84708d43468"
+  },
+  {
+    "path": "DEPLOY_V53.md",
+    "sha256": "42f199e538bbc53954a7770c24b1617f61f9157642b0aa8ac6bcb00c4fb74e39"
+  },
+  {
+    "path": "EXPENSE_ACCOUNT_FIX_V49.md",
+    "sha256": "e1b5c0b69f5eed123248dbf16830d8b61e81b65b7057e1cef057d0a777afd63b"
+  },
+  {
+    "path": "MANAGER_CLOSING_CASH_ATTRIBUTION_V47_NOTES.md",
+    "sha256": "317728aed84d2ab8dde9e2662167bc076b5fb215ebfb43135129deac65d99aa1"
+  },
+  {
+    "path": "MANAGER_CLOSING_V39_DEPLOYMENT.md",
+    "sha256": "74b957c9ab087fa5162d257c62de0709d30eac066f14ce501c1bee4913d15138"
   },
   {
     "path": "MANAGER_DAILY_CLOSING_V38_NOTES.md",
     "sha256": "3b0be2592f69f4bfa57fe93feca0c34da7fec292f7208d8392cb66aa2f82c0e6"
   },
   {
+    "path": "MANAGER_DIRECT_SALES_V46_NOTES.md",
+    "sha256": "e70f0bf4d95f9efebdd3c13f45496c207d387078b2ca421bf4931fa26c2c1e3d"
+  },
+  {
     "path": "README.md",
-    "sha256": "2142603f41a869239c2b167ba15b19ca51641d88a33cf4886e6d682d1a91a8c1"
+    "sha256": "fa9b0bc0ac37436ce15b4d7cf7fae5517be78623c58f1b82224b2ee8039cbf52"
   },
   {
     "path": "README_DAILY_CLOSING_MANAGER_FIX.md",
@@ -29,7 +57,7 @@
   },
   {
     "path": "README_SETUP.md",
-    "sha256": "73ce084c8ebcb95d8275f9e2d4b56f53376993baa903866c3497f50b6b24880d"
+    "sha256": "73758e59915d67dace6f1a1686099ce8b9553b0feb9f6bcb12cf1b9240293b12"
   },
   {
     "path": "TESTING.md",
@@ -44,16 +72,20 @@
     "sha256": "36070960ac561a7ad09ca5a863b454cb61f6d841858fb0aa96f90e91622b1fcf"
   },
   {
+    "path": "TEST_REPORT_V53.md",
+    "sha256": "2b084a8fe91c4bb6e3379fa994b7f87f2dbf1daadc3e1c7ef7c34f6a66eacf29"
+  },
+  {
     "path": "THIRD_PARTY_NOTICES.md",
     "sha256": "b8b280919297268759d7ac357714dab5f27595a33ba57f2f5a81039f34520fe1"
   },
   {
     "path": "app.js",
-    "sha256": "671df79ce8857550d73ca1ad0cf4edeb8535ffa42c6791e7c49af94a20bd6baf"
+    "sha256": "1ec9bc1df5dab19f3b977cef03a457697e50bcb49544b879435c1b051eb49b02"
   },
   {
     "path": "app_config.js",
-    "sha256": "3a6726832e4a9bbdcc6b7ab4c7be603bff97fbb3352f5e1999de47fe52ffab39"
+    "sha256": "79eb38ce7f880e731031b38fa70e36d57c792cd5e22f9e0c96f64114309e182c"
   },
   {
     "path": "assets/document-font.ttf",
@@ -89,7 +121,7 @@
   },
   {
     "path": "js/app.js",
-    "sha256": "91c2b29be714fb3dc303ca1c584df605f76e41649c4048107ff341aa85cc0583"
+    "sha256": "c2bb410f2f6517463a180ff085a0dcb9cc70fcc5c4bcd2ffbdc3f9fd21f256ea"
   },
   {
     "path": "js/brand.js",
@@ -101,7 +133,7 @@
   },
   {
     "path": "js/domain.js",
-    "sha256": "32abc6fca7c6b09bac17d6dfd0573a6952c609171a2fc5f034ed886e0eae3796"
+    "sha256": "240d852dffcc4af098a4e53614a5301926ed6e31658d1906e141a903edd33540"
   },
   {
     "path": "js/exporter.js",
@@ -121,11 +153,15 @@
   },
   {
     "path": "js/store.js",
-    "sha256": "8087b2538921ebfdce650c53400e01faaedd18a5200aab95ea0dc3e9a9057df6"
+    "sha256": "8e7d3cd17ca1e1dde80cf6e92f4ac251128dc609678a41fee96e9f0b68253146"
   },
   {
     "path": "manifest.json",
     "sha256": "2413c623f14c854c71bc01de23bfb6cbf55ee3aaea9818e46cf534adfb4a2c36"
+  },
+  {
+    "path": "mnt/user-data/outputs/sw.js",
+    "sha256": "0fafcad4942623cd4aae227aaaca5530e8d8c85a882fd7322fd99a1d17cc5fed"
   },
   {
     "path": "netlify.toml",
@@ -133,11 +169,11 @@
   },
   {
     "path": "package-lock.json",
-    "sha256": "52feebd01c168badd74855c76881e9a5098762d58d832c63bd5c73893d398746"
+    "sha256": "841ed0356fd2ed5af240b4d70f792c1a1fdd1d8a0ceebec3cf4924fdaea061cc"
   },
   {
     "path": "package.json",
-    "sha256": "be82a4c338713d214186b33a78551ec6cff351a0dd9a03ab2d7eee658abe793c"
+    "sha256": "14f2344cc0a91db3e375c8f00acdf7cb00396cf642b5e0728ae05ba65d7c11d7"
   },
   {
     "path": "scripts/check.mjs",
@@ -152,8 +188,12 @@
     "sha256": "ed8136b6d12804726b069c1ce7cd7bfd385907f1c9307759defe3cc4fda1dc63"
   },
   {
+    "path": "supabase/Blesscon_Expense_Specific_Bank_Account_Migration.sql",
+    "sha256": "b374555d22d07284f4c15116e67ebef7ca87eeaf8bc6975accd6a81d03bd9277"
+  },
+  {
     "path": "supabase/cash_bank_book.sql",
-    "sha256": "bef4d88bd236d68777bb03095101d9ddb2300177534410d54cf7438e5808efd4"
+    "sha256": "837540bde64cbfd0004e8fb3766f80430199edfdafd163f8a0e79677e6ebc530"
   },
   {
     "path": "supabase/closing_balances.sql",
@@ -162,6 +202,10 @@
   {
     "path": "supabase/config.toml",
     "sha256": "b68e194c06d55b3c1d9611235950fd9b464539c4239f417a69930703cf88d298"
+  },
+  {
+    "path": "supabase/expense_specific_cashbook_account.sql",
+    "sha256": "eeae307b88bce674544f4c02a5529ff4a4a97a194955bdb6d3bcc7a339713b6c"
   },
   {
     "path": "supabase/first_admin.sql",
@@ -193,11 +237,31 @@
   },
   {
     "path": "supabase/manager_closing_expenses_v40.sql",
-    "sha256": "ccd825e0cbdb36c04cc0cbff75c819c3ba48ea9351b8fffc612e2badfffa3937"
+    "sha256": "6d99b0273c84b53fb3929ab35b9fd07dd19166a758a0b48bd42672e8d92eeef8"
   },
   {
     "path": "supabase/manager_closing_fix_v39.sql",
     "sha256": "1af49be09b224a551f399eecb2fff370a69dd98838fda92b34e82d2146480293"
+  },
+  {
+    "path": "supabase/manager_closing_rpc_ambiguity_fix_v43.sql",
+    "sha256": "a2cb1cd2b00ec13f1db298d50ecdaf7cbdcc4d21f6a45f26b745a50e820e425f"
+  },
+  {
+    "path": "supabase/manager_closing_rpc_signature_v41.sql",
+    "sha256": "69430530b6e3a67ae4f5d5583263a01902b126ab65916705f8b58e2d47e0c7f1"
+  },
+  {
+    "path": "supabase/manager_closing_schema_patch_v44.sql",
+    "sha256": "85e446efc4ea85fd88c6d0bf677c262910acca7aad7537021bf8b95bdb8673d3"
+  },
+  {
+    "path": "supabase/manager_closing_schema_patch_v45.sql",
+    "sha256": "bf19067dc98beb105cc2247781a4c5afa5a5fb74adccfceab5ba3dc277125dc9"
+  },
+  {
+    "path": "supabase/manager_daily_closing_v39.sql",
+    "sha256": "1ac7e7826b216edee9e3e2d5e5083e6a766eff7b2cd6359aef03a80e2b04dc50"
   },
   {
     "path": "supabase/manager_product_stock_access.sql",
@@ -220,6 +284,10 @@
     "sha256": "1ae99d59ec763ec4a124f204a0746e2faa243116d3975cab7d044d3cae17f500"
   },
   {
+    "path": "supabase/revamp_v53.sql",
+    "sha256": "cc2bc1b9c352aebaf52f7c4ce68e86f888e3c27c4a7b0d58d2771d3c73ae3209"
+  },
+  {
     "path": "supabase/salesman_self_service.sql",
     "sha256": "511115e81a6a8f7419ea796aa46e9fc8f0648c146d780477adcb2eb4dc1cec24"
   },
@@ -229,7 +297,7 @@
   },
   {
     "path": "supabase/schema.sql",
-    "sha256": "6154f1ac84c1e896f592e7ef3dcb28217f6d4f838f71580032dd89f459af2fbd"
+    "sha256": "3acf315474dfbda1cba211b8458c3a7a4624ea8c444bd8d06827d7d25e2ff299"
   },
   {
     "path": "supabase/verify.sql",
@@ -237,7 +305,7 @@
   },
   {
     "path": "sw.js",
-    "sha256": "ca3d1c0c3c857ae083f0255d8f87dbc029cc193312778407625a0fd4afc76faa"
+    "sha256": "1c7c8dfcd11525be59f50f881c88bbe7a47b13a1849221301a22740363aa96eb"
   },
   {
     "path": "tests/cashbook.test.js",
@@ -312,6 +380,10 @@
     "sha256": "d96fc6d46b151e1ec9d73c7df82f2d388c37a3a13924c2177b2fa0a4d9e37246"
   },
   {
+    "path": "tests/revamp-v53.test.js",
+    "sha256": "b151a15af8bb9baee933f50ba41a21699b74064180cbff19ba07799f98c958bc"
+  },
+  {
     "path": "tests/schema.test.js",
     "sha256": "177c075987628e5df415a9bbbe1464e5e4e06e5659e46ffbd81a7ef67e65a43c"
   },
@@ -377,15 +449,15 @@
   },
   {
     "path": "web/CHANGELOG.md",
-    "sha256": "0d23a8161a76cb41ae64490ea00f4dca530db831b4c7997e2d0a53276345029b"
+    "sha256": "976fb04dcc3734e39fc22b1196d23cbb36972fec5fd5139dbff7ce8dec6afd05"
   },
   {
     "path": "web/README_SETUP.md",
-    "sha256": "73ce084c8ebcb95d8275f9e2d4b56f53376993baa903866c3497f50b6b24880d"
+    "sha256": "73758e59915d67dace6f1a1686099ce8b9553b0feb9f6bcb12cf1b9240293b12"
   },
   {
     "path": "web/app_config.js",
-    "sha256": "3a6726832e4a9bbdcc6b7ab4c7be603bff97fbb3352f5e1999de47fe52ffab39"
+    "sha256": "79eb38ce7f880e731031b38fa70e36d57c792cd5e22f9e0c96f64114309e182c"
   },
   {
     "path": "web/assets/document-font.ttf",
@@ -409,7 +481,7 @@
   },
   {
     "path": "web/js/app.js",
-    "sha256": "91c2b29be714fb3dc303ca1c584df605f76e41649c4048107ff341aa85cc0583"
+    "sha256": "c2bb410f2f6517463a180ff085a0dcb9cc70fcc5c4bcd2ffbdc3f9fd21f256ea"
   },
   {
     "path": "web/js/brand.js",
@@ -421,7 +493,7 @@
   },
   {
     "path": "web/js/domain.js",
-    "sha256": "32abc6fca7c6b09bac17d6dfd0573a6952c609171a2fc5f034ed886e0eae3796"
+    "sha256": "240d852dffcc4af098a4e53614a5301926ed6e31658d1906e141a903edd33540"
   },
   {
     "path": "web/js/exporter.js",
@@ -441,7 +513,7 @@
   },
   {
     "path": "web/js/store.js",
-    "sha256": "8087b2538921ebfdce650c53400e01faaedd18a5200aab95ea0dc3e9a9057df6"
+    "sha256": "8e7d3cd17ca1e1dde80cf6e92f4ac251128dc609678a41fee96e9f0b68253146"
   },
   {
     "path": "web/manifest.json",
@@ -453,11 +525,27 @@
   },
   {
     "path": "web/supabase/manager_closing_expenses_v40.sql",
-    "sha256": "ccd825e0cbdb36c04cc0cbff75c819c3ba48ea9351b8fffc612e2badfffa3937"
+    "sha256": "6d99b0273c84b53fb3929ab35b9fd07dd19166a758a0b48bd42672e8d92eeef8"
   },
   {
     "path": "web/supabase/manager_closing_fix_v39.sql",
     "sha256": "1af49be09b224a551f399eecb2fff370a69dd98838fda92b34e82d2146480293"
+  },
+  {
+    "path": "web/supabase/manager_closing_rpc_ambiguity_fix_v43.sql",
+    "sha256": "a2cb1cd2b00ec13f1db298d50ecdaf7cbdcc4d21f6a45f26b745a50e820e425f"
+  },
+  {
+    "path": "web/supabase/manager_closing_rpc_signature_v41.sql",
+    "sha256": "69430530b6e3a67ae4f5d5583263a01902b126ab65916705f8b58e2d47e0c7f1"
+  },
+  {
+    "path": "web/supabase/manager_closing_schema_patch_v45.sql",
+    "sha256": "bf19067dc98beb105cc2247781a4c5afa5a5fb74adccfceab5ba3dc277125dc9"
+  },
+  {
+    "path": "web/supabase/manager_daily_closing_v39.sql",
+    "sha256": "1ac7e7826b216edee9e3e2d5e5083e6a766eff7b2cd6359aef03a80e2b04dc50"
   },
   {
     "path": "web/supabase/manager_role.sql",
@@ -472,8 +560,12 @@
     "sha256": "037cef5cae7f4abea948083d8104bc13f20661f3476b60fb5e6ab9ce8a82673a"
   },
   {
+    "path": "web/supabase/schema.sql",
+    "sha256": "6154f1ac84c1e896f592e7ef3dcb28217f6d4f838f71580032dd89f459af2fbd"
+  },
+  {
     "path": "web/sw.js",
-    "sha256": "ca3d1c0c3c857ae083f0255d8f87dbc029cc193312778407625a0fd4afc76faa"
+    "sha256": "1c7c8dfcd11525be59f50f881c88bbe7a47b13a1849221301a22740363aa96eb"
   },
   {
     "path": "web/vendor/chart.umd.js",
