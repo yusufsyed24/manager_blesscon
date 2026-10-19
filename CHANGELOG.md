@@ -519,3 +519,9 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Expanded manager upload categories for NIC/identity, education, appointment letter, employment contract, salary/bank and other important documents.
 - Added additive SQL to reapply employee-document/storage access policies: Salesmen can read their own document metadata/files; Admins and assigned Managers can upload/manage employee files. No business data is deleted.
 - Verification: JavaScript syntax checks and release-copy sync passed. Full Vitest suite and live Supabase/RLS/Edge Function checks were not run in this environment.
+
+
+## v55.6 — Salesman-to-manager assignment persistence
+- Fixed the `private.save_master()` allowed-column list so `salesmen.manager_user_id` is not discarded when Admin assigns a salesman to a Manager.
+- Added an idempotent Supabase SQL patch to update the live function and ensure assigned Managers can read their own team roster.
+- No business data reset or deletion is performed.
