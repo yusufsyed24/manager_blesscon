@@ -49,7 +49,7 @@ create policy roles_read on public.user_roles for select to authenticated using(
 create policy permissions_read on public.user_permissions for select to authenticated using(user_id=auth.uid() or public.is_admin());
 create policy product_read on public.products for select to authenticated using(public.is_admin() or public.has_permission('products') or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active));
 create policy tiers_read on public.price_tiers for select to authenticated using(exists(select 1 from public.products p where p.id=product_id));
-create policy salesman_read on public.salesmen for select to authenticated using(public.is_admin() or public.owns_salesman(id));
+create policy salesman_read on public.salesmen for select to authenticated using(public.is_admin() or public.owns_salesman(id) or (manager_user_id=auth.uid() and exists(select 1 from public.user_roles ur join public.profiles pr on pr.id=ur.user_id and pr.active where ur.user_id=auth.uid() and ur.role='manager')));
 create policy customer_read on public.customers for select to authenticated using(public.is_admin() or public.owns_salesman(salesman_id) or (created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active)));
 create policy orders_read on public.orders for select to authenticated using(public.can_document(salesman_id,'orders'));
 create policy quotes_read on public.quotations for select to authenticated using(public.can_document(salesman_id,'quotes'));

@@ -525,3 +525,11 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Fixed the `private.save_master()` allowed-column list so `salesmen.manager_user_id` is not discarded when Admin assigns a salesman to a Manager.
 - Added an idempotent Supabase SQL patch to update the live function and ensure assigned Managers can read their own team roster.
 - No business data reset or deletion is performed.
+
+
+## v55.7 — Repair salesman-to-manager visibility (2026-10-20)
+- Admin's Salesmen & Targets view now retains assigned salesman profiles even if a linked login's role metadata is inconsistent; Admin visibility no longer depends on the linked role being exactly `salesman`.
+- Online salesman profile saves now commit through Supabase and verify the returned `manager_user_id` before the UI reports success. Server-side assignment failures are surfaced instead of leaving a misleading optimistic assignment.
+- Added an additive SQL migration to ensure `private.save_master()` accepts `manager_user_id` and the `salesman_read` policy lets Admin retain visibility while allowing a Manager to read assigned team members.
+- Bumped the service-worker cache key so GitHub Pages clients fetch the updated scripts. No business data is reset or deleted.
+- Validation: JavaScript syntax and root/`web/` mirror checks passed; ZIP integrity passed. Full Vitest and live Supabase/RLS tests were not run, and no live database was changed.

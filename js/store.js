@@ -1232,6 +1232,55 @@ export class Store extends EventTarget {
     if (kind === "cashbook.close.approve" && this.client && !navigator.onLine) {
       throw Error("Daily closing approval requires an online connection.");
     }
+    // Salesman profile and Manager assignment must be committed and verified before
+    // the UI reports success. The generic offline queue can otherwise leave an
+    // optimistic local row while the server rejects manager_user_id, or refresh under
+    // RLS can make the assigned row appear to vanish from one role's view.
+    if (kind === "master.save" && data?.table === "salesmen" && this.client && navigator.onLine) {
+      if (this.queue.length) {
+        await this.sync();
+        if (this.queue.length || this.error) {
+          throw Error("A previous change is still pending. Resolve the sync issue before assigning this salesman: " + (this.error || "pending changes remain"));
+        }
+      }
+      this.busy = true;
+      this.emit();
+      try {
+        await this.verifyUser();
+        const { data: saved, error } = await this.client.rpc("apply_command", { op_id: op.id, kind, data });
+        if (error) {
+          const message = error.message || String(error);
+          if (/manager_user_id|column .* does not exist|schema cache|unknown command/i.test(message)) {
+            throw Error("Supabase did not accept the salesman assignment. Apply supabase/fix_salesman_manager_assignment_v55_7.sql, then retry. Original error: " + message);
+          }
+          throw error;
+        }
+        if (!saved?.id || String(saved.id) !== String(data?.record?.id)) {
+          throw Error("Supabase did not confirm the saved salesman profile. No success was reported; refresh the page and try again.");
+        }
+        const requestedManager = data?.record?.manager_user_id || null;
+        const savedManager = saved.manager_user_id || null;
+        if (String(savedManager || "") !== String(requestedManager || "")) {
+          throw Error("Supabase saved the salesman profile but did not persist the selected Manager. Apply the v55.7 SQL fix and save the assignment again.");
+        }
+        const index = this.base.salesmen.findIndex((row) => String(row.id) === String(saved.id));
+        if (index < 0) this.base.salesmen.push(saved); else this.base.salesmen[index] = saved;
+        this.persist();
+        this.error = "";
+        this.lastResult = saved;
+        this.replay();
+        try {
+          await this.refresh();
+        } catch (refreshError) {
+          this.error = "Salesman assignment was saved, but the full data refresh failed: " + (refreshError?.message || String(refreshError));
+          this.emit();
+        }
+        return saved;
+      } finally {
+        this.busy = false;
+        this.emit();
+      }
+    }
     // Expense account selection must be committed by Supabase before the editor closes.
     // The generic optimistic queue previously swallowed an RPC error and left the form
     // appearing saved while cashbook_account_key remained NULL in public.expenses.

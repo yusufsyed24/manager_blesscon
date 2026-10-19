@@ -568,7 +568,10 @@ function targetRows() {
       const linkedRole = s.user_roles.find(
         (role) => role.user_id === salesman.user_id,
       )?.role;
-      return !salesman.user_id || linkedRole === "salesman";
+      // Admin must always retain visibility of every salesman profile. Also keep
+      // manager-assigned profiles visible even if an older/misconfigured login role
+      // is not "salesman"; the manager scope is enforced separately by managerTeamIds.
+      return admin() || !salesman.user_id || linkedRole === "salesman" || !!salesman.manager_user_id;
     })
     .map((x) => {
       const days = s.salesman_daily_targets.filter(
