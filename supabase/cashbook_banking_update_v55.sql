@@ -109,6 +109,104 @@ NOTIFY pgrst, 'reload schema';
 SELECT account_key,label,account_type,payment_method,opening_balance_paisa,active
 FROM public.cashbook_accounts
 WHERE account_key IN ('mcb_bank','al_habib_bank','jazzcash','easypaisa','cash_hand','market_credit')
+   OR lower(label) LIKE '%mcb%' OR lower(label) LIKE '%al habib%'
+   OR lower(label) LIKE '%jazz%cash%' OR lower(label) LIKE '%easy%paisa%'
+   OR lower(label) LIKE '%cash in hand%' OR lower(label) LIKE '%market credit%'
 ORDER BY CASE account_key
   WHEN 'mcb_bank' THEN 1 WHEN 'al_habib_bank' THEN 2 WHEN 'jazzcash' THEN 3
   WHEN 'easypaisa' THEN 4 WHEN 'cash_hand' THEN 5 WHEN 'market_credit' THEN 6 ELSE 99 END;
+
+-- Strict destination validation: the selected account key, not the generic word "Bank",
+-- controls where a payment/expense is posted. A mismatch aborts the whole transaction.
+CREATE OR REPLACE FUNCTION private.cashbook_validate_account_method()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  acct public.cashbook_accounts%rowtype;
+  m text := lower(trim(coalesce(NEW.method,'')));
+  expected_type text;
+  specific_bank text := '';
+BEGIN
+  IF NULLIF(trim(NEW.cashbook_account_key),'') IS NULL THEN
+    RAISE EXCEPTION 'Select the exact receiving/paying account before saving this transaction';
+  END IF;
+
+  SELECT * INTO acct
+  FROM public.cashbook_accounts
+  WHERE account_key = NEW.cashbook_account_key AND active = true;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Selected account is missing or inactive. Choose an active account';
+  END IF;
+
+  IF m IN ('mcb bank','cheque — mcb bank','cheque - mcb bank') THEN
+    expected_type := 'bank'; specific_bank := 'mcb';
+  ELSIF m IN ('al habib bank','cheque — al habib bank','cheque - al habib bank') THEN
+    expected_type := 'bank'; specific_bank := 'al habib';
+  ELSIF m IN ('bank','bank account','cheque') THEN
+    expected_type := 'bank';
+  ELSIF m IN ('jazzcash') THEN
+    expected_type := 'wallet';
+  ELSIF m IN ('easypaisa','easy paisa') THEN
+    expected_type := 'wallet';
+  ELSE
+    expected_type := 'cash';
+  END IF;
+
+  IF specific_bank <> '' THEN
+    IF acct.account_type <> 'bank' THEN
+      RAISE EXCEPTION '%, must be selected as the destination account for this payment method',
+        CASE WHEN specific_bank='mcb' THEN 'MCB Bank' ELSE 'Al Habib Bank' END;
+    END IF;
+    IF specific_bank='mcb' AND NOT (acct.account_key='mcb_bank' OR acct.account_key='pk80mucb1156654281004446' OR lower(acct.label) LIKE '%mcb%') THEN
+      RAISE EXCEPTION 'Payment method is MCB Bank, but the selected account is %', acct.label;
+    END IF;
+    IF specific_bank='al habib' AND NOT (acct.account_key='al_habib_bank' OR lower(acct.label) LIKE '%al habib%') THEN
+      RAISE EXCEPTION 'Payment method is Al Habib Bank, but the selected account is %', acct.label;
+    END IF;
+  ELSIF acct.account_type='salesman' THEN
+    IF lower(coalesce(acct.payment_method,'')) NOT IN
+      (CASE WHEN expected_type='bank' THEN 'bank account' WHEN expected_type='wallet' THEN lower(m) ELSE 'cash' END,
+       CASE WHEN expected_type='wallet' AND m='easypaisa' THEN 'easypaisa' ELSE 'cash' END) THEN
+      RAISE EXCEPTION 'Selected salesman collection account does not match payment method %', NEW.method;
+    END IF;
+  ELSIF acct.account_type <> expected_type THEN
+    RAISE EXCEPTION 'Payment method % does not match selected account %', NEW.method, acct.label;
+  END IF;
+
+  IF expected_type='wallet' AND acct.account_type='wallet'
+     AND lower(coalesce(acct.payment_method,'')) NOT IN (m, CASE WHEN m='easy paisa' THEN 'easypaisa' ELSE m END) THEN
+    RAISE EXCEPTION 'Payment method % does not match selected wallet %', NEW.method, acct.label;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS cashbook_validate_payment_account ON public.payments;
+CREATE TRIGGER cashbook_validate_payment_account
+BEFORE INSERT OR UPDATE OF method, cashbook_account_key ON public.payments
+FOR EACH ROW EXECUTE FUNCTION private.cashbook_validate_account_method();
+
+DROP TRIGGER IF EXISTS cashbook_validate_expense_account ON public.expenses;
+CREATE TRIGGER cashbook_validate_expense_account
+BEFORE INSERT OR UPDATE OF method, cashbook_account_key ON public.expenses
+FOR EACH ROW EXECUTE FUNCTION private.cashbook_validate_account_method();
+
+-- Ensure the posting trigger treats bank-specific methods as bank receipts, not cash.
+DO $$
+DECLARE def text; nd text;
+BEGIN
+  SELECT pg_get_functiondef('private.cashbook_post_payment()'::regprocedure) INTO def;
+  nd := replace(def,
+    $old$when lower(coalesce(new.method,'')) in ('bank','bank account','cheque') then 'Bank Account'$old$,
+    $new$when lower(coalesce(new.method,'')) in ('bank','bank account','cheque','mcb bank','al habib bank','cheque — mcb bank','cheque - mcb bank','cheque — al habib bank','cheque - al habib bank') then 'Bank Account'$new$);
+  IF nd = def OR position('cheque — al habib bank' in nd) = 0 THEN
+    RAISE EXCEPTION 'Could not safely patch cashbook_post_payment method mapping. Do not proceed with bank-specific payment methods until the function definition is reviewed.';
+  END IF;
+  EXECUTE nd;
+END $$;
+
+REVOKE ALL ON FUNCTION private.cashbook_validate_account_method() FROM public, anon, authenticated;
+NOTIFY pgrst, 'reload schema';

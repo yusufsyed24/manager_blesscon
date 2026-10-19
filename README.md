@@ -13,3 +13,7 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 ## v55 Cash & Bank Book
 
 This release adds responsive account cards for the requested six cash/bank/receivables categories, account ledger drill-down, and an Admin-only idempotent Add Money flow. Apply `supabase/cashbook_banking_update_v55.sql` after the existing cash/bank schema, then deploy the updated `web/` folder. No reset is included in this release.
+
+### Bank destination safety (v55.1)
+
+Payment and expense forms distinguish **MCB Bank** from **Al Habib Bank** (including cheque destinations). Always select the matching destination account. The additive SQL migration validates method/account consistency at database level and rejects missing or mismatched account selections; it does not rewrite historical entries. Apply `supabase/cashbook_banking_update_v55.sql` after the base `supabase/cash_bank_book.sql` migration and test in staging.

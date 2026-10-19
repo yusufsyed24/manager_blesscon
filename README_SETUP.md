@@ -17,3 +17,7 @@ See `CHANGELOG.md`, `DEPLOY_V54.md`, `ROLE_MATRIX_V54.md`, and `TEST_REPORT_V54.
 ## v55 Cash & Bank Book update
 
 After the base schema and `supabase/cash_bank_book.sql` are installed, run `supabase/cashbook_banking_update_v55.sql` in the Supabase SQL Editor. This is additive and preserves existing account IDs and ledger history. It adds the Admin-only idempotent Add Money RPC and reconciles the six requested account definitions when genuinely missing. Then deploy the updated static files from `web/` and test in staging first. Do not rerun any reset SQL.
+
+### Bank destination safety (v55.1)
+
+Payment and expense forms distinguish **MCB Bank** from **Al Habib Bank** (including cheque destinations). Always select the matching destination account. The additive SQL migration validates method/account consistency at database level and rejects missing or mismatched account selections; it does not rewrite historical entries. Apply `supabase/cashbook_banking_update_v55.sql` after the base `supabase/cash_bank_book.sql` migration and test in staging.

@@ -1,5 +1,10 @@
 # Changelog
 
+## v55.2 — Hide salesman collection account cards (2026-10-20)
+- Removed the separate “Salesman Collection — …” cards from the Cash & Bank Book overview, including Cash, Bank Account, EasyPaisa and JazzCash variants.
+- Kept salesman collection ledger entries and included balances in the overall liquid-funds calculation; this is a display-only change and does not delete or alter transaction history.
+- Updated “Accounts tracked” to count only the cards shown in the overview.
+
 ## v54 — Connected Admin → Manager → Salesman workflow (2026-10-20)
 
 - Added manager-scoped salesman creation/editing with explicit assignment to a manager; restricted manager editing so salary and login linkage remain administrator-controlled.
@@ -490,3 +495,11 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Added an Admin-only Add Money flow for external funds. It creates one idempotent receipt posting; transfers remain paired movements and opening-balance corrections remain in the audited adjustment workflow.
 - Added `supabase/cashbook_banking_update_v55.sql`, an additive account reconciliation and Add Money RPC migration. It does not truncate data or overwrite existing account balances/history.
 - Product pricing and stock update workflows were not changed.
+
+## v55.1 — Explicit bank destination validation
+
+- Replaced generic bank payment choices with distinct MCB Bank and Al Habib Bank options, including bank-specific cheque choices, for sales orders, invoice collections, quotation conversion, and expenses.
+- Added client-side account/method matching and a database trigger guard that rejects missing, inactive, or mismatched destination accounts before posting.
+- Bank-specific methods are mapped as bank receipts in the cashbook posting trigger; destination account keys remain authoritative.
+- Removed the stale hardcoded MCB expense account fallback and limited expense account choices to active company cash/bank/wallet accounts.
+- No business records, account balances, or historical ledger entries are deleted or rewritten by the patch.

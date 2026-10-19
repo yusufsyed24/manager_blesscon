@@ -1,23 +1,25 @@
-# Blesscon Candy Business Manager v55 — Validation report
+# Blesscon Candy Business Manager v55.1 — Validation report
 
 ## Implemented
 
-- Responsive Cash & Bank Book account cards for the requested bank, wallet, cash, and receivables accounts.
-- Account ledger drill-down with chronological rows, running balance, source reference, related customer/party where resolvable, and creator where available.
-- Admin-only Add Money flow for new external funds, separate from account transfers and opening-balance corrections.
-- Dedicated `cashbook_add_money_command` RPC with role checks, positive integer-paisa validation, required reason, account locking, and idempotent posting key.
-- Required account selection for payments when the authoritative cashbook is loaded and a payment is being collected; unpaid orders do not require a receiving account.
-- Product Pricing and Stock Update code was not changed by this update.
+- Cash & Bank Book account cards and ledger drill-down from v55 retained.
+- Payment-method choices now distinguish **MCB Bank** from **Al Habib Bank**, including separate cheque destinations, in sales orders, invoice collections, quotation conversion, and expense forms.
+- Payment and expense forms require an explicit destination account. Client-side checks reject a bank/method mismatch before submission.
+- Additive SQL installs a database trigger that rejects missing/inactive accounts and mismatched MCB/Al Habib, cash, bank, and wallet destinations before the posting transaction can commit.
+- The payment posting trigger maps bank-specific method names to bank receipts rather than cash receipts.
+- Removed the stale hardcoded MCB expense account fallback. Expense destination options are sourced from active accounts; the legacy generic bank account is hidden when both named bank accounts are present.
+- Product Pricing and Stock Update code was not changed.
+- No reset, truncate, opening-balance rewrite, or historical ledger deletion is included.
 
 ## Checks performed in this environment
 
-- `node --check` passed for JavaScript files under `js/`, `tests/`, and generated `web/js/`.
-- `node scripts/release.mjs` completed and regenerated `web/` from the canonical root source.
-- Root and `web/` copies of `app.js`, `store.js`, and `app.css` were compared and matched.
-- Static assertions confirmed the banking update SQL contains the canonical account keys, Add Money RPC, grants/revokes, and schema-cache notification.
+- `node --check js/app.js` passed.
+- `node scripts/release.mjs` completed and regenerated `web/` from canonical root source.
+- Root and `web/` `app.js` files match.
+- Static checks confirmed the SQL includes bank-specific method validation, payment/expense triggers, Add Money RPC, and schema-cache notification.
 
 ## Checks not performed
 
 - `node scripts/check.mjs` could not complete because the local dependency `typescript` is not installed.
 - Automated Vitest/PGlite tests and live Supabase/RLS/RPC tests were not run in this environment.
-- This report does not claim that the SQL has been applied to the user's Supabase project. Apply the SQL in staging first, then verify the returned account rows and test Add Money, payment posting, transfers, and account ledgers before production deployment.
+- This SQL has not been executed against the user's Supabase project. Apply in staging first, then test mismatched destinations (which must be rejected), correct MCB/Al Habib postings, cash/wallet receipts, expenses, transfers, and account balances before production deployment.
