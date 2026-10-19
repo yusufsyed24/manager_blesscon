@@ -481,3 +481,12 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Clarified the generic `bank_default` option so it cannot be mistaken for MCB.
 - Synchronized root, `js/`, and `web/` application copies and bumped the service-worker cache name to force clients to fetch the new build.
 - Validation: `node --check` passed for app/store JS copies; ZIP integrity verified. Full project tests require the project dependencies to be installed. No live database was accessed or changed.
+
+
+## v55 — Cash & Bank Book account-card and Add Money update
+
+- Reworked the Cash & Bank Book overview into responsive account cards for MCB Bank, Al Habib Bank, JazzCash, EasyPaisa, Cash in Hand and Market Credit / receivables. Existing additional and salesman collection accounts remain visible where applicable.
+- Added account-ledger drill-down with chronological transactions, running balance, source record, related customer/party and creator where available.
+- Added an Admin-only Add Money flow for external funds. It creates one idempotent receipt posting; transfers remain paired movements and opening-balance corrections remain in the audited adjustment workflow.
+- Added `supabase/cashbook_banking_update_v55.sql`, an additive account reconciliation and Add Money RPC migration. It does not truncate data or overwrite existing account balances/history.
+- Product pricing and stock update workflows were not changed.

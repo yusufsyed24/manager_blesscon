@@ -1,7 +1,7 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "54.0.0",
-  "description": "Connected Admin–Manager–Salesman business manager with relational Supabase, offline queue and audited operational workflows",
+  "version": "55.0.0",
+  "description": "Connected Admin\u2013Manager\u2013Salesman business manager with responsive Cash & Bank Book account cards and audited Add Money workflow",
   "directories": {
     "doc": "docs",
     "test": "tests"

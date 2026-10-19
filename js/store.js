@@ -36,6 +36,7 @@ export const TABLES = [
   "customer_visits",
 ];
 const commandRpc = (kind) =>
+  kind === "cashbook.deposit" ? "cashbook_add_money_command" :
   kind.startsWith("cashbook.") ? "cashbook_record_command" :
   kind.startsWith("closing.manager_") ? "manager_closing_command" :
   kind.startsWith("closing.") || ["stock.issue", "stock.return"].includes(kind)
@@ -732,6 +733,21 @@ export function localApply(base, op, user) {
       result = { account_key:d.account_key, label:d.label.trim(), account_type:d.account_type, payment_method:d.payment_method, opening_balance_paisa:0, active:true, created_by:user.id, created_at:oldAccount?.created_at||now, pending_sync:!user.practice };
       upsert(s.cashbook_accounts,result,"account_key");
       if (d.opening_balance_paisa > 0) s.cashbook_entries.push({id:uid(),posting_key:`command:${op.id}:opening`,transaction_id:op.id,business_date:today(),account_key:d.account_key,amount_paisa:d.opening_balance_paisa,entry_type:"adjustment",source_table:"cashbook_accounts",source_id:d.account_key,description:"Opening balance",created_by:user.id,created_at:now,pending_sync:!user.practice});
+      break;
+    }
+    case "cashbook.deposit": {
+      if (!admin && !user.practice) throw Error("Only Admin can add external funds");
+      const account=s.cashbook_accounts.find(a=>a.account_key===d.account_key && a.active && ["cash","bank","wallet"].includes(a.account_type));
+      const amount=Number(d.amount_paisa);
+      if (!account) throw Error("Choose an active cash, bank, or wallet account");
+      if (!Number.isSafeInteger(amount) || amount<=0) throw Error("Amount must be positive whole paisa");
+      if (!String(d.description||"").trim()) throw Error("A source or reason is required");
+      const base={transaction_id:op.id,business_date:d.date||today(),account_key:d.account_key,amount_paisa:amount,entry_type:"receipt",source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:`External funds introduced: ${String(d.description).trim()}`,created_by:user.id,created_at:now,pending_sync:!user.practice};
+      const postingKey=`command:${op.id}`;
+      const prior=s.cashbook_entries.find(e=>e.posting_key===postingKey);
+      if (prior) { if (prior.account_key!==base.account_key || Number(prior.amount_paisa)!==amount) throw Error("Duplicate Add Money request with different details"); return prior; }
+      s.cashbook_entries.push({...base,id:uid(),posting_key:postingKey});
+      result = {ok:true,transaction_id:op.id};
       break;
     }
     case "cashbook.transfer": {

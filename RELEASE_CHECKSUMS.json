@@ -1,5 +1,9 @@
 [
   {
+    "path": ".gitignore",
+    "sha256": "2bc1aa56bd60443cf71060125a2f84aefb42b7ebec34e8d53d24af4beef74550"
+  },
+  {
     "path": "Blesscon_Candy_Manager_Role.zip",
     "sha256": "b604538f6de1f523f48d555a93f824c95040fefc9644929235955b6e0d5b1f4d"
   },
@@ -9,7 +13,7 @@
   },
   {
     "path": "CHANGELOG.md",
-    "sha256": "930ab5b33206249a13c19cfd7b671262971ff66069a677e69785b13f0b218c88"
+    "sha256": "935eab1a8b3378d0125a665cd40031b5a983f0a31b7200e1d2530ed8f1b54587"
   },
   {
     "path": "CHANGELOG_V53.md",
@@ -25,7 +29,7 @@
   },
   {
     "path": "DEPLOY_V54.md",
-    "sha256": "c98e1a778ef30ce5f201f85c6baca3c2ba97cb2048518ff45126a0a07b76d24f"
+    "sha256": "b3e56758a1fb6174f0b6009b5038fcefffc069036f3e4f2c680c32dc32ad4320"
   },
   {
     "path": "EXPENSE_ACCOUNT_FIX_V49.md",
@@ -49,7 +53,7 @@
   },
   {
     "path": "README.md",
-    "sha256": "69e500d8111889f699b2195e34c5da47aaeacd286deddc9eb1a8c902f6cb355b"
+    "sha256": "c517b93d639ad4cb32dcc54a4d51963c826cad4dfa74853caef4e522d740d602"
   },
   {
     "path": "README_DAILY_CLOSING_MANAGER_FIX.md",
@@ -61,7 +65,7 @@
   },
   {
     "path": "README_SETUP.md",
-    "sha256": "1269bf47035aa13f0a702e148dbea3e96aa0cd0416f03d360c94e33c4d8537be"
+    "sha256": "cbdf6a709e627767d3bfe7785db0348b2beb9a5db8d94e36202a5930e3c1c99e"
   },
   {
     "path": "ROLE_MATRIX_V54.md",
@@ -88,6 +92,10 @@
     "sha256": "a72f1e3c427c558639bd130d201b8ac07d450fa15e1d6c859ff080ab23bb361f"
   },
   {
+    "path": "TEST_REPORT_V55.md",
+    "sha256": "9bc90b43365ec0ece3dbbf8814f586cf206d9153b2692f15cd210e707081f3f9"
+  },
+  {
     "path": "THIRD_PARTY_NOTICES.md",
     "sha256": "b8b280919297268759d7ac357714dab5f27595a33ba57f2f5a81039f34520fe1"
   },
@@ -109,7 +117,7 @@
   },
   {
     "path": "css/app.css",
-    "sha256": "4e70faeb9bd82b507c43a15930bb4b9f69d4b248c4478f3077012958717c7b12"
+    "sha256": "11fe9cda0c5c51ed5e6eccc9981d842b6c18b801e5fe728869a83ffd7156cad4"
   },
   {
     "path": "docs/MANAGER_ACCESS_SETUP.md",
@@ -129,7 +137,7 @@
   },
   {
     "path": "js/app.js",
-    "sha256": "807d53b4571184629d95ed8c0b6c5bca6ee81257a782067f19223b291d0b27fd"
+    "sha256": "a1ef281afedf88e697b532013f589135ef1bcf40ff306ef7693e0b8d1434f58d"
   },
   {
     "path": "js/brand.js",
@@ -161,7 +169,7 @@
   },
   {
     "path": "js/store.js",
-    "sha256": "3a907fd38bb58e019eba79955e4f43d28863e5bb18b81b19d1a372e22eb410da"
+    "sha256": "aafd8bea2149a9b52072aabf256c7c9d487baeee5691b32fd020eecbbdd5b070"
   },
   {
     "path": "manifest.json",
@@ -177,7 +185,7 @@
   },
   {
     "path": "package.json",
-    "sha256": "0500b09456a7b16778fbcb736e74930ead2cb6a5c741bfb3a6a1aca0d625c5d4"
+    "sha256": "e3ba9c9ffa05677a7fe64368f0709f094cb3f0d1933791c19f7863ad0f562206"
   },
   {
     "path": "scripts/check.mjs",
@@ -198,6 +206,10 @@
   {
     "path": "supabase/cash_bank_book.sql",
     "sha256": "837540bde64cbfd0004e8fb3766f80430199edfdafd163f8a0e79677e6ebc530"
+  },
+  {
+    "path": "supabase/cashbook_banking_update_v55.sql",
+    "sha256": "eb73222eb37fcca9aca8202cd95e292d92178f842162dbddd295bcc6d3ac1e4a"
   },
   {
     "path": "supabase/closing_balances.sql",
@@ -469,7 +481,7 @@
   },
   {
     "path": "web/README_SETUP.md",
-    "sha256": "1269bf47035aa13f0a702e148dbea3e96aa0cd0416f03d360c94e33c4d8537be"
+    "sha256": "cbdf6a709e627767d3bfe7785db0348b2beb9a5db8d94e36202a5930e3c1c99e"
   },
   {
     "path": "web/app_config.js",
@@ -489,7 +501,7 @@
   },
   {
     "path": "web/css/app.css",
-    "sha256": "4e70faeb9bd82b507c43a15930bb4b9f69d4b248c4478f3077012958717c7b12"
+    "sha256": "11fe9cda0c5c51ed5e6eccc9981d842b6c18b801e5fe728869a83ffd7156cad4"
   },
   {
     "path": "web/index.html",
@@ -497,7 +509,7 @@
   },
   {
     "path": "web/js/app.js",
-    "sha256": "807d53b4571184629d95ed8c0b6c5bca6ee81257a782067f19223b291d0b27fd"
+    "sha256": "a1ef281afedf88e697b532013f589135ef1bcf40ff306ef7693e0b8d1434f58d"
   },
   {
     "path": "web/js/brand.js",
@@ -529,7 +541,7 @@
   },
   {
     "path": "web/js/store.js",
-    "sha256": "3a907fd38bb58e019eba79955e4f43d28863e5bb18b81b19d1a372e22eb410da"
+    "sha256": "aafd8bea2149a9b52072aabf256c7c9d487baeee5691b32fd020eecbbdd5b070"
   },
   {
     "path": "web/manifest.json",

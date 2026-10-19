@@ -40,3 +40,8 @@ Use a staging Supabase project first. Take a database backup and keep the previo
 ## Validation status
 
 JavaScript syntax checks and archive integrity checks are run before release. Automated Vitest and the repository's `scripts/check.mjs` could not run in this environment because the local dependency installation was incomplete. Live Supabase, RLS, private storage, product/stock regression and cashbook ledger tests must be completed in staging; this document does not claim they were performed.
+
+
+## v55 Cash & Bank Book follow-up
+
+Before deploying the v55 static files, run `supabase/cashbook_banking_update_v55.sql` in Supabase SQL Editor after `supabase/cash_bank_book.sql` is already installed. This patch is additive and does not depend on rerunning the v54 migration script. Confirm the SQL verification query returns the canonical accounts, then test Add Money, transfers, payment destination selection, and account-ledger balances in staging.

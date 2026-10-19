@@ -8,3 +8,8 @@ This package is an upgrade of the supplied Blesscon Candy Business Manager repos
 
 ## v42 migration compatibility note
 The v40 migration now recognizes an existing `private.save_master` implementation that already grants manager expense access. It no longer aborts solely because the manager permission condition was patched previously. Run `supabase/manager_closing_expenses_v40.sql` once in Supabase SQL Editor; do not run the standalone v41 wrapper first. This package has not been applied to or verified against the live Supabase project.
+
+
+## v55 Cash & Bank Book
+
+This release adds responsive account cards for the requested six cash/bank/receivables categories, account ledger drill-down, and an Admin-only idempotent Add Money flow. Apply `supabase/cashbook_banking_update_v55.sql` after the existing cash/bank schema, then deploy the updated `web/` folder. No reset is included in this release.
