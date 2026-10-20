@@ -1,21 +1,23 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.117.3";
 Deno.serve(async (req: Request) => {
-  const allowed = Deno.env.get("ALLOWED_ORIGIN") || "";
-  const origin = req.headers.get("Origin") || "";
-  const headers = {
+  // ALLOWED_ORIGINS (comma-separated) or ALLOWED_ORIGIN: exact origins only, no wildcard.
+  const configuredOrigins = Deno.env.get("ALLOWED_ORIGINS") || Deno.env.get("ALLOWED_ORIGIN") || "";
+  const allowedOrigins = configuredOrigins.split(",").map((v) => v.trim().replace(/\/$/, "")).filter((v) => v.length > 0 && v !== "*");
+  const origin = (req.headers.get("Origin") || "").trim().replace(/\/$/, "");
+  const originAllowed = Boolean(origin) && allowedOrigins.includes(origin);
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Vary: "Origin",
-    "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Headers":
-      "authorization,x-client-info,apikey,content-type",
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Max-Age": "86400",
   };
+  if (originAllowed) headers["Access-Control-Allow-Origin"] = origin;
   const reply = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers });
-  if (!allowed || allowed === "*" || origin !== allowed)
-    return reply({ error: "Origin not allowed" }, 403);
-  if (req.method === "OPTIONS")
-    return new Response(null, { status: 204, headers });
+  // Preflight carries no JWT; answer it before any auth check.
+  if (req.method === "OPTIONS") return new Response(null, { status: originAllowed ? 204 : 403, headers });
+  if (!originAllowed) return reply({ error: "Origin not allowed. Set the ALLOWED_ORIGIN secret to this site's exact origin." }, 403);
   if (req.method !== "POST") return reply({ error: "POST required" }, 405);
   if (Number(req.headers.get("Content-Length") || 0) > 12000)
     return reply({ error: "Request too large" }, 413);

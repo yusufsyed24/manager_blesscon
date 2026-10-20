@@ -88,9 +88,29 @@ function localCashbookLedger(state) {
   return rows;
 }
 const sumBy = (rows, fn) => rows.reduce((a, r) => a + Number(fn(r) || 0), 0);
+// Collapse duplicate salesman rows for display/scope: one row per login, and an unlinked
+// profile is hidden when a linked profile with the same name is on the same team.
+export function dedupeSalesmen(rows) {
+  const norm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const linkedKeys = new Set(rows.filter((r) => r.user_id).map((r) => norm(r.name) + "|" + (r.manager_user_id || "")));
+  const seenUsers = new Set();
+  const seenUnlinked = new Set();
+  return rows.filter((r) => {
+    if (r.user_id) {
+      if (seenUsers.has(r.user_id)) return false;
+      seenUsers.add(r.user_id);
+      return true;
+    }
+    const key = norm(r.name) + "|" + (r.manager_user_id || "");
+    if (linkedKeys.has(key) || seenUnlinked.has(key)) return false;
+    seenUnlinked.add(key);
+    return true;
+  });
+}
 export function managerTeamIds(state, managerId) {
-  return (state.salesmen || [])
-    .filter((r) => r.manager_user_id === managerId && r.active && !r.deleted_at)
+  return dedupeSalesmen(
+    (state.salesmen || []).filter((r) => r.manager_user_id === managerId && r.active && !r.deleted_at),
+  )
     .map((r) => r.id)
     .sort();
 }
@@ -1203,6 +1223,18 @@ export class Store extends EventTarget {
     } catch (cashbookError) {
       this.base.cashbook_error = cashbookError?.message || String(cashbookError);
       this.base.cashbook_loaded = false;
+    }
+    // Safety net: if the snapshot returned no products for a non-admin login (for example an
+    // older snapshot function), read them directly. Row-level security still applies.
+    if (this.user?.role && this.user.role !== "admin" && !(this.base.products || []).length) {
+      try {
+        const [products, tiers] = await Promise.all([this.all("products"), this.all("price_tiers")]);
+        const stripCost = ({ cost_paisa, ...rest }) => rest;
+        this.base.products = products.filter((p) => !p.deleted_at).map(stripCost);
+        this.base.price_tiers = tiers;
+      } catch (productError) {
+        this.base.products_error = productError?.message || String(productError);
+      }
     }
     this.persist();
     this.replay();

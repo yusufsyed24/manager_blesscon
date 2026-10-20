@@ -2740,6 +2740,26 @@ function userModal(id) {
     )}${select("Link salesman profile", "salesman_id", sellerChoices, linkedSeller?.id || "__create__")}${select("Assigned manager", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(rr => rr.user_id === profile.id && rr.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], linkedSeller?.manager_user_id || "")}</div><p class="muted">For a salesman login, link an existing salesman profile or create one. Assigning a manager places that salesman in the manager's team overview, while the Admin can still see and manage the assignment here.</p><p>Optional payment collection permission:</p><div class="checkbox"><input id="can-collect" name="can_collect" type="checkbox" ${S().user_permissions.some((x) => x.user_id === id && x.section === "invoices" && x.can_create) ? "checked" : ""}><label for="can-collect">Allow collecting invoice payments</label></div><button class="gold" style="margin-top:20px">Save access</button></form>`,
   );
 }
+const normName = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+function unlinkedSalesmanByName(name) {
+  const n = normName(name);
+  if (!n) return [];
+  return S().salesmen.filter((x) => !x.user_id && !x.deleted_at && x.active && normName(x.name) === n);
+}
+async function edgeFunctionError(error, fnName) {
+  // Turn the generic supabase-js wrapper messages into something an Admin can act on.
+  try {
+    const body = await error.context?.json?.();
+    if (body?.error) return body.error;
+  } catch {}
+  const status = error?.context?.status;
+  if (status === 404) return `Edge Function "${fnName}" is not deployed in Supabase. Deploy it (see DEPLOY_V55_8.md) and try again.`;
+  if (status === 401) return "Your session has expired. Sign out, sign in again as Admin, and retry.";
+  if (/Failed to send a request|FunctionsFetchError|NetworkError|Failed to fetch/i.test(error?.message || "")) {
+    return `Could not reach Edge Function "${fnName}". Either it is not deployed, or its ALLOWED_ORIGIN secret does not exactly match ${location.origin}. See DEPLOY_V55_8.md.`;
+  }
+  return error?.message || String(error);
+}
 async function previewImport(file) {
   if (!file) return;
   if (file.size > 25 * 1024 * 1024) throw Error("Workbook limit: 25 MB");
@@ -3343,17 +3363,10 @@ async function action(act, id, element) {
       const target = S().profiles.find((p) => String(p.id) === String(id));
       if (!target || target.id === user.id) throw Error("Choose another valid user account.");
       const targetRole = S().user_roles.find(r => r.user_id === target.id)?.role || "user";
-      const temporaryPassword = window.prompt(`Admin password reset for ${targetRole}: ${target.display_name || target.id}\nSet a temporary password (12–128 characters). Share it securely with the user through your approved process:`);
-      if (temporaryPassword === null) break;
-      if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Password must be 12–128 characters.");
-      const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: temporaryPassword } });
-      if (error) {
-        let message = error.message;
-        try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
-        throw Error(message);
-      }
-      if (data?.error) throw Error(data.error);
-      toast(`Password reset successfully for ${targetRole} ${target.display_name || "user"}. Share the temporary password securely.`);
+      modal(
+        "Reset password · " + esc(target.display_name || "user"),
+        `<form id="reset-password-form" data-id="${esc(target.id)}"><p class="muted">Set a new password for this ${esc(targetRole)} account (12–128 characters). Share it with them securely; their old password stops working immediately.</p><div class="grid">${field("New password", "new_password", "", "password", 'minlength="12" maxlength="128" required autocomplete="new-password"')}${field("Confirm new password", "confirm_password", "", "password", 'minlength="12" maxlength="128" required autocomplete="new-password"')}</div><div id="master-form-error" role="alert" style="display:none"></div><button class="gold" type="submit" style="margin-top:15px">Reset password</button></form>`,
+      );
       break;
     }
     case "delete-user": {
@@ -4144,20 +4157,36 @@ document.addEventListener("submit", async (e) => {
         render();
         break;
       }
+      case "reset-password-form": {
+        if (!admin()) throw Error("Only an administrator can reset another user's password.");
+        if (!client) throw Error("Password resets require a configured Supabase connection.");
+        const targetId = form.dataset.id;
+        const target = S().profiles.find((p) => String(p.id) === String(targetId));
+        if (!target || target.id === user.id) throw Error("Choose another valid user account.");
+        const pw = String(f.new_password || "");
+        if (pw.length < 12 || pw.length > 128) throw Error("Password must be 12–128 characters.");
+        if (pw !== String(f.confirm_password || "")) throw Error("The two passwords do not match.");
+        const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: pw } });
+        if (error) throw Error(await edgeFunctionError(error, "admin-reset-user-password"));
+        if (data?.error) throw Error(data.error);
+        if (!data?.ok) throw Error("The password reset was not confirmed by the server. Nothing was reported as changed; try again.");
+        close();
+        toast("Password reset for " + (target.display_name || "user") + ". Share the new password securely.");
+        break;
+      }
       case "create-user-form": {
         if (!client) throw Error("Configure Supabase to create logins");
+        if (f.role === "salesman" && !f.salesman_id) {
+          // Reuse an existing unlinked profile with the same name instead of creating a duplicate.
+          const match = unlinkedSalesmanByName(f.display_name);
+          if (match.length === 1) f.salesman_id = match[0].id;
+          else if (match.length > 1) throw Error("More than one unlinked salesman profile is named \"" + f.display_name + "\". Choose the correct one in 'Link salesman'.");
+        }
         const { data, error } = await client.functions.invoke(
           "admin-create-user",
           { body: { ...f, request_id: uid() } },
         );
-        if (error) {
-          let message = error.message;
-          try {
-            const body = await error.context.json();
-            if (body?.error) message = body.error;
-          } catch {}
-          throw Error(message);
-        }
+        if (error) throw Error(await edgeFunctionError(error, "admin-create-user"));
         if (data.error) throw Error(data.error);
         await store.refresh();
         if (f.role === "salesman" && !f.salesman_id) {
@@ -4193,17 +4222,7 @@ document.addEventListener("submit", async (e) => {
       case "user-form": {
         const targetUserId = form.dataset.id;
         const targetProfile = S().profiles.find((profile) => profile.id === targetUserId);
-        const currentRole = S().user_roles.find((role) => role.user_id === targetUserId)?.role || "user";
         const oldLinkedSeller = S().salesmen.find((seller) => seller.user_id === targetUserId);
-        // A Manager login must never be repurposed as a Salesman login while assigning
-        // a team member. Doing so creates a second salesman profile owned by the Manager
-        // account and can remove the Manager's own team permissions.
-        if (f.role === "salesman" && currentRole === "manager") {
-          throw Error("This login is a Manager account. Keep its Manager role and assign a separate Salesman login/profile instead. Changing the Manager login into a Salesman creates a duplicate employee record and can hide the team.");
-        }
-        if (f.role === "salesman" && f.manager_user_id === targetUserId) {
-          throw Error("A Manager account cannot be linked as its own Salesman login. Select the actual Salesman login and assign the Manager separately.");
-        }
         await store.run("user.update", {
           id: targetUserId,
           role: f.role,
@@ -4233,6 +4252,13 @@ document.addEventListener("submit", async (e) => {
               table: "salesmen",
               record: { ...chosen, user_id: targetUserId, manager_user_id: f.manager_user_id || null, name: chosen.name || targetProfile?.display_name || "Salesman" },
               expected_version: chosen.version,
+            });
+          } else if (!oldLinkedSeller && unlinkedSalesmanByName(targetProfile?.display_name).length === 1) {
+            const reuse = unlinkedSalesmanByName(targetProfile?.display_name)[0];
+            await store.run("master.save", {
+              table: "salesmen",
+              record: { ...reuse, user_id: targetUserId, manager_user_id: f.manager_user_id || null, active: f.active === "true" },
+              expected_version: reuse.version,
             });
           } else if (!oldLinkedSeller) {
             await store.run("master.save", {
