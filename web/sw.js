@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-8-manager-workflow-20261020";
+const CACHE = "blesscon-static-v55-8b-import-fix-20261020";
 const ASSETS = [
   "./",
   "./index.html",

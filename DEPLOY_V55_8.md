@@ -38,3 +38,12 @@ Upload the `web/` contents (and root `js/` mirror if your host serves it), then 
 ## Known intended behaviour
 Managers create **direct sales** (no salesman picked); salesman orders are made by the
 salesman. Manager password changes are by Admin only, per the role matrix.
+
+## Import fix (v55.8b)
+- Products with a blank wholesale rate (non-Rani) now import using their retail rate, with a
+  warning per product listing the row to correct. They no longer block the whole import.
+- The workbook's "Order Entry Form" is a single-invoice form (invoice ID in the header), so it
+  is skipped with a warning instead of raising an error. Test sales left in it are not imported.
+- Tested against Blesscon_Candy_Simple_Sales_Stock_Invoice__version_1__yusuf_fix.xlsx:
+  0 errors, 37 products. Cost is 200 on every product in that file; update real costs.
+- Upload `web/js/importer.js` (and root `js/importer.js`, `sw.js`), then hard refresh.
