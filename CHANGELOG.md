@@ -533,3 +533,10 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Added an additive SQL migration to ensure `private.save_master()` accepts `manager_user_id` and the `salesman_read` policy lets Admin retain visibility while allowing a Manager to read assigned team members.
 - Bumped the service-worker cache key so GitHub Pages clients fetch the updated scripts. No business data is reset or deleted.
 - Validation: JavaScript syntax and root/`web/` mirror checks passed; ZIP integrity passed. Full Vitest and live Supabase/RLS tests were not run, and no live database was changed.
+
+## v55.13 — Payment method sync constraint fix
+
+- Expanded the `payments_method_check` allow-list to include the bank-specific method labels already offered by the order/payment forms (MCB Bank, Al Habib Bank, and bank-specific cheque methods), plus legacy aliases.
+- Added `supabase/fix_payment_method_constraint_v55_13.sql` as an additive migration for existing Supabase projects. It preserves existing payment rows and keeps a finite check constraint.
+- Updated the base schema for new installations and bumped the service-worker cache so browsers load the current release.
+- After applying the migration, existing Pending Sync transactions can be retried; do not clear the queue or recreate the order.
