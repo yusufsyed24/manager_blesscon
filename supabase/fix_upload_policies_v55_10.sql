@@ -7,6 +7,9 @@
 --     -> Admin/Manager could not upload for a salesman (files live in the salesman's folder)
 --   * revamp_v53 / v54 / employee_profile_access_v55_3: only Admin or the assigned Manager
 --     -> a Manager could not upload their OWN photo or documents
+-- ALSO a bug in those migrations: inside the salesmen sub-query the bare word `name` meant
+--   salesmen.name, not the uploaded file's name, so the Manager->assigned-salesman check could
+--   never match. Here it is written as objects.name.
 -- This script installs one policy set that allows every flow the app uses.
 -- Safe to re-run. Does not touch any existing files or data.
 --
@@ -33,7 +36,7 @@ do $p$
 declare
   team_check text := $t$(public.is_manager() and exists (
       select 1 from public.salesmen sm
-      where sm.manager_user_id = auth.uid() and sm.user_id::text = (storage.foldername(name))[1]))$t$;
+      where sm.manager_user_id = auth.uid() and sm.user_id::text = (storage.foldername(objects.name))[1]))$t$;
 begin
   if to_regclass('storage.objects') is null then return; end if;
 
@@ -41,21 +44,21 @@ begin
   execute format($f$create policy employee_private_read on storage.objects for select to authenticated using (
       bucket_id = 'employee-private' and (
         public.is_admin()
-        or (storage.foldername(name))[1] = auth.uid()::text
+        or (storage.foldername(objects.name))[1] = auth.uid()::text
         or %s))$f$, team_check);
 
   execute 'drop policy if exists employee_private_insert on storage.objects';
   execute format($f$create policy employee_private_insert on storage.objects for insert to authenticated with check (
       bucket_id = 'employee-private' and (
         public.is_admin()
-        or (public.is_manager() and (storage.foldername(name))[1] = auth.uid()::text)
+        or (public.is_manager() and (storage.foldername(objects.name))[1] = auth.uid()::text)
         or %s))$f$, team_check);
 
   execute 'drop policy if exists employee_private_delete on storage.objects';
   execute format($f$create policy employee_private_delete on storage.objects for delete to authenticated using (
       bucket_id = 'employee-private' and (
         public.is_admin()
-        or (public.is_manager() and (storage.foldername(name))[1] = auth.uid()::text)
+        or (public.is_manager() and (storage.foldername(objects.name))[1] = auth.uid()::text)
         or %s))$f$, team_check);
 end
 $p$;

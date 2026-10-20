@@ -2862,9 +2862,9 @@ async function action(act, id, element) {
       const path = `${user.id}/admin-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
       const bucket = client.storage.from("employee-private");
       const uploaded = await bucket.upload(path, file, {contentType:file.type, upsert:false});
-      if (uploaded.error) throw uploaded.error;
+      if (uploaded.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+uploaded.error.message);
       const saved = await client.from("profiles").update({avatar_path:path, updated_at:new Date().toISOString()}).eq("id", user.id);
-      if (saved.error) { await bucket.remove([path]); throw saved.error; }
+      if (saved.error) { await bucket.remove([path]); throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message); }
       const signed = await bucket.createSignedUrl(path, 3600);
       if (signed.error) throw signed.error;
       const avatar = $("admin-profile-avatar");
@@ -2879,15 +2879,15 @@ async function action(act, id, element) {
       const file=$("manager-profile-photo")?.files?.[0]; if(!file) throw Error("Choose a photo first.");
       if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>5*1024*1024) throw Error("Use JPG, PNG or WebP up to 5 MB.");
       const path=`${user.id}/manager-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private");
-      const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
-      const saved=await client.from("profiles").update({avatar_path:path,updated_at:new Date().toISOString()}).eq("id",user.id); if(saved.error){await bucket.remove([path]);throw saved.error;}
+      const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
+      const saved=await client.from("profiles").update({avatar_path:path,updated_at:new Date().toISOString()}).eq("id",user.id); if(saved.error){await bucket.remove([path]);throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message);}
       const signed=await bucket.createSignedUrl(path,3600); if(signed.error) throw signed.error; const avatar=$("manager-profile-avatar"); if(avatar) avatar.innerHTML=`<img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo">`; toast("Manager profile photo updated."); break;
     }
     case "manager-document-upload": {
       if(!manager()) throw Error("Manager account required."); const file=$("manager-document-file")?.files?.[0]; if(!file) throw Error("Choose a document first.");
       if(!(file.type==="application/pdf"||/^image\/(jpeg|png|webp)$/.test(file.type))||file.size>10*1024*1024) throw Error("Use PDF, JPG, PNG or WebP up to 10 MB.");
-      const path=`${user.id}/manager-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private"); const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
-      const saved=await client.from("manager_employee_documents").insert({manager_user_id:user.id,document_type:$("manager-document-type")?.value||"other",file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size}); if(saved.error){await bucket.remove([path]);throw saved.error;} $("manager-document-file").value=""; toast("Document uploaded securely."); await hydrateManagerFieldwork(); break;
+      const path=`${user.id}/manager-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private"); const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
+      const saved=await client.from("manager_employee_documents").insert({manager_user_id:user.id,document_type:$("manager-document-type")?.value||"other",file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size}); if(saved.error){await bucket.remove([path]);throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message);} $("manager-document-file").value=""; toast("Document uploaded securely."); await hydrateManagerFieldwork(); break;
     }
     case "manager-attendance-check-in":
     case "manager-attendance-check-out": {
@@ -3437,9 +3437,9 @@ async function action(act, id, element) {
       if (!seller?.user_id) throw Error("Link this employee to a login before uploading a private profile photo.");
       if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 5*1024*1024) throw Error("Choose a JPG, PNG or WebP image up to 5 MB.");
       const path = `${seller.user_id}/salesman-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
       const saved = await client.rpc("set_salesman_photo", { p_salesman_id: id, p_photo_path: path });
-      if(saved.error) { await bucket.remove([path]); throw saved.error; }
+      if(saved.error) { await bucket.remove([path]); throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message); }
       toast("Salesman profile photo saved privately."); await openAdminSalesmanProfile(id); break;
     }
     case "employee-manager-document-upload": {
@@ -3448,10 +3448,10 @@ async function action(act, id, element) {
       if (!seller?.user_id) throw Error("Link this employee to a login before uploading private documents.");
       if (!file || !(file.type === "application/pdf" || /^image\/(jpeg|png|webp)$/.test(file.type)) || file.size > 10*1024*1024) throw Error("Choose a PDF, JPG, PNG or WebP file up to 10 MB.");
       const path = `${seller.user_id}/salesman-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
+      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
       const docType = $("employee-document-type")?.value || "identity";
       const saved = await client.from("employee_documents").insert({salesman_id:id,document_type:docType,file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size});
-      if(saved.error) { await bucket.remove([path]); throw saved.error; }
+      if(saved.error) { await bucket.remove([path]); throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message); }
       toast("Employee document uploaded privately."); await openAdminSalesmanProfile(id); break;
     }
     case "ack-notification": {
