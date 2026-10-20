@@ -63,3 +63,12 @@ Run `supabase/fix_upload_policies_v55_10.sql` in the SQL Editor (safe to re-run)
 conflicting storage policies on the `employee-private` bucket with one set that allows:
 Admin (all folders), a Manager (own folder + assigned salesmen's folders), and the matching
 document-table inserts. No app files changed for this fix.
+
+## v55.11 — Salesman access and profile
+- A salesman now sees only: Overview, My profile & fieldwork, Daily sales report, Daily closing.
+  Hidden: Cash & Bank Book, Sales orders, Invoices & payments, Quotations, Customer ledger,
+  Stock & expiry, Products & pricing, Salesmen & targets (and everything else).
+- My profile now shows photo, date of birth, current assigned area, manager-uploaded documents,
+  stock assigned / returned / sold / in hand for any chosen day, and this month's boxes sold,
+  target and estimated salary.
+- Website files only; no SQL needed. Upload and hard refresh (Ctrl+Shift+R).

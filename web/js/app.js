@@ -88,12 +88,10 @@ const canViewAllClosings = () =>
       permission.section === "closing" &&
       permission.can_view,
   );
-const can = (p) =>
+const canBase = (p) =>
   // Managers receive operational access by role; financial, pricing and system-wide
   // modules require an explicit permission (or Admin role).
   (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","orders","stock","staff"].includes(p)) ||
-  // Salesmen only receive their operational home, own profile, sales entry and own stock.
-  (user?.role === "salesman" && ["dashboard","myprofile","orders","stock"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
     ([
@@ -112,6 +110,11 @@ const can = (p) =>
       S().user_permissions.some(
         (x) => x.user_id === user.id && x.section === p && x.can_view,
       )));
+// A salesman only gets his overview, his own profile and his daily report / closing.
+// This must NOT fall through to the generic list in canBase(), which is why a salesman
+// used to see Cash & Bank Book, Invoices, Quotations, Ledger, Products, Salesmen & targets.
+const SALESMAN_PAGES = ["dashboard", "myprofile", "dsr", "closing"];
+const can = (p) => (user?.role === "salesman" ? SALESMAN_PAGES.includes(p) : canBase(p));
 const badge = (s, t = "") =>
   `<span class="badge ${t || (/PAID|Accepted|Synced|OK/.test(s) && !/PART|UNPAID/.test(s) ? "green" : /PART|Draft|Sent|Pending|30/.test(s) ? "amber" : /UNPAID|Expired|cancel|Rejected/.test(s) ? "red" : "")}">${esc(s)}</span>`;
 const btn = (text, act, id = "", extra = "", cls = "secondary") =>
@@ -367,6 +370,48 @@ async function hydrateManagerFieldwork() {
   }
 }
 
+function salesmanDayBody(sid, day) {
+  const s = S(), id = String(sid), d = String(day || today());
+  const moves = (s.salesman_stock_movements || []).filter((m) => String(m.salesman_id) === id);
+  const sold = new Map();
+  for (const o of s.orders.filter((o) => String(o.salesman_id) === id && o.status !== "cancelled" && !o.deleted_at && o.date === d))
+    for (const i of (s.order_items || []).filter((i) => i.order_id === o.id))
+      sold.set(i.product_id, (sold.get(i.product_id) || 0) + num(i.boxes));
+  const ids = new Set([...moves.map((m) => m.product_id), ...sold.keys()]);
+  const rows = [...ids].map((pid) => {
+    const mv = moves.filter((m) => String(m.product_id) === String(pid));
+    const sum = (f) => mv.filter(f).reduce((n, m) => n + num(m.boxes), 0);
+    const opening = sum((m) => String(m.date) < d);
+    const issued = sum((m) => String(m.date) === d && m.kind === "issue");
+    const returned = Math.abs(sum((m) => String(m.date) === d && String(m.kind).startsWith("return")));
+    const soldBoxes = sold.get(pid) || 0;
+    const closing = sum((m) => String(m.date) <= d);
+    const name = visible(s.products).find((p) => String(p.id) === String(pid))?.name || pid;
+    return { name, opening, issued, returned, soldBoxes, closing };
+  }).filter((r) => r.opening || r.issued || r.returned || r.soldBoxes || r.closing)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const tot = rows.reduce((t, r) => ({ opening: t.opening + r.opening, issued: t.issued + r.issued, returned: t.returned + r.returned, soldBoxes: t.soldBoxes + r.soldBoxes, closing: t.closing + r.closing }), { opening: 0, issued: 0, returned: 0, soldBoxes: 0, closing: 0 });
+  const cells = (r) => [r.opening, r.issued, r.returned, r.soldBoxes, r.closing].map((v) => String(Math.round(v * 100) / 100));
+  const body = rows.map((r) => [esc(r.name), ...cells(r)]);
+  if (rows.length) body.push(["<b>Total</b>", ...cells(tot).map((v) => `<b>${v}</b>`)]);
+  return `<div class="cards">${card("Stock assigned that day", tot.issued + " boxes", esc(d))}${card("Sold that day", tot.soldBoxes + " boxes", esc(d))}${card("Stock in hand at end of day", tot.closing + " boxes", esc(d))}</div>` +
+    table(["Product", "Opening", "Assigned", "Returned", "Sold", "In hand"], body, "No stock was assigned to you and nothing was sold on this day.");
+}
+async function hydrateSalesmanSalary(seller) {
+  const el = $("my-salary-panel");
+  if (!el || !client) return;
+  const month = today().slice(0, 7);
+  const boxes = S().orders
+    .filter((o) => String(o.salesman_id) === String(seller.id) && o.status !== "cancelled" && !o.deleted_at && String(o.date || "").startsWith(month))
+    .reduce((n, o) => n + (S().order_items || []).filter((i) => i.order_id === o.id).reduce((a, i) => a + num(i.boxes), 0), 0);
+  const r = await client.rpc("own_salary_snapshot");
+  if (!el.isConnected) return;
+  if (r.error) { el.innerHTML = `<p class="notice danger">Salary could not be loaded: ${esc(r.error.message)}. Contact Admin.</p>`; return; }
+  const pay = r.data || {};
+  el.innerHTML = `<div class="cards">${card("Boxes sold this month", Math.round(boxes) + " boxes", `${num(pay.achieved_cartons).toFixed(2)} cartons counted`)}${card("Monthly target", num(pay.monthly_target).toFixed(2) + " cartons", `${num(pay.achievement_percent).toFixed(1)}% achieved`)}${card("Estimated salary", money(pay.total_paisa || 0), pay.status === "posted" ? "Posted for " + esc(pay.salary_period) : "Estimate for " + esc(pay.salary_period))}</div>` +
+    table(["Component", "Amount"], [["Base salary", money(pay.base_salary_paisa || 0)], ["Target incentive", money(pay.incentive_paisa || 0)], ["<b>Total</b>", `<b>${money(pay.total_paisa || 0)}</b>`]], "") +
+    `<p class="muted">Your incentive depends on the share of your monthly target you have sold. This is an estimate until it shows as Posted.</p>`;
+}
 async function hydrateSalesmanProfile() {
   const seller = own();
   if (!seller || !client || page !== "myprofile") return;
@@ -401,6 +446,18 @@ async function hydrateSalesmanProfile() {
   }
   history("my-visit-history", visits, ["Visited","Customer","Area","Purpose","Location"], r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(4)}, ${num(r.longitude).toFixed(4)}`], "No customer visits recorded yet.");
   history("my-area-history", assignments, ["Area","Effective from","Effective until","Instructions"], r => [esc(r.area_name), esc(r.effective_from), esc(r.effective_to || "Current"), esc(r.instructions || "—")], "No area assignments recorded yet.");
+  const areaNode = $("my-current-area");
+  if (areaNode?.isConnected) {
+    const t = today();
+    const current = (assignments.data || []).filter((a) => a.effective_from <= t && (!a.effective_to || a.effective_to >= t)).map((a) => a.area_name);
+    areaNode.textContent = current.length ? current.join(", ") : "Not assigned";
+  }
+  const dayInput = $("my-day-date");
+  if (dayInput && !dayInput.dataset.bound) {
+    dayInput.dataset.bound = "1";
+    dayInput.addEventListener("change", () => { const body = $("my-day-body"); if (body) body.innerHTML = salesmanDayBody(seller.id, dayInput.value || today()); });
+  }
+  await hydrateSalesmanSalary(seller);
 }
 
 function salesmanTargetDetails(salesmanId) {
@@ -424,10 +481,10 @@ function renderSalesmanDashboard() {
   return head("My overview", `Welcome, ${seller.name}. This dashboard shows your own operational activity only.`, btn("Open my profile", "go-myprofile", "", "", "gold")) +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="salesman-dashboard-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p>Employee ID: ${esc(seller.id)} · Date of birth: ${esc(seller.date_of_birth || "Not recorded")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div></section>
     <div class="cards">${card("Quantity sold today",soldQuantity(todays),`${todays.length} confirmed order(s)`,true)}${card("Quantity sold this month",soldQuantity(month),`${month.length} confirmed order(s)`)}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Recorded quantity against you")}${card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}<div class="card"><div class="label">Monthly salary</div><div class="value" id="salesman-salary-value">Loading…</div><div class="meta" id="salesman-salary-meta">Waiting for the server calculation</div></div></div>
-    <section class="panel"><div class="panel-heading"><h2>My stock in hand</h2>${btn("View stock details","go-stock")}</div>${table(["Product","Balance","Unit"],held.map(x=>[esc(x.name),x.qty.toFixed(2),esc(x.unit)]),"No stock currently recorded against your account.")}</section>
-    <section class="panel"><div class="panel-heading"><h2>My latest sales quantities</h2>${btn("View sales","go-myorders")}</div>${table(["Date","Order","Quantity"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.date),esc(o.number),num((s.order_items||[]).filter(i=>i.order_id===o.id).reduce((n,i)=>n+num(i.boxes),0))]),"No sales recorded yet.")}</section>
+    <section class="panel"><div class="panel-heading"><h2>My stock in hand</h2></div>${table(["Product","Balance","Unit"],held.map(x=>[esc(x.name),x.qty.toFixed(2),esc(x.unit)]),"No stock currently recorded against your account.")}</section>
+    <section class="panel"><div class="panel-heading"><h2>My latest sales quantities</h2></div>${table(["Date","Order","Quantity"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.date),esc(o.number),num((s.order_items||[]).filter(i=>i.order_id===o.id).reduce((n,i)=>n+num(i.boxes),0))]),"No sales recorded yet.")}</section>
     <section class="panel"><div class="panel-heading"><h2>Messages from management</h2><span class="muted">Updates and instructions</span></div><div id="salesman-notifications"><p class="muted">Loading messages…</p></div></section>
-    <section class="panel"><h2>Quick access</h2><div class="actions">${btn("View my profile","go-myprofile","","","gold")}${btn("Monthly target details","my-target-details",sid)}${btn("Salary breakdown","my-salary-details",sid)}${btn("Daily sales report","go-dsr")}${btn("View stock","go-stock")}</div></section>`;
+    <section class="panel"><h2>Quick access</h2><div class="actions">${btn("View my profile","go-myprofile","","","gold")}${btn("Monthly target details","my-target-details",sid)}${btn("Salary breakdown","my-salary-details",sid)}${btn("Daily sales report","go-dsr")}</div></section>`;
 }
 
 async function hydrateSalesmanPhotoNodes() {
@@ -551,8 +608,10 @@ function renderMyProfile() {
   const target = targetRows().find(t => t.id === sid);
   const photo = seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="${esc(seller.name)} profile photo">` : "♙";
   return head("My profile", "Your profile and employment documents are managed by your manager. Contact your manager to request a correction.") +
-    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>Date of birth: <b>${esc(seller.date_of_birth || "Not recorded")}</b></p><p>Assigned area: <b>${esc(seller.territory || seller.area || "Not assigned")}</b></p><p>Status: <b>${seller.active ? "Active" : "Inactive"}</b></p></div></div><p class="notice">Profile details, photograph, date of birth, NIC and education documents can only be changed by authorized management. Please contact your manager if anything needs correction.</p></section>
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>Date of birth: <b>${esc(seller.date_of_birth || "Not recorded")}</b></p><p>Assigned area: <b id="my-current-area">${esc(seller.territory || seller.area || (client ? "Loading…" : "Not assigned"))}</b></p><p>Status: <b>${seller.active ? "Active" : "Inactive"}</b></p></div></div><p class="notice">Profile details, photograph, date of birth, NIC and education documents can only be changed by authorized management. Please contact your manager if anything needs correction.</p></section>
     <div class="cards">${card("Quantity sold today", orders.filter(o=>o.date===today()).reduce((n,o)=>n+(s.order_items||[]).filter(i=>i.order_id===o.id).reduce((a,i)=>a+num(i.boxes),0),0), "Confirmed sales quantity")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Recorded quantity against you")}</div>
+    <section class="panel"><h2>My salary this month</h2><div id="my-salary-panel"><p class="muted">Loading salary…</p></div></section>
+    <section class="panel"><div class="panel-heading"><h2>Stock assigned &amp; sales by day</h2><div class="field" style="margin:0"><label for="my-day-date">Day</label><input id="my-day-date" type="date" value="${today()}" max="${today()}"></div></div><div id="my-day-body">${salesmanDayBody(sid, today())}</div></section>
     <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
     <section class="panel"><h2>Attendance history</h2><p class="muted">Attendance is recorded and corrected by authorized management. This view is read-only.</p><div id="my-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
     <section class="panel"><h2>Assigned areas & history</h2><div id="my-area-history"><p class="muted">Loading area assignments…</p></div></section>
