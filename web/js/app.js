@@ -114,7 +114,7 @@ const canBase = (p) =>
 // This must NOT fall through to the generic list in canBase(), which is why a salesman
 // used to see Cash & Bank Book, Invoices, Quotations, Ledger, Products, Salesmen & targets.
 const SALESMAN_PAGES = ["myprofile"];
-const can = (p) => (user?.role === "salesman" ? SALESMAN_PAGES.includes(p) : canBase(p));
+const can = (p) => (user?.role === "salesman" ? SALESMAN_PAGES.includes(p) : (manager() && p === "cashbook") ? false : canBase(p));
 const badge = (s, t = "") =>
   `<span class="badge ${t || (/PAID|Accepted|Synced|OK/.test(s) && !/PART|UNPAID/.test(s) ? "green" : /PART|Draft|Sent|Pending|30/.test(s) ? "amber" : /UNPAID|Expired|cancel|Rejected/.test(s) ? "red" : "")}">${esc(s)}</span>`;
 const btn = (text, act, id = "", extra = "", cls = "secondary") =>
@@ -335,7 +335,10 @@ function render() {
   $("page").innerHTML = methods[page]();
   if (page === "myprofile" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load admin fieldwork: " + e.message));
   else if (page === "myprofile" && manager()) hydrateManagerFieldwork().catch((e) => toast("Could not load Manager fieldwork: " + e.message));
-  else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
+  else if (page === "myprofile") {
+    hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
+    if (user.role === "salesman") hydrateSalesmanNotifications().catch((e) => toast("Could not load messages: " + e.message));
+  }
   if (page === "staff" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load salesman fieldwork: " + e.message));
   if (page === "staff" && client) hydrateTeamNotifications().catch((e) => toast("Could not load team notifications: " + e.message));
   if (page === "dsr")
@@ -343,6 +346,7 @@ function render() {
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
   if (page === "dashboard" && user.role === "salesman") hydrateSalesmanNotifications().catch((e) => toast("Could not load notifications: " + e.message));
+  if (page === "dashboard" && manager()) hydrateManagerNotifications().catch((e) => toast("Could not load management messages: " + e.message));
   if ((page === "staff" || (page === "dashboard" && manager())) && (admin() || manager())) hydrateSalesmanPhotoNodes().catch((e) => toast("Could not load employee photos: " + e.message));
 }
 async function hydrateManagerFieldwork() {
@@ -510,12 +514,27 @@ async function hydrateSalesmanPhotoNodes() {
 async function hydrateTeamNotifications() {
   if (!client || !(admin() || manager()) || page !== "staff") return;
   const root = $("team-notification-history"); if (!root) return;
-  const { data, error } = await client.from("employee_notifications").select("id,recipient_salesman_id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,created_at").order("created_at", { ascending: false }).limit(100);
+  const { data, error } = await client.from("employee_notifications").select("id,recipient_salesman_id,recipient_user_id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,created_at").order("created_at", { ascending: false }).limit(100);
   if (error) { root.innerHTML = `<p class="notice danger">Could not load message history: ${esc(error.message)}</p>`; return; }
   const sellers = new Map(S().salesmen.map(s => [String(s.id), s.name]));
-  const rows = (data || []).filter(n => admin() || managerTeamIds(S(), user.id).includes(n.recipient_salesman_id)).map(n => [esc(sellers.get(String(n.recipient_salesman_id)) || n.recipient_salesman_id), esc(n.title || "Message"), esc(n.message), esc(n.priority), n.read_at ? (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")) : badge("Unread","amber"), esc(new Date(n.created_at).toLocaleString())]);
+  const managerNames = new Map((S().profiles || []).map(p => [String(p.id), p.display_name || p.full_name || p.name || "Manager"]));
+  const rows = (data || []).filter(n => admin() || (n.recipient_salesman_id && managerTeamIds(S(), user.id).includes(n.recipient_salesman_id))).map(n => [n.recipient_salesman_id ? esc(sellers.get(String(n.recipient_salesman_id)) || n.recipient_salesman_id) : esc(managerNames.get(String(n.recipient_user_id)) || "Manager"), esc(n.title || "Message"), esc(n.message), esc(n.priority), n.read_at ? (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")) : badge("Unread","amber"), esc(new Date(n.created_at).toLocaleString())]);
   root.innerHTML = table(["Recipient","Title","Message","Priority","Status","Sent"], rows, "No messages have been sent yet.");
 }
+async function hydrateManagerNotifications() {
+  if (!client || !manager()) return;
+  const root = $("manager-notifications");
+  if (!root) return;
+  const { data, error } = await client.from("employee_notifications")
+    .select("id,recipient_user_id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,expires_at,created_at,created_by")
+    .eq("recipient_user_id", user.id).order("created_at", { ascending: false }).limit(50);
+  if (error) { root.innerHTML = `<p class="notice danger">Messages unavailable: ${esc(error.message)}. Apply the management-messages migration.</p>`; return; }
+  const active = (data || []).filter(n => !n.expires_at || n.expires_at >= new Date().toISOString());
+  const unread = active.filter(n => !n.read_at).length;
+  const rows = active.map(n => [`<b>${esc(n.title || "Message")}</b>${n.read_at ? "" : ` ${badge("UNREAD","amber")}`}<small>${esc(new Date(n.created_at).toLocaleString())} · ${esc(n.priority)}</small>`, esc(n.message), n.requires_acknowledgement && !n.acknowledged_at ? btn("Acknowledge", "ack-manager-notification", n.id, "", "gold") : (!n.read_at ? btn("Mark read", "read-manager-notification", n.id) : (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")))]);
+  root.innerHTML = `<p class="notice">${unread} unread message${unread===1?"":"s"}</p>` + table(["Message","Details","Action"], rows, "No messages from the administrator yet.");
+}
+
 async function hydrateSalesmanNotifications() {
   if (!client || user?.role !== "salesman" || !own()) return;
   const root = $("salesman-notifications");
@@ -540,8 +559,23 @@ function notificationModal(salesmanId = "") {
   const sellers = visible(S().salesmen).filter(s => admin() || managerTeamIds(S(), user.id).includes(s.id));
   const choices = sellers.map(s => [s.id, `${s.name} (${s.id})`]);
   if (salesmanId && !choices.some(x => x[0] === salesmanId)) throw Error("This salesman is outside your assigned team.");
-  modal(salesmanId ? "Message salesman" : "Team announcement", `<form id="notification-form" data-salesman="${esc(salesmanId)}"><div class="grid">${salesmanId ? `<p>Recipient: <b>${esc(sellers.find(s=>s.id===salesmanId)?.name || salesmanId)}</b></p><input type="hidden" name="recipient_salesman_id" value="${esc(salesmanId)}">` : select("Recipient", "recipient_salesman_id", [["__team__", "All salesmen in my permitted scope"], ...choices], "__team__")}${field("Title", "title", "", "text", 'required maxlength="160"')}${area("Message", "message", "")}${select("Priority", "priority", [["low","Low"],["normal","Normal"],["high","High"],["urgent","Urgent"]], "normal")}${select("Acknowledgement", "requires_acknowledgement", [["false","No acknowledgement required"],["true","Require acknowledgement"]], "false")}${field("Optional expiry date", "expires_at", "", "date")}</div><button class="gold" type="submit">Send message</button></form>`);
+  let recipientField;
+  if (admin()) {
+    const managerIds = [...new Set((S().user_roles || []).filter(r => String(r.role || "").toLowerCase() === "manager").map(r => String(r.user_id)))];
+    const profileNames = new Map((S().profiles || []).map(p => [String(p.id), p.display_name || p.full_name || p.name || "Manager"]));
+    const managerChoices = managerIds.map(id => [`manager:${id}`, `${profileNames.get(id) || "Manager"} + their salesmen`]);
+    const options = salesmanId
+      ? [[`salesman:${salesmanId}`, `Salesman: ${sellers.find(s=>s.id===salesmanId)?.name || salesmanId} (also notify assigned Manager)`]]
+      : [["__all_managers__", "All Managers and their assigned salesmen"], ["__all_salesmen__", "All salesmen (also notify their Managers)"], ...managerChoices, ...choices.map(([id,label]) => [`salesman:${id}`, `Salesman: ${label} (also notify assigned Manager)`])];
+    recipientField = select("Recipients", "recipient_scope", options, options[0]?.[0] || "__all_managers__");
+  } else {
+    recipientField = salesmanId
+      ? `<p>Recipient: <b>${esc(sellers.find(s=>s.id===salesmanId)?.name || salesmanId)}</b></p><input type="hidden" name="recipient_salesman_id" value="${esc(salesmanId)}">`
+      : select("Recipient", "recipient_salesman_id", [["__team__", "All salesmen in my assigned team"], ...choices], "__team__");
+  }
+  modal(salesmanId ? "Message salesman" : "Team announcement", `<form id="notification-form" data-salesman="${esc(salesmanId)}"><div class="grid">${recipientField}${field("Title", "title", "", "text", 'required maxlength="160"')}${area("Message", "message", "")}${select("Priority", "priority", [["low","Low"],["normal","Normal"],["high","High"],["urgent","Urgent"]], "normal")}${select("Acknowledgement", "requires_acknowledgement", [["false","No acknowledgement required"],["true","Require acknowledgement"]], "false")}${field("Optional expiry date", "expires_at", "", "date")}</div><button class="gold" type="submit">Send message</button></form>`);
 }
+
 async function areaAssignmentModal(salesmanId) {
   if (!(admin() || manager())) throw Error("Admin or Manager access required.");
   const seller = S().salesmen.find(s => s.id === salesmanId);
@@ -586,7 +620,7 @@ function renderManagerDashboard() {
   const stockReturns = (s.salesman_stock_movements || []).filter(m => teamIds.has(String(m.salesman_id)) && String(m.kind).startsWith("return_") && m.date === today()).reduce((n,m)=>n+Math.abs(num(m.boxes)),0);
   const cards = `<div class="cards">${card("Team monthly target", `${teamTarget.toFixed(2)} cartons`, "Configured team target", true)}${card("Team achieved", `${achievedCartons.toFixed(2)} cartons`, `${(achievedCartons / teamTarget * 100 || 0).toFixed(1)}% achieved`)}${card("Remaining target", `${Math.max(0, teamTarget-achievedCartons).toFixed(2)} cartons`, "No negative remaining target")}${card("Salesmen present", present, `${team.length} assigned`)}${card("Salesmen absent / leave", absent, "Attendance records today")}${card("Attendance missing", Math.max(0,team.length-recorded), "Not yet recorded")}${card("Boxes sold today", quantity(teamOrders.filter(o=>o.date===today())), "Confirmed team sales quantity")}${card("Stock issued today", stockIssues.toFixed(2), "Existing stock ledger")}${card("Stock returned today", stockReturns.toFixed(2), "Existing stock ledger")}</div>`;
   return head("Manager overview", "Operational control for your assigned salesmen. Financial account balances, revenue, wholesale prices and profit are not displayed.", btn("Manage salesmen", "go-staff", "", "", "gold")) + cards +
-    `<section class="panel"><div class="panel-heading"><h2>My team</h2>${btn("Open salesmen & targets", "go-staff")}</div>${table(["Salesman","Area","Attendance","Monthly target","Achieved","Remaining","Actions"], targets.map(t => { const seller=team.find(x=>String(x.id)===String(t.id)); const att=attendance.find(a=>String(a.salesman_id)===String(t.id)); return [`<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b>`,esc(seller?.territory||seller?.area||"Not assigned"),esc(att?.status||"Not recorded"),`${num(t.monthly_target).toFixed(2)} cartons`,`${num(t.achieved).toFixed(2)} cartons`,`${Math.max(0,num(t.monthly_target)-num(t.achieved)).toFixed(2)} cartons`,`${btn("Details","salesman-profile",t.id)}${btn("Attendance","mark-attendance",t.id)}${btn("Message","notify-salesman",t.id)}`]; }), "No salesmen are assigned to this manager. Admin should assign employees from Salesmen & Targets.")}</section>`;
+    `<section class="panel"><div class="panel-heading"><h2>My team</h2>${btn("Open salesmen & targets", "go-staff")}</div>${table(["Salesman","Area","Attendance","Monthly target","Achieved","Remaining","Actions"], targets.map(t => { const seller=team.find(x=>String(x.id)===String(t.id)); const att=attendance.find(a=>String(a.salesman_id)===String(t.id)); return [`<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b>`,esc(seller?.territory||seller?.area||"Not assigned"),esc(att?.status||"Not recorded"),`${num(t.monthly_target).toFixed(2)} cartons`,`${num(t.achieved).toFixed(2)} cartons`,`${Math.max(0,num(t.monthly_target)-num(t.achieved)).toFixed(2)} cartons`,`${btn("Details","salesman-profile",t.id)}${btn("Attendance","mark-attendance",t.id)}${btn("Message","notify-salesman",t.id)}`]; }), "No salesmen are assigned to this manager. Admin should assign employees from Salesmen & Targets.")}</section><section class="panel"><div class="panel-heading"><h2>Messages from Admin</h2><span class="muted">Announcements and instructions</span></div><div id="manager-notifications"><p class="muted">Loading messages…</p></div></section>`;
 }
 
 function renderAdminMyProfile() {
@@ -630,6 +664,7 @@ function renderMyProfile() {
     <section class="panel"><h2>Attendance history</h2><p class="muted">Attendance is recorded and corrected by authorized management. This view is read-only.</p><div id="my-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
     <section class="panel"><h2>Assigned areas & history</h2><div id="my-area-history"><p class="muted">Loading area assignments…</p></div></section>
     <section class="panel"><h2>My employee documents</h2><p class="muted">Documents uploaded by authorized management are listed below. Contact your manager if a document is missing or outdated.</p><div id="my-document-history"><p class="muted">Loading your document list…</p></div></section>
+    <section class="panel"><div class="panel-heading"><h2>Messages from Admin &amp; Manager</h2><span class="muted">Announcements and instructions</span></div><div id="salesman-notifications"><p class="muted">Loading messages…</p></div></section>
     <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional.</p><div id="my-visit-history"><p class="muted">Loading your visit history…</p></div></section>`;
 }
 
@@ -3501,6 +3536,17 @@ async function action(act, id, element) {
       const changed = await client.from("sales_areas").update({active:!current.data.active,updated_at:new Date().toISOString()}).eq("id",id); if (changed.error) throw changed.error;
       toast(current.data.active ? "Area deactivated; history retained." : "Area activated."); await manageAreasModal(); break;
     }
+    case "read-manager-notification": {
+      if (!manager() || !client) throw Error("Manager account required.");
+      const { error } = await client.from("employee_notifications").update({ read_at: new Date().toISOString() }).eq("id", id).eq("recipient_user_id", user.id);
+      if (error) throw error; await hydrateManagerNotifications(); toast("Message marked as read."); break;
+    }
+    case "ack-manager-notification": {
+      if (!manager() || !client) throw Error("Manager account required.");
+      const stamp = new Date().toISOString();
+      const { error } = await client.from("employee_notifications").update({ read_at: stamp, acknowledged_at: stamp }).eq("id", id).eq("recipient_user_id", user.id);
+      if (error) throw error; await hydrateManagerNotifications(); toast("Acknowledgement saved."); break;
+    }
     case "read-notification": {
       const seller = own(); if (!seller || !client) throw Error("Salesman account required.");
       const { error } = await client.from("employee_notifications").update({ read_at: new Date().toISOString() }).eq("id", id).eq("recipient_salesman_id", seller.id);
@@ -4016,16 +4062,39 @@ document.addEventListener("submit", async (e) => {
         break;
       case "notification-form": {
         if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
-        const selected = f.recipient_salesman_id || form.dataset.salesman;
-        const recipients = selected === "__team__" ? visible(S().salesmen).filter(x => admin() || managerTeamIds(S(), user.id).includes(x.id)).map(x => x.id) : [selected];
-        if (!recipients.length || recipients.some(id => !id)) throw Error("Choose at least one valid recipient.");
         const message = String(f.message || "").trim();
         if (!message) throw Error("Message body is required.");
         const expires = f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null;
-        const payload = recipients.map(recipient_salesman_id => ({ recipient_salesman_id, title: String(f.title || "").trim(), message, priority: f.priority || "normal", requires_acknowledgement: f.requires_acknowledgement === "true", expires_at: expires, created_by: user.id }));
-        const { error } = await client.from("employee_notifications").insert(payload);
+        const common = { title: String(f.title || "").trim(), message, priority: f.priority || "normal", requires_acknowledgement: f.requires_acknowledgement === "true", expires_at: expires, created_by: user.id };
+        const rows = [];
+        const addManager = id => { if (id && !rows.some(r => r.recipient_user_id === id)) rows.push({ ...common, recipient_user_id: id, recipient_salesman_id: null }); };
+        const addSalesman = seller => { if (seller && !rows.some(r => r.recipient_salesman_id === seller.id)) rows.push({ ...common, recipient_salesman_id: seller.id, recipient_user_id: null }); };
+        if (admin()) {
+          const scope = f.recipient_scope || (form.dataset.salesman ? `salesman:${form.dataset.salesman}` : "__all_managers__");
+          const managerIds = [...new Set((S().user_roles || []).filter(r => String(r.role || "").toLowerCase() === "manager").map(r => String(r.user_id)))];
+          const allSellers = visible(S().salesmen);
+          const addManagerAndTeam = id => { addManager(id); allSellers.filter(x => String(x.manager_user_id || "") === String(id)).forEach(addSalesman); };
+          if (scope === "__all_managers__") managerIds.forEach(addManagerAndTeam);
+          else if (scope === "__all_salesmen__") allSellers.forEach(x => { addSalesman(x); if (x.manager_user_id) addManager(String(x.manager_user_id)); });
+          else if (scope.startsWith("manager:")) {
+            const id = scope.slice("manager:".length);
+            if (!managerIds.includes(id)) throw Error("Choose a valid Manager account.");
+            addManagerAndTeam(id);
+          } else if (scope.startsWith("salesman:")) {
+            const id = scope.slice("salesman:".length), seller = allSellers.find(x => String(x.id) === id);
+            if (!seller) throw Error("Choose a valid salesman.");
+            addSalesman(seller); if (seller.manager_user_id) addManager(String(seller.manager_user_id));
+          } else throw Error("Choose a valid recipient group.");
+        } else {
+          const selected = f.recipient_salesman_id || form.dataset.salesman;
+          const recipients = selected === "__team__" ? visible(S().salesmen).filter(x => managerTeamIds(S(), user.id).includes(x.id)) : [visible(S().salesmen).find(x => String(x.id) === String(selected))];
+          if (!recipients.length || recipients.some(x => !x) || recipients.some(x => !managerTeamIds(S(), user.id).includes(x.id))) throw Error("Choose at least one valid salesman in your assigned team.");
+          recipients.forEach(addSalesman);
+        }
+        if (!rows.length) throw Error("No valid recipients were found. Check Manager assignments and try again.");
+        const { error } = await client.from("employee_notifications").insert(rows);
         if (error) throw error;
-        close(); render(); toast(`Message sent to ${recipients.length} salesman${recipients.length===1?"":"men"}.`); break;
+        close(); render(); toast(`Message sent to ${rows.length} recipient record${rows.length===1?"":"s"}.`); break;
       }
       case "sales-area-form": {
         if (!admin() || !client) throw Error("Only Admin can create areas.");
