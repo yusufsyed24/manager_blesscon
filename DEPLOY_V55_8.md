@@ -47,3 +47,13 @@ salesman. Manager password changes are by Admin only, per the role matrix.
 - Tested against Blesscon_Candy_Simple_Sales_Stock_Invoice__version_1__yusuf_fix.xlsx:
   0 errors, 37 products. Cost is 200 on every product in that file; update real costs.
 - Upload `web/js/importer.js` (and root `js/importer.js`, `sw.js`), then hard refresh.
+
+## v55.9 — Delete a salesman and all connected data
+1. Take a backup (Supabase → Database → Backups, or the app's "Download JSON backup").
+2. Run `supabase/admin_delete_salesman_v55_9.sql` in the SQL Editor.
+3. Upload the website files (including `sw.js`) and hard refresh.
+4. Admin → Salesmen & targets → **Delete** (or Users & access → **Delete salesman + data**).
+   A preview lists every table and row count; type DELETE to confirm.
+5. The login is removed through the `admin-delete-user` Edge Function, so that function must be
+   deployed too (same steps as the reset function, Verify JWT off, `ALLOWED_ORIGIN` set).
+Customers are kept and unassigned; everything else linked to the salesman is deleted.

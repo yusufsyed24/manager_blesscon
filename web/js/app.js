@@ -1467,7 +1467,7 @@ function renderStaff() {
           `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`,
           `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons · ${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100,t.percent)}%"></span></div>`,
           `${held.toFixed(2)} boxes`,
-          `<div class="actions">${btn("Details", "salesman-profile", t.id)}${(admin()||manager())?btn("Assign area", "assign-area", t.id):""}${(admin()||manager())?btn("Attendance", "mark-attendance", t.id):""}${(admin()||manager())?btn("Message", "notify-salesman", t.id):""}${(admin())?btn("Edit", "edit-staff", t.id)+btn("Post salary", "post-salary", t.id):manager()?btn("Edit", "edit-staff", t.id):""}</div>`
+          `<div class="actions">${btn("Details", "salesman-profile", t.id)}${(admin()||manager())?btn("Assign area", "assign-area", t.id):""}${(admin()||manager())?btn("Attendance", "mark-attendance", t.id):""}${(admin()||manager())?btn("Message", "notify-salesman", t.id):""}${(admin())?btn("Edit", "edit-staff", t.id)+btn("Post salary", "post-salary", t.id)+btn("Delete", "delete-salesman", t.id, "", "danger"):manager()?btn("Edit", "edit-staff", t.id):""}</div>`
         ];
       }), "No salesman profiles are assigned to this account.")}</section>
     ${admin() ? `<section class="panel"><div class="panel-heading"><h2>Employee fieldwork & documents</h2><span class="muted">Administrator access</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>` : ""}
@@ -1951,7 +1951,7 @@ function renderUsers() {
           badge(p.active ? "Active" : "Inactive"),
           p.id === user.id
             ? "Current user (use Account to change your own password)"
-            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${btn("Delete user", "delete-user", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${btn("Delete user", "delete-user", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) + btn("Delete salesman + data", "delete-salesman", linked.id, "", "danger") : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
         ];
       }),
     )}</section>`
@@ -3386,6 +3386,25 @@ async function action(act, id, element) {
       toast(`Login deleted for ${target.display_name || "user"}; business history preserved.`);
       break;
     }
+    case "delete-salesman": {
+      if (!admin()) throw Error("Only Admin can delete a salesman.");
+      if (!client) throw Error("Deleting a salesman requires Supabase.");
+      const seller = S().salesmen.find((x) => String(x.id) === String(id));
+      if (!seller) throw Error("Salesman not found. Refresh and try again.");
+      const { data: preview, error: previewError } = await client.rpc("admin_delete_salesman", { p_salesman_id: seller.id, p_dry_run: true });
+      if (previewError) {
+        const m = previewError.message || String(previewError);
+        if (/admin_delete_salesman|schema cache|does not exist/i.test(m)) throw Error("Run supabase/admin_delete_salesman_v55_9.sql in the Supabase SQL Editor first. " + m);
+        throw Error("The delete preview failed, so nothing was deleted: " + m);
+      }
+      const counts = Object.entries(preview?.counts || {}).sort((a, b) => a[0].localeCompare(b[0]));
+      const total = counts.reduce((n, [, v]) => n + Number(v), 0);
+      modal(
+        "Permanently delete " + esc(seller.name),
+        `<form id="delete-salesman-form" data-id="${esc(seller.id)}"><p class="notice"><b>This cannot be undone.</b> The salesman and every connected record below will be deleted. Customers are kept but unassigned. Stock and cash/bank balances will change. Download a JSON backup first.</p>${table(["Records", "Count"], counts.map(([k, v]) => [esc(k.replace(/^public\./, "")), esc(String(v))]), "Nothing else is linked to this salesman.")}<p>${preview?.user_id ? "Their login will also be deleted." : "This salesman has no login."}</p><div class="grid">${field('Type DELETE to confirm (' + total + ' records)', "confirm", "", "text", 'required autocomplete="off"')}</div><div id="master-form-error" role="alert" style="display:none"></div><button class="danger" type="submit" style="margin-top:15px">Delete salesman and data</button></form>`,
+      );
+      break;
+    }
     case "salesman-profile":
       await openAdminSalesmanProfile(id);
       break;
@@ -4172,6 +4191,22 @@ document.addEventListener("submit", async (e) => {
         if (!data?.ok) throw Error("The password reset was not confirmed by the server. Nothing was reported as changed; try again.");
         close();
         toast("Password reset for " + (target.display_name || "user") + ". Share the new password securely.");
+        break;
+      }
+      case "delete-salesman-form": {
+        if (!admin()) throw Error("Only Admin can delete a salesman.");
+        if (String(f.confirm || "").trim() !== "DELETE") throw Error("Type DELETE exactly to confirm.");
+        const { data: res, error: delError } = await client.rpc("admin_delete_salesman", { p_salesman_id: form.dataset.id, p_dry_run: false });
+        if (delError) throw Error("Nothing was deleted: " + (delError.message || String(delError)));
+        let loginNote = "";
+        if (res?.user_id && res.login_role !== "admin" && res.user_id !== user.id) {
+          const { error: loginError } = await client.functions.invoke("admin-delete-user", { body: { user_id: res.user_id } });
+          loginNote = loginError ? " The records were deleted, but the login could not be removed (" + (await edgeFunctionError(loginError, "admin-delete-user")) + "). Delete it from Users & access." : " Their login was deleted too.";
+        }
+        await store.refresh();
+        close();
+        render();
+        toast("Salesman " + (res?.name || "") + " and connected records deleted." + loginNote);
         break;
       }
       case "create-user-form": {
