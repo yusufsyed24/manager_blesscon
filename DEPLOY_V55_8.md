@@ -57,3 +57,9 @@ salesman. Manager password changes are by Admin only, per the role matrix.
 5. The login is removed through the `admin-delete-user` Edge Function, so that function must be
    deployed too (same steps as the reset function, Verify JWT off, `ALLOWED_ORIGIN` set).
 Customers are kept and unassigned; everything else linked to the salesman is deleted.
+
+## v55.10 — Photo / document upload "violates row-level security policy"
+Run `supabase/fix_upload_policies_v55_10.sql` in the SQL Editor (safe to re-run). It replaces the
+conflicting storage policies on the `employee-private` bucket with one set that allows:
+Admin (all folders), a Manager (own folder + assigned salesmen's folders), and the matching
+document-table inserts. No app files changed for this fix.
