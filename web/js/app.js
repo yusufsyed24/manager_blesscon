@@ -113,7 +113,7 @@ const canBase = (p) =>
 // A salesman only gets his overview, his own profile and his daily report / closing.
 // This must NOT fall through to the generic list in canBase(), which is why a salesman
 // used to see Cash & Bank Book, Invoices, Quotations, Ledger, Products, Salesmen & targets.
-const SALESMAN_PAGES = ["dashboard", "myprofile", "dsr", "closing"];
+const SALESMAN_PAGES = ["myprofile"];
 const can = (p) => (user?.role === "salesman" ? SALESMAN_PAGES.includes(p) : canBase(p));
 const badge = (s, t = "") =>
   `<span class="badge ${t || (/PAID|Accepted|Synced|OK/.test(s) && !/PART|UNPAID/.test(s) ? "green" : /PART|Draft|Sent|Pending|30/.test(s) ? "amber" : /UNPAID|Expired|cancel|Rejected/.test(s) ? "red" : "")}">${esc(s)}</span>`;
@@ -277,13 +277,18 @@ function syncBadge() {
         : "";
 }
 function shell() {
-  try {
-    const savedPage = localStorage.getItem("blesscon:last-page");
-    if (savedPage && NAV.some((item) => item[0] === savedPage)) page = savedPage;
-  } catch {}
+  // Salesman accounts have one destination only: their own profile page. Do not
+  // restore a previously selected management module from shared-device storage.
+  if (user?.role === "salesman") page = "myprofile";
+  else {
+    try {
+      const savedPage = localStorage.getItem("blesscon:last-page");
+      if (savedPage && NAV.some((item) => item[0] === savedPage)) page = savedPage;
+    } catch {}
+  }
   const nav = NAV.filter((x) => can(x[0]));
   $("app").innerHTML =
-    `<div class="layout"><aside class="sidebar" id="sidebar"><div class="brand"><img src="${ICON}" alt="Blesscon Candy logo"><div><b>BLESSCON CANDY</b><small>Business Manager</small></div></div><nav aria-label="Main navigation">${nav.map((n, i) => `${[0, 5, 10].includes(i) ? `<div class="nav-section">${i === 0 ? "BUSINESS" : i === 5 ? "OPERATIONS" : "ADMINISTRATION"}</div>` : ""}<button data-page="${n[0]}" class="${page === n[0] ? "active" : ""}"><span class="nav-icon" aria-hidden="true">${n[2]}</span>${n[1]}</button>`).join("")}</nav><div class="sidebar-footer">${esc(user.name || user.email || "Owner")}<br>${esc(user.role)}<hr><small>Karachi business dates · PKR</small></div></aside><div><header class="topbar"><div class="actions"><button class="mobile-menu icon-button" data-act="menu" aria-label="Toggle navigation">☰</button><span class="muted">${new Date(today() + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span></div><div class="actions"><span id="sync-status"></span>${btn("↻ Sync", "sync")}${btn("Account", "account")}${btn("Sign out", "logout")}</div></header><main id="main" class="main-content" tabindex="-1">${user.practice ? '<div class="notice">Practice workspace — example products only. This data is stored on this device and never sent to your business database.</div>' : ""}<div id="sync-alert"></div><div id="page"></div></main></div></div>`;
+    `<div class="layout"><aside class="sidebar" id="sidebar"><div class="brand"><img src="${ICON}" alt="Blesscon Candy logo"><div><b>BLESSCON CANDY</b><small>Business Manager</small></div></div><nav aria-label="Main navigation">${nav.map((n, i) => `${user?.role !== "salesman" && [0, 5, 10].includes(i) ? `<div class="nav-section">${i === 0 ? "BUSINESS" : i === 5 ? "OPERATIONS" : "ADMINISTRATION"}</div>` : ""}<button data-page="${n[0]}" class="${page === n[0] ? "active" : ""}"><span class="nav-icon" aria-hidden="true">${n[2]}</span>${n[1]}</button>`).join("")}</nav><div class="sidebar-footer">${esc(user.name || user.email || "Owner")}<br>${esc(user.role)}<hr><small>Karachi business dates · PKR</small></div></aside><div><header class="topbar"><div class="actions"><button class="mobile-menu icon-button" data-act="menu" aria-label="Toggle navigation">☰</button><span class="muted">${new Date(today() + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span></div><div class="actions"><span id="sync-status"></span>${btn("↻ Sync", "sync")}${btn("Account", "account")}${btn("Sign out", "logout")}</div></header><main id="main" class="main-content" tabindex="-1">${user.practice ? '<div class="notice">Practice workspace — example products only. This data is stored on this device and never sent to your business database.</div>' : ""}<div id="sync-alert"></div><div id="page"></div></main></div></div>`;
   render();
 }
 function head(title, description, actions = "") {
@@ -294,6 +299,9 @@ function render() {
   charts.forEach((c) => c.destroy());
   charts = [];
   const s = S();
+  // Enforce the salesman page restriction even if an old saved route or a stale
+  // click attempts to select another module.
+  if (user?.role === "salesman") page = "myprofile";
   if (page === "myprofile" && !admin() && !["manager", "salesman", "user"].includes(user.role)) page = "dashboard";
   if (!can(page) && page !== "myprofile") page = "dashboard";
   // Keep the selected module across refreshes on this device. The normal
@@ -374,7 +382,7 @@ function salesmanDayBody(sid, day) {
   const s = S(), id = String(sid), d = String(day || today());
   const moves = (s.salesman_stock_movements || []).filter((m) => String(m.salesman_id) === id);
   const sold = new Map();
-  for (const o of s.orders.filter((o) => String(o.salesman_id) === id && o.status !== "cancelled" && !o.deleted_at && o.date === d))
+  for (const o of s.orders.filter((o) => String(o.salesman_id) === id && o.status === "confirmed" && !o.deleted_at && o.date === d))
     for (const i of (s.order_items || []).filter((i) => i.order_id === o.id))
       sold.set(i.product_id, (sold.get(i.product_id) || 0) + num(i.boxes));
   const ids = new Set([...moves.map((m) => m.product_id), ...sold.keys()]);
@@ -402,13 +410,15 @@ async function hydrateSalesmanSalary(seller) {
   if (!el || !client) return;
   const month = today().slice(0, 7);
   const boxes = S().orders
-    .filter((o) => String(o.salesman_id) === String(seller.id) && o.status !== "cancelled" && !o.deleted_at && String(o.date || "").startsWith(month))
+    .filter((o) => String(o.salesman_id) === String(seller.id) && o.status === "confirmed" && !o.deleted_at && String(o.date || "").startsWith(month))
     .reduce((n, o) => n + (S().order_items || []).filter((i) => i.order_id === o.id).reduce((a, i) => a + num(i.boxes), 0), 0);
   const r = await client.rpc("own_salary_snapshot");
   if (!el.isConnected) return;
   if (r.error) { el.innerHTML = `<p class="notice danger">Salary could not be loaded: ${esc(r.error.message)}. Contact Admin.</p>`; return; }
   const pay = r.data || {};
-  el.innerHTML = `<div class="cards">${card("Boxes sold this month", Math.round(boxes) + " boxes", `${num(pay.achieved_cartons).toFixed(2)} cartons counted`)}${card("Monthly target", num(pay.monthly_target).toFixed(2) + " cartons", `${num(pay.achievement_percent).toFixed(1)}% achieved`)}${card("Estimated salary", money(pay.total_paisa || 0), pay.status === "posted" ? "Posted for " + esc(pay.salary_period) : "Estimate for " + esc(pay.salary_period))}</div>` +
+  const boxesPerCarton = Math.max(1, num(S().settings?.boxes_per_carton) || 24);
+  const targetBoxes = Math.round(num(pay.monthly_target) * boxesPerCarton);
+  el.innerHTML = `<div class="cards">${card("Boxes sold this month", Math.round(boxes) + " boxes", `${num(pay.achieved_cartons).toFixed(2)} carton-equivalent sold`)}${card("Monthly target", `${num(pay.monthly_target).toFixed(2)} cartons`, `${targetBoxes} boxes at ${boxesPerCarton} boxes/carton · ${num(pay.achievement_percent).toFixed(1)}% achieved`)}${card("Estimated salary", money(pay.total_paisa || 0), pay.status === "posted" ? "Posted for " + esc(pay.salary_period) : "Estimate for " + esc(pay.salary_period))}</div>` +
     table(["Component", "Amount"], [["Base salary", money(pay.base_salary_paisa || 0)], ["Target incentive", money(pay.incentive_paisa || 0)], ["<b>Total</b>", `<b>${money(pay.total_paisa || 0)}</b>`]], "") +
     `<p class="muted">Your incentive depends on the share of your monthly target you have sold. This is an estimate until it shows as Posted.</p>`;
 }
@@ -604,12 +614,16 @@ function renderMyProfile() {
   if (!seller) return head("My profile", "Your account is not linked to a salesman record.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
   const s = S(), sid = seller.id;
   const productRows = visible(s.products).map(p => { const qty = heldStock(p.id, sid); return qty ? [esc(p.name), qty.toFixed(2), esc(p.unit || "boxes")] : null; }).filter(Boolean);
-  const orders = s.orders.filter(o => o.salesman_id === sid && o.status !== "cancelled" && !o.deleted_at);
-  const target = targetRows().find(t => t.id === sid);
+  const orders = s.orders.filter(o => String(o.salesman_id) === String(sid) && o.status === "confirmed" && !o.deleted_at);
+  const monthOrders = orders.filter(o => String(o.date || "").startsWith(today().slice(0, 7)));
+  const monthBoxes = monthOrders.reduce((n, o) => n + (s.order_items || []).filter(i => i.order_id === o.id).reduce((a, i) => a + num(i.boxes), 0), 0);
+  const monthCartons = monthOrders.reduce((n, o) => n + (s.order_items || []).filter(i => i.order_id === o.id).reduce((a, i) => a + num(i.boxes) / Math.max(1, num(i.boxes_per_carton) || 24), 0), 0);
+  const monthlyTarget = num(seller.monthly_target);
+  const achievementPercent = monthlyTarget > 0 ? monthCartons / monthlyTarget * 100 : 0;
   const photo = seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="${esc(seller.name)} profile photo">` : "♙";
-  return head("My profile", "Your profile and employment documents are managed by your manager. Contact your manager to request a correction.") +
+  return head("My profile", "Your profile, assigned area, daily stock and sales, monthly target, salary estimate and manager-uploaded documents.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>Date of birth: <b>${esc(seller.date_of_birth || "Not recorded")}</b></p><p>Assigned area: <b id="my-current-area">${esc(seller.territory || seller.area || (client ? "Loading…" : "Not assigned"))}</b></p><p>Status: <b>${seller.active ? "Active" : "Inactive"}</b></p></div></div><p class="notice">Profile details, photograph, date of birth, NIC and education documents can only be changed by authorized management. Please contact your manager if anything needs correction.</p></section>
-    <div class="cards">${card("Quantity sold today", orders.filter(o=>o.date===today()).reduce((n,o)=>n+(s.order_items||[]).filter(i=>i.order_id===o.id).reduce((a,i)=>a+num(i.boxes),0),0), "Confirmed sales quantity")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Recorded quantity against you")}</div>
+    <div class="cards">${card("Boxes sold today", orders.filter(o=>o.date===today()).reduce((n,o)=>n+(s.order_items||[]).filter(i=>i.order_id===o.id).reduce((a,i)=>a+num(i.boxes),0),0), "Confirmed sales quantity")}${card("Monthly target progress", `${monthBoxes} boxes sold · ${monthCartons.toFixed(2)} / ${monthlyTarget.toFixed(2)} cartons`, `${achievementPercent.toFixed(1)}% achieved · salary incentive follows confirmed sales`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Recorded quantity against you")}</div>
     <section class="panel"><h2>My salary this month</h2><div id="my-salary-panel"><p class="muted">Loading salary…</p></div></section>
     <section class="panel"><div class="panel-heading"><h2>Stock assigned &amp; sales by day</h2><div class="field" style="margin:0"><label for="my-day-date">Day</label><input id="my-day-date" type="date" value="${today()}" max="${today()}"></div></div><div id="my-day-body">${salesmanDayBody(sid, today())}</div></section>
     <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
