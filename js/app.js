@@ -589,11 +589,11 @@ async function areaAssignmentModal(salesmanId) {
   modal("Assign sales area · " + seller.name, `<form id="area-assignment-form" data-salesman="${esc(salesmanId)}"><div class="grid">${select("Existing active area", "area_name", choices, choices.some(a=>a[0]===current)?current:"")}${field("Effective from", "effective_from", today(), "date", "required")}${field("Effective until (optional)", "effective_to", "", "date")}${area("Operational instructions", "instructions", "")}</div><p class="muted">Choose an active area from the Admin catalogue. Assignments are effective-dated and historical assignments are preserved.</p><button class="gold" type="submit">Save area assignment</button></form>`);
 }
 async function manageAreasModal() {
-  if (!admin() || !client) throw Error("Only an online Admin can manage area definitions.");
+  if (!(admin() || manager()) || !client) throw Error("Only an online Admin or Manager can manage area definitions.");
   const { data, error } = await client.from("sales_areas").select("id,name,description,active,created_at").order("name");
   if (error) throw error;
-  const rows = (data||[]).map(a=>[`<b>${esc(a.name)}</b><small>${esc(a.description||"")}</small>`,a.active?badge("Active","green"):badge("Inactive","amber"),esc(a.created_at?new Date(a.created_at).toLocaleDateString():"—"),btn(a.active?"Deactivate":"Activate","toggle-area",a.id)]);
-  modal("Manage sales areas", `<section class="panel">${table(["Area","Status","Created","Action"],rows,"No areas yet. Add your first area below.")}</section><form id="sales-area-form"><div class="grid">${field("Area name","name","","text",'required maxlength="120"')}${field("Description / instructions","description","")}</div><button class="gold" type="submit">Add area</button></form><p class="muted">Deactivating an area prevents new assignments but preserves its historical assignments.</p>`);
+  const rows = (data||[]).map(a=>[`<b>${esc(a.name)}</b><small>${esc(a.description||"")}</small>`,a.active?badge("Active","green"):badge("Inactive","amber"),esc(a.created_at?new Date(a.created_at).toLocaleDateString():"—"),admin()?btn(a.active?"Deactivate":"Activate","toggle-area",a.id):"—"]);
+  modal("Manage sales areas", `<section class="panel">${table(["Area","Status","Created",...(admin()?["Action"]:[])],rows,"No areas yet. Add your first area below.")}</section><form id="sales-area-form"><div class="grid">${field("Area name","name","","text",'required maxlength="120"')}${field("Description / instructions","description","")}</div><button class="gold" type="submit">Add area</button></form><p class="muted">${admin()?"Deactivating an area prevents new assignments but preserves its historical assignments.":"Managers can create active areas for their assigned salesmen. Only Admin can deactivate or reactivate areas."}</p>`);
 }
 
 function attendanceModal(salesmanId) {
@@ -847,7 +847,7 @@ function renderDashboard() {
           head(
             "Business overview",
             "Sales, collections and your team — all in one place.",
-            (admin() ? btn("Manage areas", "manage-areas") : "") +
+            ((admin() || manager()) ? btn("Manage areas", "manage-areas") : "") +
               btn("New quotation", "new-quote") +
               btn("+ New sale", "new-order", "", "", "gold"),
           ) +
@@ -1561,7 +1561,7 @@ function renderStaff() {
     head(
       "Salesmen & targets",
       manager() ? "Manage your assigned team, attendance, areas, stock accountability and operational messages." : "Manage employee profiles, assign managers, monitor targets and review fieldwork.",
-      (admin() || manager()) ? btn("+ Create salesman", "add-staff", "", "", "gold") + (admin() ? btn("Manage areas", "manage-areas") : "") : "",
+      (admin() || manager()) ? btn("+ Create salesman", "add-staff", "", "", "gold") + btn("Manage areas", "manage-areas") : "",
     ) +
     `<section class="panel"><div class="panel-heading"><h2>Team overview</h2><span>${esc(attendanceDate)} · ${sellers.length} assigned salesman${sellers.length===1?"":"men"}</span></div>${table(
       ["Salesman", "Attendance", "Assigned area", "Today / target", "Monthly progress", "Stock in hand", "Actions"],
@@ -3532,7 +3532,7 @@ async function action(act, id, element) {
     case "assign-area": await areaAssignmentModal(id); break;
     case "manage-areas": await manageAreasModal(); break;
     case "toggle-area": {
-      if (!admin() || !client) throw Error("Only Admin can manage areas.");
+      if (!admin() || !client) throw Error("Only Admin can activate or deactivate areas.");
       const current = await client.from("sales_areas").select("id,active").eq("id", id).single(); if (current.error) throw current.error;
       const changed = await client.from("sales_areas").update({active:!current.data.active,updated_at:new Date().toISOString()}).eq("id",id); if (changed.error) throw changed.error;
       toast(current.data.active ? "Area deactivated; history retained." : "Area activated."); await manageAreasModal(); break;
@@ -4098,7 +4098,7 @@ document.addEventListener("submit", async (e) => {
         close(); render(); toast(`Message sent to ${rows.length} recipient record${rows.length===1?"":"s"}.`); break;
       }
       case "sales-area-form": {
-        if (!admin() || !client) throw Error("Only Admin can create areas.");
+        if (!(admin() || manager()) || !client) throw Error("Only Admin or Manager can create areas.");
         const name = String(f.name || "").trim(); if (!name) throw Error("Area name is required.");
         const { error } = await client.from("sales_areas").insert({name,description:String(f.description||"").trim(),created_by:user.id});
         if (error) throw error;

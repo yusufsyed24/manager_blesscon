@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-16-admin-manage-areas-20261020";
+const CACHE = "blesscon-static-v55-17-manager-create-areas-20261020";
 const ASSETS = [
   "./",
   "./index.html",
