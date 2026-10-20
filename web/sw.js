@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-18-manager-own-cartons-20261020";
+const CACHE = "blesscon-static-v55-19-manager-sales-excluded-team-target-20261020";
 const ASSETS = [
   "./",
   "./index.html",

@@ -264,10 +264,6 @@ export function targetPerformance(
           sum + Number(item.boxes || 0) / (Number(item.boxes_per_carton) || 1),
         0,
       );
-  const achievedCartons = periodOrders.reduce(
-    (sum, order) => sum + cartonsFor(order),
-    0,
-  );
   const managerOrders = periodOrders.filter(
     (order) =>
       !order.salesman_id ||
@@ -281,10 +277,15 @@ export function targetPerformance(
     (sum, order) => sum + cartonsFor(order),
     0,
   );
+  const salesmanCartons = periodOrders
+    .filter((order) => !managerOrders.includes(order))
+    .reduce((sum, order) => sum + cartonsFor(order), 0);
   return {
-    achieved_cartons: achievedCartons,
+    // The target is exclusively for salesman/team sales. Manager direct sales
+    // are reported separately and must never close or reduce the team target.
+    achieved_cartons: salesmanCartons,
     manager_direct_cartons: managerDirectCartons,
-    salesman_cartons: achievedCartons - managerDirectCartons,
+    salesman_cartons: salesmanCartons,
   };
 }
 export function salary(salesman, achieved, settings = DEFAULTS) {

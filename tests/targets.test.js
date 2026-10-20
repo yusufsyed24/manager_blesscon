@@ -85,7 +85,7 @@ it("counts salesman sales toward company target and reports manager direct carto
       "manager-user",
     ),
   ).toEqual({
-    achieved_cartons: 133,
+    achieved_cartons: 130,
     manager_direct_cartons: 3,
     salesman_cartons: 130,
   });
