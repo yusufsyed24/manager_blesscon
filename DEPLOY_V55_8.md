@@ -72,3 +72,11 @@ document-table inserts. No app files changed for this fix.
   stock assigned / returned / sold / in hand for any chosen day, and this month's boxes sold,
   target and estimated salary.
 - Website files only; no SQL needed. Upload and hard refresh (Ctrl+Shift+R).
+
+## v55.12 — Manager creates orders for assigned salesmen
+1. Run `supabase/fix_manager_orders_v55_12.sql` in the SQL Editor (watch the NOTICE lines).
+2. Upload the website files and hard refresh (Ctrl+Shift+R).
+3. If the app shows "Resolve the pending sync issue", open **Review pending changes** and discard the
+   old failed entry, then create the order again.
+4. Manager → Sales orders → New: the Salesman list now shows the manager's assigned salesmen
+   (plus "Manager / direct sale"). The salesman needs stock issued first (Stock page).

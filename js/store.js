@@ -249,8 +249,11 @@ export function localApply(base, op, user) {
       it = quote ? "quotation_items" : "order_items",
       fk = quote ? "quotation_id" : "order_id",
       old = find(t, input.id);
+    const managerMayUse = user.role === "manager" &&
+      (!input.salesman_id || managerTeamIds(s, user.id).map(String).includes(String(input.salesman_id)));
     if (
       !admin &&
+      !managerMayUse &&
       !s.salesmen.some(
         (x) => x.id === input.salesman_id && x.user_id === user.id && x.active,
       )

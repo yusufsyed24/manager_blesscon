@@ -2068,7 +2068,7 @@ function openEditor(quote, id) {
     salesman_id:
       old
         ? old.salesman_id || ""
-        : admin()
+        : mgmt()
           ? ""
           : own()?.id || visible(s.salesmen).find((x) => x.active)?.id || "",
     date: old?.date || today(),
@@ -2103,7 +2103,9 @@ function openEditor(quote, id) {
       "salesman_id",
       [
         ...(mgmt() ? [["", "Manager / direct sale"]] : []),
-        ...(manager() ? [] : visible(s.salesmen))
+        ...(manager()
+          ? visible(s.salesmen).filter((x) => managerTeamIds(s, user.id).map(String).includes(String(x.id)))
+          : visible(s.salesmen))
           .filter((x) => x.active)
           .map((x) => [x.id, x.name]),
       ],
