@@ -1309,21 +1309,38 @@ function renderCashBook() {
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
   let accountLedgerEntries = relevantEntries.filter(e => cashbookAccountFilter ? e.account_key === cashbookAccountFilter : e.business_date === date);
-  // Market Credit is a receivables ledger. Reconstruct invoice increases and payments
-  // from the authoritative invoice/payment records if the cashbook posting ledger
-  // does not contain those receivable-side movements.
+  // Market Credit is a receivables ledger, not a cash/bank ledger. Build its history
+  // exclusively from confirmed invoices and their non-voided payments. Do not mix in
+  // generic cashbook rows: older postings may have been mis-keyed to a bank account,
+  // which previously caused the Market Credit card to display unrelated bank activity.
   if (cashbookAccountFilter === "market_credit") {
-    const hasSource = (tableName, sourceId) => accountLedgerEntries.some(e => e.account_key === "market_credit" && String(e.source_table || "").toLowerCase() === tableName && String(e.source_id || "") === String(sourceId));
+    accountLedgerEntries = [];
+    const invoicesById = new Map((s.invoices || []).map(inv => [String(inv.id), inv]));
+    const ordersById = new Map((s.orders || []).map(order => [String(order.id), order]));
+    const eligibleInvoices = new Map();
     for (const inv of s.invoices || []) {
-      const order = s.orders.find(o => o.id === inv.order_id);
-      if (!order || order.status !== "confirmed" || order.date > date || hasSource("invoices", inv.id)) continue;
-      accountLedgerEntries.push({ id:`market-invoice:${inv.id}`, business_date:order.date, account_key:"market_credit", amount_paisa:num(inv.total_paisa), entry_type:"receivable", source_table:"invoices", source_id:inv.id, description:`Market credit issued — ${customerName(order.customer_id)}`, created_by:inv.created_by });
+      const order = ordersById.get(String(inv.order_id));
+      if (!order || order.status !== "confirmed" || String(order.date || "") > date) continue;
+      eligibleInvoices.set(String(inv.id), { inv, order });
+      accountLedgerEntries.push({
+        id:`market-invoice:${inv.id}`, business_date:order.date, account_key:"market_credit",
+        amount_paisa:num(inv.total_paisa), entry_type:"receivable", source_table:"invoices",
+        source_id:inv.id, description:`Market credit issued — ${customerName(order.customer_id)}`,
+        created_by:inv.created_by
+      });
     }
     for (const payment of s.payments || []) {
-      if (payment.voided_at || payment.date > date || hasSource("payments", payment.id)) continue;
-      const inv = s.invoices.find(i => i.id === payment.invoice_id), order = inv && s.orders.find(o => o.id === inv.order_id);
-      if (!inv || !order || order.status !== "confirmed") continue;
-      accountLedgerEntries.push({ id:`market-payment:${payment.id}`, business_date:payment.date, account_key:"market_credit", amount_paisa:-num(payment.amount_paisa), entry_type:"receivable_recovery", source_table:"payments", source_id:payment.id, description:`Market credit recovered — ${customerName(order.customer_id)}`, created_by:payment.created_by });
+      if (payment.voided_at || String(payment.date || "") > date) continue;
+      const inv = invoicesById.get(String(payment.invoice_id));
+      const linked = inv && eligibleInvoices.get(String(inv.id));
+      if (!inv || !linked) continue;
+      accountLedgerEntries.push({
+        id:`market-payment:${payment.id}`, business_date:payment.date, account_key:"market_credit",
+        amount_paisa:-Math.abs(num(payment.amount_paisa)), entry_type:"receivable_recovery",
+        source_table:"payments", source_id:payment.id,
+        description:`Market credit recovered — ${customerName(linked.order.customer_id)}`,
+        created_by:payment.created_by
+      });
     }
   }
   accountLedgerEntries = accountLedgerEntries.sort((a,b)=>String(a.business_date||"").localeCompare(String(b.business_date||"")) || String(a.created_at||"").localeCompare(String(b.created_at||"")));

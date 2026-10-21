@@ -1,5 +1,12 @@
 # Changelog
 
+## v55.22 — Market Credit transaction history isolation (2026-10-22)
+- Fixed Market Credit — Receivables → View transactions so its history is built only from confirmed invoice receivables and their non-voided payments through the selected date.
+- Prevented unrelated cash/bank ledger rows from appearing in Market Credit history, even when older ledger entries are incorrectly keyed or missing receivable-side postings.
+- Kept Market Credit as a receivable ledger, separate from liquid cash balances; payment recoveries reduce receivables and do not appear as bank transactions in this view.
+- Synchronized root and deployed app.js copies. JavaScript syntax checks pass; full project checks require the missing TypeScript dependency.
+
+
 ## v55.4 — Admin warehouse overview and email-view removal
 
 - Removed registered login email display and Copy email action from Users & Access; the page no longer invokes `admin-user-directory`, eliminating the browser CORS failure from that workflow. Admin password reset remains available and no longer displays an email in its prompt or success message.
