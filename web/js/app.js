@@ -2728,29 +2728,32 @@ async function postSalary(id, month = today().slice(0, 7), automatic = false) {
     if (automatic) return;
     throw Error("Salary already posted for " + month);
   }
-  if (
-    !automatic &&
-    !confirm(
-      `Post ${money(pay.total)} salary for ${s.name} (${month})? Base plus earned incentive; advances and deductions are not included.`,
-    )
-  )
+  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable" && (!manager() || !a.salesman_id || a.salesman_id === own()?.id));
+  if (!accounts.length) throw Error("No active payment accounts are available. Ask Admin to configure Cash & Bank Book accounts.");
+  const defaultAccount = accounts.find(a => /cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
+  if (!automatic) {
+    modal("Release salary · " + s.name, `<form id="salary-post-form" data-salesman="${esc(id)}" data-month="${esc(month)}"><section class="panel"><p><b>Salary period:</b> ${esc(month)}</p><p><b>Salary amount:</b> ${money(pay.total)}</p><p class="muted">Base plus earned incentive. Advances and deductions are not included.</p>${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm salary payment</button></form>`);
     return;
+  }
+  // Automatic monthly posting uses the configured cash-in-hand account unless an existing employee salary preference is present.
+  const accountKey = s.salary_account_key || defaultAccount;
+  const account = accounts.find(a => a.account_key === accountKey) || accounts[0];
   await store.run("master.save", {
     table: "expenses",
     record: {
       id: old?.id || "SAL-" + id + "-" + month,
       date: monthEnd(month + "-01"),
       category: "Salaries",
-      description:
-        s.name + " — base + incentive (" + achieved.toFixed(2) + " cartons)",
+      description: `Salary released to ${s.name} — ${month}; base + incentive (${achieved.toFixed(2)} cartons)${automatic ? " (automatic posting)" : ""}`,
       amount_paisa: pay.total,
-      method: "Bank",
+      method: /jazzcash/i.test(account.label) ? "JazzCash" : /easypaisa/i.test(account.label) ? "Easypaisa" : /cash/i.test(account.label) ? "Cash" : /mcb/i.test(account.label) ? "MCB Bank" : /al habib/i.test(account.label) ? "Al Habib Bank" : "Bank Account",
+      cashbook_account_key: account.account_key,
       salesman_id: id,
       salary_period: month,
     },
     expected_version: old?.version,
   });
-  if (!automatic) toast("Salary expense posted");
+  if (!automatic) toast("Salary payment and linked expense posted.");
 }
 async function saveSettings(form) {
   const f = new FormData(form),
@@ -4067,6 +4070,23 @@ document.addEventListener("submit", async (e) => {
       case "master-form":
         await saveMaster(form);
         break;
+      case "salary-post-form": {
+        if (!admin()) throw Error("Only Admin can release salary.");
+        const salesmanId = form.dataset.salesman, month = form.dataset.month;
+        const seller = S().salesmen.find(x => x.id === salesmanId);
+        if (!seller) throw Error("Salesman not found.");
+        const amount = salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total;
+        if (!f.cashbook_account_key) throw Error("Choose the account used to pay this salary.");
+        const account = (S().cashbook_accounts||[]).find(a=>a.account_key===f.cashbook_account_key && a.active && a.account_type!=="receivable");
+        if (!account) throw Error("Select an active cash or bank account.");
+        if (!confirm(`Release ${money(amount)} to ${seller.name} for ${month} from ${account.label}? This will create the linked Salary expense and debit the selected account.`)) break;
+        const achieved = S().salesman_daily_targets.filter(d=>d.salesman_id===salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0);
+        const prior = S().expenses.find(e=>e.salesman_id===salesmanId && e.salary_period===month && !e.deleted_at);
+        if (prior) throw Error("Salary already posted for " + month);
+        await store.run("master.save", {table:"expenses", record:{id:"SAL-"+salesmanId+"-"+month,date:f.date||today(),category:"Salaries",description:`Salary released to ${seller.name} — ${month}; base + incentive (${achieved.toFixed(2)} cartons)${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:amount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,salesman_id:salesmanId,salary_period:month}});
+        toast("Salary released; selected account debited and linked expense recorded.");
+        close(); render(); break;
+      }
       case "notification-form": {
         if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
         const message = String(f.message || "").trim();
