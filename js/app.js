@@ -1343,6 +1343,43 @@ function renderCashBook() {
       });
     }
   }
+  // Final hard boundary: Market Credit history may contain ONLY receivable issuance
+  // from confirmed invoices and recovery payments linked to those invoices. This guard
+  // prevents legacy/mis-keyed cashbook rows from leaking into the receivables view.
+  if (cashbookAccountFilter === "market_credit") {
+    const eligibleInvoiceIds = new Set((s.invoices || []).filter(inv => {
+      const order = (s.orders || []).find(o => String(o.id) === String(inv.order_id));
+      return !!order && order.status === "confirmed" && String(order.date || "") <= date;
+    }).map(inv => String(inv.id)));
+    accountLedgerEntries = accountLedgerEntries.filter(e => {
+      const source = String(e.source_table || "").toLowerCase();
+      if (source === "invoices") return e.entry_type === "receivable" && eligibleInvoiceIds.has(String(e.source_id));
+      if (source === "payments") {
+        const payment = (s.payments || []).find(p => String(p.id) === String(e.source_id));
+        return e.entry_type === "receivable_recovery" && !!payment && !payment.voided_at &&
+          String(payment.date || "") <= date && eligibleInvoiceIds.has(String(payment.invoice_id));
+      }
+      return false;
+    }).map(e => ({ ...e, account_key: "market_credit" }));
+  }
+  // Final allow-list: Market Credit history contains only confirmed invoice receivables
+  // and non-voided recovery payments linked to those invoices; never bank/cash rows.
+  if (cashbookAccountFilter === "market_credit") {
+    const eligibleInvoiceIds = new Set((s.invoices || []).filter(inv => {
+      const order = (s.orders || []).find(o => String(o.id) === String(inv.order_id));
+      return !!order && order.status === "confirmed" && String(order.date || "") <= date;
+    }).map(inv => String(inv.id)));
+    accountLedgerEntries = accountLedgerEntries.filter(e => {
+      const source = String(e.source_table || "").toLowerCase();
+      if (source === "invoices") return e.entry_type === "receivable" && eligibleInvoiceIds.has(String(e.source_id));
+      if (source === "payments") {
+        const payment = (s.payments || []).find(p => String(p.id) === String(e.source_id));
+        return e.entry_type === "receivable_recovery" && !!payment && !payment.voided_at &&
+          String(payment.date || "") <= date && eligibleInvoiceIds.has(String(payment.invoice_id));
+      }
+      return false;
+    }).map(e => ({ ...e, account_key: "market_credit" }));
+  }
   accountLedgerEntries = accountLedgerEntries.sort((a,b)=>String(a.business_date||"").localeCompare(String(b.business_date||"")) || String(a.created_at||"").localeCompare(String(b.created_at||"")));
   let runningBalances = new Map();
   const accountForLedger = data.accounts.find(a=>a.account_key===cashbookAccountFilter);
