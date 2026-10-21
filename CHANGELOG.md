@@ -540,3 +540,11 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Added `supabase/fix_payment_method_constraint_v55_13.sql` as an additive migration for existing Supabase projects. It preserves existing payment rows and keeps a finite check constraint.
 - Updated the base schema for new installations and bumped the service-worker cache so browsers load the current release.
 - After applying the migration, existing Pending Sync transactions can be retried; do not clear the queue or recreate the order.
+
+## v55.21 — Cashbook transaction history usability fixes
+- Removed Reference and Source document columns from the Cash & Bank Book transaction history table.
+- Show a readable creator name rather than a raw user ID when profile data is incomplete.
+- Salary expense transaction descriptions identify the salary recipient where the linked expense contains employee details.
+- Market Credit account ledger now reconstructs receivable movements from confirmed invoices and non-voided payments when receivable-side cashbook postings are absent, avoiding duplicate source entries.
+- View transactions / ledger controls now scroll directly to the transaction history section.
+- Validation: `node --check` passed for the application JavaScript. Full project check could not run because project dependencies (including TypeScript) are not installed in the supplied environment.

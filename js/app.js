@@ -1308,10 +1308,28 @@ function renderCashBook() {
   }
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
-  const accountLedgerEntries = relevantEntries.filter(e => cashbookAccountFilter ? e.account_key === cashbookAccountFilter : e.business_date === date).sort((a,b)=>String(a.business_date||"").localeCompare(String(b.business_date||"")) || String(a.created_at||"").localeCompare(String(b.created_at||"")));
+  let accountLedgerEntries = relevantEntries.filter(e => cashbookAccountFilter ? e.account_key === cashbookAccountFilter : e.business_date === date);
+  // Market Credit is a receivables ledger. Reconstruct invoice increases and payments
+  // from the authoritative invoice/payment records if the cashbook posting ledger
+  // does not contain those receivable-side movements.
+  if (cashbookAccountFilter === "market_credit") {
+    const hasSource = (tableName, sourceId) => accountLedgerEntries.some(e => e.account_key === "market_credit" && String(e.source_table || "").toLowerCase() === tableName && String(e.source_id || "") === String(sourceId));
+    for (const inv of s.invoices || []) {
+      const order = s.orders.find(o => o.id === inv.order_id);
+      if (!order || order.status !== "confirmed" || order.date > date || hasSource("invoices", inv.id)) continue;
+      accountLedgerEntries.push({ id:`market-invoice:${inv.id}`, business_date:order.date, account_key:"market_credit", amount_paisa:num(inv.total_paisa), entry_type:"receivable", source_table:"invoices", source_id:inv.id, description:`Market credit issued — ${customerName(order.customer_id)}`, created_by:inv.created_by });
+    }
+    for (const payment of s.payments || []) {
+      if (payment.voided_at || payment.date > date || hasSource("payments", payment.id)) continue;
+      const inv = s.invoices.find(i => i.id === payment.invoice_id), order = inv && s.orders.find(o => o.id === inv.order_id);
+      if (!inv || !order || order.status !== "confirmed") continue;
+      accountLedgerEntries.push({ id:`market-payment:${payment.id}`, business_date:payment.date, account_key:"market_credit", amount_paisa:-num(payment.amount_paisa), entry_type:"receivable_recovery", source_table:"payments", source_id:payment.id, description:`Market credit recovered — ${customerName(order.customer_id)}`, created_by:payment.created_by });
+    }
+  }
+  accountLedgerEntries = accountLedgerEntries.sort((a,b)=>String(a.business_date||"").localeCompare(String(b.business_date||"")) || String(a.created_at||"").localeCompare(String(b.created_at||"")));
   let runningBalances = new Map();
   const accountForLedger = data.accounts.find(a=>a.account_key===cashbookAccountFilter);
-  if (cashbookAccountFilter) runningBalances.set(cashbookAccountFilter, num(accountForLedger?.opening_balance_paisa));
+  if (cashbookAccountFilter) runningBalances.set(cashbookAccountFilter, cashbookAccountFilter === "market_credit" ? 0 : num(accountForLedger?.opening_balance_paisa));
   const ledgerSummary = cashbookAccountFilter ? {
     added:accountLedgerEntries.filter(e=>e.entry_type==="receipt" && /external funds introduced/i.test(e.description||"") && num(e.amount_paisa)>0).reduce((n,e)=>n+num(e.amount_paisa),0),
     collections:accountLedgerEntries.filter(e=>e.source_table==="payments" && num(e.amount_paisa)>0).reduce((n,e)=>n+num(e.amount_paisa),0),
@@ -1327,9 +1345,17 @@ function renderCashBook() {
     const sourceId = e.source_id || "—";
     const sourceTable = String(e.source_table||"").toLowerCase();
     const linkedOrder = sourceTable === "orders" ? S().orders.find(o=>o.id===sourceId) : sourceTable === "invoices" ? S().orders.find(o=>o.id===S().invoices.find(i=>i.id===sourceId)?.order_id) : sourceTable === "payments" ? S().orders.find(o=>o.id===S().invoices.find(i=>i.id===S().payments.find(p=>p.id===sourceId)?.invoice_id)?.order_id) : null;
-    const relatedParty = linkedOrder ? customerName(linkedOrder.customer_id) : (sourceTable === "expenses" ? (S().expenses.find(x=>x.id===sourceId)?.category || "Expense") : "—");
-    const actor = S().profiles.find(p=>p.id===e.created_by);
-    return [esc(e.business_date), esc(e.reference || e.transaction_id || "—"), esc(e.description || e.entry_type), esc(accountLabel(e.account_key)), `<span class="${num(e.amount_paisa)<0?"negative":"positive"}">${num(e.amount_paisa)<0?"−":"+"}${money(Math.abs(num(e.amount_paisa)))}</span>`, money(next), esc(e.entry_type.replaceAll("_"," ")) + (e.pending_sync ? ` ${badge("Pending sync","amber")}` : ""), esc(e.source_table || "—") + ` · ${esc(sourceId)}`, esc(relatedParty), esc(actor?.name || actor?.email || e.created_by || "—")];
+    const expense = sourceTable === "expenses" ? S().expenses.find(x=>String(x.id)===String(sourceId)) : null;
+    const salaryExpense = expense && /salary/i.test(String(expense.category || "") + " " + String(expense.description || ""));
+    const employeeId = expense?.employee_id || expense?.salesman_id || expense?.recipient_id;
+    const employee = employeeId ? (S().salesmen.find(x=>String(x.id)===String(employeeId)) || S().profiles.find(x=>String(x.id)===String(employeeId))) : null;
+    const employeeName = employee?.name || employee?.full_name || expense?.employee_name || expense?.recipient_name;
+    const salaryText = salaryExpense ? `Salary released to ${employeeName || expense?.description || "employee"}` : "";
+    const description = salaryText || e.description || e.entry_type;
+    const relatedParty = linkedOrder ? customerName(linkedOrder.customer_id) : salaryExpense ? (employeeName || "Salary recipient") : (expense ? (expense.category || "Expense") : "—");
+    const actor = S().profiles.find(p=>p.id===e.created_by) || S().salesmen.find(p=>p.user_id===e.created_by || p.id===e.created_by);
+    const actorName = actor?.name || actor?.full_name || actor?.email || (e.created_by && e.created_by !== user?.id ? "User" : e.created_by ? (user?.name || "You") : "—");
+    return [esc(e.business_date), esc(description), esc(accountLabel(e.account_key)), `<span class="${num(e.amount_paisa)<0?"negative":"positive"}">${num(e.amount_paisa)<0?"−":"+"}${money(Math.abs(num(e.amount_paisa)))}</span>`, money(next), esc(e.entry_type.replaceAll("_"," ")) + (e.pending_sync ? ` ${badge("Pending sync","amber")}` : ""), esc(relatedParty), esc(actorName)];
   }).reverse();
   const closings = (s.cashbook_daily_closings || []).filter(c => c.business_date === date && (mgmt() || allowedAccounts.some(a=>a.account_key===c.account_key)));
   const allCloseAccounts = allowedAccounts.filter(a => a.account_type !== "receivable" && (mgmt() || (a.salesman_id && a.salesman_id === own()?.id)));
@@ -1354,7 +1380,7 @@ function renderCashBook() {
       <div class="cashbook-summary-grid"><article class="cashbook-summary"><span>Liquid funds at selected-date close</span><b>${money(liquid)}</b><small>Includes salesman-held collections once; excludes market credit</small></article><article class="cashbook-summary"><span>Market Credit outstanding</span><b>${money(market)}</b><small>Receivables only — not money received</small></article><article class="cashbook-summary"><span>Accounts tracked</span><b>${displayedCards.length}</b><small>Opening and closing calculated from ledger movements</small></article></div>
       <h2>Accounts · ${esc(date)}</h2><div class="cashbook-account-grid">${displayedCards.sort((a,b)=>({mcb_bank:0,al_habib_bank:1,jazzcash:2,easypaisa:3,cash_hand:4,market_credit:5}[a.a.account_key]??99)-({mcb_bank:0,al_habib_bank:1,jazzcash:2,easypaisa:3,cash_hand:4,market_credit:5}[b.a.account_key]??99)).map(x=>`<article class="cashbook-account-card ${x.a.account_type==='receivable'?'receivable':''}"><div class="cashbook-account-head"><span>${esc(x.a.label)}</span><small>${esc(({bank:'Bank account',wallet:'Digital wallet',cash:'Cash in hand',receivable:'Receivables',salesman:'Salesman-held funds'}[x.a.account_type]||x.a.account_type))}</small></div><b class="cashbook-account-balance">${money(x.closing)}</b><div class="cashbook-account-meta"><span>Opening</span><strong>${money(x.a.account_key==="market_credit"?x.opening:cashbookAccountOpening(x.a,date)+amount(x.a.account_key,before))}</strong></div><div class="cashbook-account-meta"><span>Receipts / increases</span><strong>${money(x.received)}</strong></div><div class="cashbook-account-meta"><span>Payments / recoveries</span><strong>${money(x.paid)}</strong></div><div class="cashbook-account-actions">${btn(cashbookAccountFilter===x.a.account_key?"Viewing ledger":"View transactions","cashbook-account-ledger",x.a.account_key)}${admin()&&["bank","wallet"].includes(x.a.account_type)?btn("Edit account","cashbook-edit-account",x.a.account_key):""}</div></article>`).join("")}</div>
       <p class="muted">Expected closing = opening + valid credits − valid debits, including transfers. Market Credit is receivables, not cash. A transfer moves value between accounts without increasing total liquid funds. A physical closing count never overwrites the calculated ledger balance.</p>
-      <h2>${cashbookAccountFilter?`Account ledger · ${esc(accountLabel(cashbookAccountFilter))}`:`Transactions for ${esc(date)}`}</h2>${cashbookAccountFilter?`<div class="cashbook-summary-grid"><article class="cashbook-summary"><span>External funds added</span><b>${money(ledgerSummary.added)}</b></article><article class="cashbook-summary"><span>Sales-related collections</span><b>${money(ledgerSummary.salesReceipts)}</b></article><article class="cashbook-summary"><span>Expenses paid</span><b>${money(ledgerSummary.expenses)}</b></article><article class="cashbook-summary"><span>Transfers in</span><b>${money(ledgerSummary.transferIn)}</b></article><article class="cashbook-summary"><span>Transfers out</span><b>${money(ledgerSummary.transferOut)}</b></article><article class="cashbook-summary"><span>Net corrections / reversals</span><b>${money(ledgerSummary.corrections)}</b></article></div><p class="actions">${btn("Show selected date transactions","cashbook-account-ledger-clear")}</p>`:""}${table(["Date","Reference","Description","Account","Money in / out","Running balance","Type / status","Source document","Customer / related party","Created by"],transactionRows,cashbookAccountFilter?"No transactions for this account":"No ledger transactions for this date")}</section>
+      <h2 id="cashbook-transactions">${cashbookAccountFilter?`Account ledger · ${esc(accountLabel(cashbookAccountFilter))}`:`Transactions for ${esc(date)}`}</h2>${cashbookAccountFilter?`<div class="cashbook-summary-grid"><article class="cashbook-summary"><span>External funds added</span><b>${money(ledgerSummary.added)}</b></article><article class="cashbook-summary"><span>Sales-related collections</span><b>${money(ledgerSummary.salesReceipts)}</b></article><article class="cashbook-summary"><span>Expenses paid</span><b>${money(ledgerSummary.expenses)}</b></article><article class="cashbook-summary"><span>Transfers in</span><b>${money(ledgerSummary.transferIn)}</b></article><article class="cashbook-summary"><span>Transfers out</span><b>${money(ledgerSummary.transferOut)}</b></article><article class="cashbook-summary"><span>Net corrections / reversals</span><b>${money(ledgerSummary.corrections)}</b></article></div><p class="actions">${btn("Show selected date transactions","cashbook-account-ledger-clear")}</p>`:""}${table(["Date","Description","Account","Money in / out","Running balance","Type / status","Customer / related party","Created by"],transactionRows,cashbookAccountFilter?"No transactions for this account":"No ledger transactions for this date")}</section>
       ${closeForm}
       <section class="panel"><h2>Daily closing register · ${esc(date)}</h2>${table(["Account","Expected","Actual counted","Variance","Status","Notes","Submitted by","Action"],closeRows,"No daily closing submitted for this date")}</section>
       ${canWrite ? `<section class="panel"><h2>Salesman stock and cash closing</h2><p>Use Daily closing for salesman stock reconciliation and the existing cash-count workflow. Cash & Bank Book closing adjustments are only posted after management approval.</p><div class="actions">${btn("Open Daily closing","go-closing")}</div></section>` : ""}`;
@@ -3050,9 +3076,9 @@ async function action(act, id, element) {
       }
       break;
     case "cashbook-account-ledger":
-      cashbookAccountFilter = id || ""; render(); break;
+      cashbookAccountFilter = id || ""; render(); requestAnimationFrame(() => document.getElementById("cashbook-transactions")?.scrollIntoView({ behavior: "smooth", block: "start" })); break;
     case "cashbook-account-ledger-clear":
-      cashbookAccountFilter = ""; render(); break;
+      cashbookAccountFilter = ""; render(); requestAnimationFrame(() => document.getElementById("cashbook-transactions")?.scrollIntoView({ behavior: "smooth", block: "start" })); break;
     case "cashbook-transfer":
       if (!mgmt()) throw Error("Management access required");
       {
