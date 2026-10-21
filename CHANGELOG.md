@@ -555,3 +555,8 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Market Credit account ledger now reconstructs receivable movements from confirmed invoices and non-voided payments when receivable-side cashbook postings are absent, avoiding duplicate source entries.
 - View transactions / ledger controls now scroll directly to the transaction history section.
 - Validation: `node --check` passed for the application JavaScript. Full project check could not run because project dependencies (including TypeScript) are not installed in the supplied environment.
+
+## v55.23.0 — Salary expense visibility
+- After salary release, refresh the connected business snapshot and verify the linked salary expense exists.
+- Reset stale expense category/date filters and open the Expenses module with the newly released salary expense in view.
+- If the expense cannot be found after refresh, show an explicit error instead of silently reporting success.

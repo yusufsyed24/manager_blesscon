@@ -4127,7 +4127,17 @@ document.addEventListener("submit", async (e) => {
         const prior = S().expenses.find(e=>e.salesman_id===salesmanId && e.salary_period===month && !e.deleted_at);
         if (prior) throw Error("Salary already posted for " + month);
         await store.run("master.save", {table:"expenses", record:{id:"SAL-"+salesmanId+"-"+month,date:f.date||today(),category:"Salaries",description:`Salary released to ${seller.name} — ${month}; base + incentive (${achieved.toFixed(2)} cartons)${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:amount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,salesman_id:salesmanId,salary_period:month}});
-        toast("Salary released; selected account debited and linked expense recorded.");
+        // Make the newly posted salary immediately visible in Expenses. The shared
+        // expense filters may otherwise hide it (for example, a previously selected
+        // category such as Transport or a date range that excludes the payment date).
+        await store.refresh();
+        const postedSalaryExpense = S().expenses.find(e => e.id === "SAL-" + salesmanId + "-" + month && !e.deleted_at);
+        if (!postedSalaryExpense) throw Error("Salary payment was submitted, but its linked expense could not be found after refresh. Check Supabase expenses permissions and the saved salary record before retrying.");
+        filter.from = monthStart(f.date || today());
+        filter.to = f.date || today();
+        filter.category = "All categories";
+        page = "expenses";
+        toast("Salary released; the linked Salary expense is now shown in Expenses.");
         close(); render(); break;
       }
       case "notification-form": {
