@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-24-market-credit-only-20261022";
+const CACHE = "blesscon-static-v55-25-market-credit-unpaid-only-20261022";
 const ASSETS = [
   "./",
   "./index.html",

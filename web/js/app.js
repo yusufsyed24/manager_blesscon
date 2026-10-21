@@ -1309,76 +1309,30 @@ function renderCashBook() {
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
   let accountLedgerEntries = relevantEntries.filter(e => cashbookAccountFilter ? e.account_key === cashbookAccountFilter : e.business_date === date);
-  // Market Credit is a receivables ledger, not a cash/bank ledger. Build its history
-  // exclusively from confirmed invoices and their non-voided payments. Do not mix in
-  // generic cashbook rows: older postings may have been mis-keyed to a bank account,
-  // which previously caused the Market Credit card to display unrelated bank activity.
+  // Market Credit transaction history shows ONLY invoices that still have an
+  // unpaid balance. Recovery/payment rows are intentionally never displayed here.
   if (cashbookAccountFilter === "market_credit") {
     accountLedgerEntries = [];
-    const invoicesById = new Map((s.invoices || []).map(inv => [String(inv.id), inv]));
     const ordersById = new Map((s.orders || []).map(order => [String(order.id), order]));
-    const eligibleInvoices = new Map();
+    const paidByInvoice = new Map();
+    for (const payment of s.payments || []) {
+      if (payment.voided_at || String(payment.date || "") > date || !payment.invoice_id) continue;
+      const invoiceId = String(payment.invoice_id);
+      paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + Math.abs(num(payment.amount_paisa)));
+    }
     for (const inv of s.invoices || []) {
       const order = ordersById.get(String(inv.order_id));
       if (!order || order.status !== "confirmed" || String(order.date || "") > date) continue;
-      eligibleInvoices.set(String(inv.id), { inv, order });
+      const outstanding = Math.max(0, num(inv.total_paisa) - (paidByInvoice.get(String(inv.id)) || 0));
+      if (outstanding <= 0) continue;
       accountLedgerEntries.push({
-        id:`market-invoice:${inv.id}`, business_date:order.date, account_key:"market_credit",
-        amount_paisa:num(inv.total_paisa), entry_type:"receivable", source_table:"invoices",
-        source_id:inv.id, description:`Market credit issued — ${customerName(order.customer_id)}`,
-        created_by:inv.created_by
+        id: `market-unpaid-invoice:${inv.id}`, business_date: order.date,
+        account_key: "market_credit", amount_paisa: outstanding,
+        entry_type: "receivable", source_table: "invoices", source_id: inv.id,
+        description: `Unpaid Market Credit — ${customerName(order.customer_id)}`,
+        created_by: inv.created_by
       });
     }
-    for (const payment of s.payments || []) {
-      if (payment.voided_at || String(payment.date || "") > date) continue;
-      const inv = invoicesById.get(String(payment.invoice_id));
-      const linked = inv && eligibleInvoices.get(String(inv.id));
-      if (!inv || !linked) continue;
-      accountLedgerEntries.push({
-        id:`market-payment:${payment.id}`, business_date:payment.date, account_key:"market_credit",
-        amount_paisa:-Math.abs(num(payment.amount_paisa)), entry_type:"receivable_recovery",
-        source_table:"payments", source_id:payment.id,
-        description:`Market credit recovered — ${customerName(linked.order.customer_id)}`,
-        created_by:payment.created_by
-      });
-    }
-  }
-  // Final hard boundary: Market Credit history may contain ONLY receivable issuance
-  // from confirmed invoices and recovery payments linked to those invoices. This guard
-  // prevents legacy/mis-keyed cashbook rows from leaking into the receivables view.
-  if (cashbookAccountFilter === "market_credit") {
-    const eligibleInvoiceIds = new Set((s.invoices || []).filter(inv => {
-      const order = (s.orders || []).find(o => String(o.id) === String(inv.order_id));
-      return !!order && order.status === "confirmed" && String(order.date || "") <= date;
-    }).map(inv => String(inv.id)));
-    accountLedgerEntries = accountLedgerEntries.filter(e => {
-      const source = String(e.source_table || "").toLowerCase();
-      if (source === "invoices") return e.entry_type === "receivable" && eligibleInvoiceIds.has(String(e.source_id));
-      if (source === "payments") {
-        const payment = (s.payments || []).find(p => String(p.id) === String(e.source_id));
-        return e.entry_type === "receivable_recovery" && !!payment && !payment.voided_at &&
-          String(payment.date || "") <= date && eligibleInvoiceIds.has(String(payment.invoice_id));
-      }
-      return false;
-    }).map(e => ({ ...e, account_key: "market_credit" }));
-  }
-  // Final allow-list: Market Credit history contains only confirmed invoice receivables
-  // and non-voided recovery payments linked to those invoices; never bank/cash rows.
-  if (cashbookAccountFilter === "market_credit") {
-    const eligibleInvoiceIds = new Set((s.invoices || []).filter(inv => {
-      const order = (s.orders || []).find(o => String(o.id) === String(inv.order_id));
-      return !!order && order.status === "confirmed" && String(order.date || "") <= date;
-    }).map(inv => String(inv.id)));
-    accountLedgerEntries = accountLedgerEntries.filter(e => {
-      const source = String(e.source_table || "").toLowerCase();
-      if (source === "invoices") return e.entry_type === "receivable" && eligibleInvoiceIds.has(String(e.source_id));
-      if (source === "payments") {
-        const payment = (s.payments || []).find(p => String(p.id) === String(e.source_id));
-        return e.entry_type === "receivable_recovery" && !!payment && !payment.voided_at &&
-          String(payment.date || "") <= date && eligibleInvoiceIds.has(String(payment.invoice_id));
-      }
-      return false;
-    }).map(e => ({ ...e, account_key: "market_credit" }));
   }
   accountLedgerEntries = accountLedgerEntries.sort((a,b)=>String(a.business_date||"").localeCompare(String(b.business_date||"")) || String(a.created_at||"").localeCompare(String(b.created_at||"")));
   let runningBalances = new Map();
