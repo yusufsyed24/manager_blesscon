@@ -22,14 +22,25 @@ export const TABLES = [
   "salesman_stock_movements",
   "stock_vouchers",
   "daily_closings",
+  "manager_daily_closings",
+  "cashbook_accounts",
+  "cashbook_entries",
+  "cashbook_daily_closings",
   "expenses",
+  "employee_salary_advances",
   "audit_log",
   "profiles",
   "user_roles",
   "user_permissions",
+  "attendance_records",
+  "employee_documents",
+  "customer_visits",
 ];
 const commandRpc = (kind) =>
-  kind.startsWith("closing.")
+  kind === "cashbook.deposit" ? "cashbook_add_money_command" :
+  kind.startsWith("cashbook.") ? "cashbook_record_command" :
+  kind.startsWith("closing.manager_") ? "manager_closing_command" :
+  kind.startsWith("closing.") || ["stock.issue", "stock.return"].includes(kind)
     ? "apply_operational_command"
     : "apply_command";
 export function empty() {
@@ -38,6 +49,15 @@ export function empty() {
     ["settings", structuredClone(DEFAULTS)],
     ["settings_version", 1],
     ["stock", []],
+    ["cashbook_accounts", [
+      { account_key:"mcb_bank",label:"MCB Bank",account_type:"bank",payment_method:"Bank",opening_balance_paisa:0,active:true },
+      { account_key:"al_habib_bank",label:"Al Habib Bank",account_type:"bank",payment_method:"Bank",opening_balance_paisa:0,active:true },
+      { account_key:"cash_hand",label:"Cash in Hand",account_type:"cash",payment_method:"Cash",opening_balance_paisa:0,active:true },
+      { account_key:"bank_default",label:"Cash in Bank — Default account",account_type:"bank",payment_method:"Bank",opening_balance_paisa:0,active:true },
+      { account_key:"easypaisa",label:"EasyPaisa",account_type:"wallet",payment_method:"Easypaisa",opening_balance_paisa:0,active:true },
+      { account_key:"jazzcash",label:"JazzCash",account_type:"wallet",payment_method:"JazzCash",opening_balance_paisa:0,active:true },
+      { account_key:"market_credit",label:"Market Credit — Receivables",account_type:"receivable",opening_balance_paisa:0,active:true },
+    ]],
   ]);
 }
 const upsert = (a, r, key = "id") => {
@@ -45,6 +65,114 @@ const upsert = (a, r, key = "id") => {
   if (i < 0) a.push(r);
   else a[i] = { ...a[i], ...r };
 };
+function localCashbookLedger(state) {
+  const rows = [...(state.cashbook_entries || [])];
+  const accountKey = (method, salesmanId = null) => {
+    const m = /easypaisa/i.test(method || "") ? "easypaisa" : /jazzcash/i.test(method || "") ? "jazzcash" : /bank|cheque/i.test(method || "") ? "bank" : "cash";
+    return salesmanId ? `salesman:${salesmanId}:${m}` : ({cash:"cash_hand",bank:(state.cashbook_accounts||[]).some(a=>a.account_key==="pk80mucb1156654281004446"&&a.active)?"pk80mucb1156654281004446":"bank_default",easypaisa:"easypaisa",jazzcash:"jazzcash"})[m];
+  };
+  for (const invoice of state.invoices || []) {
+    const order = (state.orders || []).find(o => o.id === invoice.order_id);
+    if (!order || order.status !== "confirmed" || !Number(invoice.total_paisa)) continue;
+    rows.push({posting_key:`local:invoice:${invoice.id}`,account_key:"market_credit",business_date:order.date,amount_paisa:Number(invoice.total_paisa),entry_type:"receivable"});
+  }
+  for (const payment of (state.payments || []).filter(p=>!p.voided_at)) {
+    const invoice=(state.invoices||[]).find(i=>i.id===payment.invoice_id), order=invoice&&(state.orders||[]).find(o=>o.id===invoice.order_id);
+    if (!invoice || !order || order.status!=="confirmed") continue;
+    const key=payment.cashbook_account_key || accountKey(payment.method,order.salesman_id);
+    rows.push({posting_key:`local:payment:${payment.id}:receipt`,account_key:key,business_date:payment.date,amount_paisa:Number(payment.amount_paisa),entry_type:"receipt"});
+    rows.push({posting_key:`local:payment:${payment.id}:receivable`,account_key:"market_credit",business_date:payment.date,amount_paisa:-Number(payment.amount_paisa),entry_type:"receivable"});
+  }
+  for (const expense of (state.expenses || []).filter(e=>!e.deleted_at)) {
+    rows.push({posting_key:`local:expense:${expense.id}`,account_key:expense.cashbook_account_key || accountKey(expense.method,expense.salesman_id),business_date:expense.date,amount_paisa:-Number(expense.amount_paisa),entry_type:"expense"});
+  }
+  return rows;
+}
+const sumBy = (rows, fn) => rows.reduce((a, r) => a + Number(fn(r) || 0), 0);
+// Collapse duplicate salesman rows for display/scope: one row per login, and an unlinked
+// profile is hidden when a linked profile with the same name is on the same team.
+export function dedupeSalesmen(rows) {
+  const norm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const linkedKeys = new Set(rows.filter((r) => r.user_id).map((r) => norm(r.name) + "|" + (r.manager_user_id || "")));
+  const seenUsers = new Set();
+  const seenUnlinked = new Set();
+  return rows.filter((r) => {
+    if (r.user_id) {
+      if (seenUsers.has(r.user_id)) return false;
+      seenUsers.add(r.user_id);
+      return true;
+    }
+    const key = norm(r.name) + "|" + (r.manager_user_id || "");
+    if (linkedKeys.has(key) || seenUnlinked.has(key)) return false;
+    seenUnlinked.add(key);
+    return true;
+  });
+}
+export function managerTeamIds(state, managerId) {
+  return dedupeSalesmen(
+    (state.salesmen || []).filter((r) => r.manager_user_id === managerId && r.active && !r.deleted_at),
+  )
+    .map((r) => r.id)
+    .sort();
+}
+// One consolidated figure set for a manager's assigned team on a business date.
+// Scope: orders/payments/expenses/stock of assigned salesmen, plus the manager's own
+// direct sales and own (unlinked) expenses. No salesman record is created or required.
+export function managerClosingFigures(state, managerId, date) {
+  const team = managerTeamIds(state, managerId);
+  const inTeam = (sid) => !!sid && team.includes(sid);
+  const invoices = state.invoices || [];
+  const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+  const invoiceByOrderId = new Map(invoices.filter((i) => i.order_id).map((i) => [i.order_id, i]));
+  // A manager's direct sale may have been entered by an admin/other account.
+  // Attribute it by sold_by_user_id, not only by orders.created_by.
+  const isManagerDirect = (o) => {
+    const invoice = invoiceByOrderId.get(o.id);
+    return !o.salesman_id && (o.created_by === managerId || o.sold_by_user_id === managerId || invoice?.sold_by_user_id === managerId);
+  };
+  const orders = (state.orders || []).filter(
+    (o) => o.status === "confirmed" && (inTeam(o.salesman_id) || isManagerDirect(o)),
+  );
+  const orderById = new Map(orders.map((o) => [o.id, o]));
+  const sales = orders.filter((o) => o.date === date);
+  const collectionsByMethod = {};
+  for (const p of state.payments || []) {
+    if (p.date !== date || p.voided_at) continue;
+    const order = orderById.get(invoiceById.get(p.invoice_id)?.order_id);
+    if (!order || order.date > date) continue;
+    collectionsByMethod[p.method] = (collectionsByMethod[p.method] || 0) + Number(p.amount_paisa);
+  }
+  const expenses = (state.expenses || []).filter(
+    (e) =>
+      !e.deleted_at &&
+      e.date === date &&
+      !e.salary_period &&
+      (inTeam(e.salesman_id) || (!e.salesman_id && e.created_by === managerId)),
+  );
+  const stockMovements = {};
+  const expectedStock = {};
+  for (const m of state.salesman_stock_movements || []) {
+    if (!inTeam(m.salesman_id)) continue;
+    if (m.date === date) {
+      stockMovements[m.product_id] ||= {};
+      stockMovements[m.product_id][m.kind] = (stockMovements[m.product_id][m.kind] || 0) + Number(m.boxes);
+    }
+    if (m.date <= date) expectedStock[m.product_id] = (expectedStock[m.product_id] || 0) + Number(m.boxes);
+  }
+  for (const k of Object.keys(expectedStock)) if (expectedStock[k] === 0) delete expectedStock[k];
+  return {
+    team,
+    salesCount: sales.length,
+    salesTotal: sumBy(sales, (o) => o.total_paisa),
+    collectionsByMethod,
+    collectionsTotal: Object.values(collectionsByMethod).reduce((a, b) => a + b, 0),
+    cashReceived: collectionsByMethod.Cash || 0,
+    expensesTotal: sumBy(expenses, (e) => e.amount_paisa),
+    cashExpenses: sumBy(expenses.filter((e) => e.method === "Cash"), (e) => e.amount_paisa),
+    stockMovements,
+    expectedStock,
+  };
+}
 export function localApply(base, op, user) {
   const s = structuredClone(base),
     d = op.data,
@@ -122,8 +250,11 @@ export function localApply(base, op, user) {
       it = quote ? "quotation_items" : "order_items",
       fk = quote ? "quotation_id" : "order_id",
       old = find(t, input.id);
+    const managerMayUse = user.role === "manager" &&
+      (!input.salesman_id || managerTeamIds(s, user.id).map(String).includes(String(input.salesman_id)));
     if (
       !admin &&
+      !managerMayUse &&
       !s.salesmen.some(
         (x) => x.id === input.salesman_id && x.user_id === user.id && x.active,
       )
@@ -148,7 +279,7 @@ export function localApply(base, op, user) {
           input.channel,
           s.settings,
           s.price_tiers,
-          admin,
+          admin || user.role === "manager",
         );
     if (!lines.length || lines.some((l) => l.boxes <= 0))
       throw Error("Enter positive quantities");
@@ -264,8 +395,13 @@ export function localApply(base, op, user) {
     }
     case "master.save": {
       const { table, record, expected_version } = d;
-      if (!admin && !["customers", "expenses"].includes(table))
+      if (!admin && !(user?.role === "manager" && table === "salesmen") && !["customers", "expenses"].includes(table))
         throw Error("Admin required");
+      if (user?.role === "manager" && table === "salesmen") {
+        const assigned = managerTeamIds(s, user.id).map(String);
+        if (record.manager_user_id !== user.id || (expected_version != null && !assigned.includes(String(record.id))))
+          throw Error("Managers may create salesmen assigned to their own team or edit only their assigned salesmen.");
+      }
       const old =
         table === "settings"
           ? { version: s.settings_version }
@@ -305,7 +441,7 @@ export function localApply(base, op, user) {
         if (!already) {
           const paid = s.payments.filter((x) => x.invoice_id === invoice.id && !x.voided_at).reduce((a,x)=>a+x.amount_paisa,0);
           if (paid + amount > invoice.total_paisa && !s.settings.allow_customer_credit) throw Error("Payment exceeds invoice total. Enable customer credit or correct the amount.");
-          s.payments.push({ id: uid(), transaction_id: payment.transaction_id, invoice_id: invoice.id, date: payment.date || today(), amount_paisa: amount, method: payment.method || "Cash", reference: payment.reference || "", received_by: payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
+          s.payments.push({ id: uid(), transaction_id: payment.transaction_id, invoice_id: invoice.id, date: payment.date || today(), amount_paisa: amount, method: payment.method || "Cash", cashbook_account_key: payment.cashbook_account_key || null, reference: payment.reference || "", received_by: payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
         }
       }
       break;
@@ -395,7 +531,7 @@ export function localApply(base, op, user) {
         const amount = d.payment.status === "paid" ? order.total_paisa : Number(d.payment.amount_paisa);
         if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Payment amount must be positive");
         if (amount > invoice.total_paisa && !s.settings.allow_customer_credit) throw Error("Payment exceeds invoice total");
-        if (!s.payments.some((x) => x.transaction_id === d.payment.transaction_id)) s.payments.push({ id: uid(), transaction_id: d.payment.transaction_id, invoice_id: invoice.id, date: d.payment.date || today(), amount_paisa: amount, method: d.payment.method || "Cash", reference: d.payment.reference || "", received_by: d.payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
+        if (!s.payments.some((x) => x.transaction_id === d.payment.transaction_id)) s.payments.push({ id: uid(), transaction_id: d.payment.transaction_id, invoice_id: invoice.id, date: d.payment.date || today(), amount_paisa: amount, method: d.payment.method || "Cash", cashbook_account_key: d.payment.cashbook_account_key || null, reference: d.payment.reference || "", received_by: d.payment.received_by || user.name || user.email || "Owner", created_by: user.id, created_at: now, voided_at: null });
       }
       break;
     }
@@ -605,12 +741,222 @@ export function localApply(base, op, user) {
       result = { ...voucher, items: result };
       break;
     }
+    case "cashbook.account.save": {
+      if (!admin) throw Error("Only Admin can configure cashbook accounts");
+      if (!/^[a-z][a-z0-9_:-]{2,79}$/.test(String(d.account_key || ""))) throw Error("Invalid account key");
+      if (!["bank","wallet"].includes(d.account_type)) throw Error("Only bank and wallet accounts can be added");
+      if (!String(d.label || "").trim()) throw Error("Enter an account name");
+      if (["cash_hand","market_credit"].includes(d.account_key)) throw Error("This is a reserved system account key");
+      if (d.account_key==="bank_default" && (d.account_type!=="bank" || d.payment_method!=="Bank")) throw Error("Default bank account must remain mapped to Bank");
+      if (d.account_key==="easypaisa" && (d.account_type!=="wallet" || !/easypaisa/i.test(d.payment_method||""))) throw Error("EasyPaisa system account mapping cannot be changed");
+      if (d.account_key==="jazzcash" && (d.account_type!=="wallet" || !/jazzcash/i.test(d.payment_method||""))) throw Error("JazzCash system account mapping cannot be changed");
+      const oldAccount=s.cashbook_accounts.find(a=>a.account_key===d.account_key);
+      if (oldAccount && Number(oldAccount.opening_balance_paisa||0)!==d.opening_balance_paisa && s.cashbook_entries.some(e=>e.account_key===d.account_key)) throw Error("Account has ledger history; use an audited adjustment instead of changing its opening balance");
+      if (oldAccount && (oldAccount.account_type!==d.account_type || (oldAccount.payment_method||"")!==(d.payment_method||"")) && s.cashbook_entries.some(e=>e.account_key===d.account_key)) throw Error("Account type/method cannot change after ledger activity; create a new account");
+      if (!Number.isSafeInteger(d.opening_balance_paisa) || d.opening_balance_paisa < 0) throw Error("Opening balance cannot be negative");
+      result = { account_key:d.account_key, label:d.label.trim(), account_type:d.account_type, payment_method:d.payment_method, opening_balance_paisa:0, active:true, created_by:user.id, created_at:oldAccount?.created_at||now, pending_sync:!user.practice };
+      upsert(s.cashbook_accounts,result,"account_key");
+      if (d.opening_balance_paisa > 0) s.cashbook_entries.push({id:uid(),posting_key:`command:${op.id}:opening`,transaction_id:op.id,business_date:today(),account_key:d.account_key,amount_paisa:d.opening_balance_paisa,entry_type:"adjustment",source_table:"cashbook_accounts",source_id:d.account_key,description:"Opening balance",created_by:user.id,created_at:now,pending_sync:!user.practice});
+      break;
+    }
+    case "cashbook.deposit": {
+      if (!admin && !user.practice) throw Error("Only Admin can add external funds");
+      const account=s.cashbook_accounts.find(a=>a.account_key===d.account_key && a.active && ["cash","bank","wallet"].includes(a.account_type));
+      const amount=Number(d.amount_paisa);
+      if (!account) throw Error("Choose an active cash, bank, or wallet account");
+      if (!Number.isSafeInteger(amount) || amount<=0) throw Error("Amount must be positive whole paisa");
+      if (!String(d.description||"").trim()) throw Error("A source or reason is required");
+      const base={transaction_id:op.id,business_date:d.date||today(),account_key:d.account_key,amount_paisa:amount,entry_type:"receipt",source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:`External funds introduced: ${String(d.description).trim()}`,created_by:user.id,created_at:now,pending_sync:!user.practice};
+      const postingKey=`command:${op.id}`;
+      const prior=s.cashbook_entries.find(e=>e.posting_key===postingKey);
+      if (prior) { if (prior.account_key!==base.account_key || Number(prior.amount_paisa)!==amount) throw Error("Duplicate Add Money request with different details"); return prior; }
+      s.cashbook_entries.push({...base,id:uid(),posting_key:postingKey});
+      result = {ok:true,transaction_id:op.id};
+      break;
+    }
+    case "cashbook.transfer": {
+      if (!["admin","manager"].includes(user.role)) throw Error("Management access required");
+      const amount = Number(d.amount_paisa);
+      if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Transfer amount must be positive");
+      if (!d.source_account || !d.destination_account || d.source_account === d.destination_account) throw Error("Choose two different accounts");
+      const known = key => s.cashbook_accounts.some(a=>a.account_key===key && a.active);
+      if (s.cashbook_accounts.length && (!known(d.source_account)||!known(d.destination_account))) throw Error("Choose active accounts");
+      const baseEntry = { transaction_id:op.id,business_date:d.date||today(),source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:d.description||"Account transfer",created_by:user.id,created_at:now,pending_sync:!user.practice };
+      const sourceAccount=s.cashbook_accounts.find(a=>a.account_key===d.source_account);
+      const currentBalance=Number(sourceAccount?.opening_balance_paisa||0)+localCashbookLedger(s).filter(e=>e.account_key===d.source_account && e.business_date<=(d.date||today())).reduce((sum,e)=>sum+Number(e.amount_paisa),0);
+      if (currentBalance < amount) throw Error("Insufficient balance in the source account");
+      s.cashbook_entries.push({ ...baseEntry,id:uid(),posting_key:`command:${op.id}:out`,account_key:d.source_account,amount_paisa:-amount,entry_type:"transfer_out" },{ ...baseEntry,id:uid(),posting_key:`command:${op.id}:in`,account_key:d.destination_account,amount_paisa:amount,entry_type:"transfer_in" });
+      result = { ok:true, transaction_id:op.id };
+      break;
+    }
+    case "cashbook.handover": {
+      if (user.role!=="salesman") throw Error("Salesman login required for this handover action");
+      const amount=Number(d.amount_paisa), dt=d.date||today();
+      if (!Number.isSafeInteger(amount)||amount<=0) throw Error("Handover amount must be positive");
+      const account=s.cashbook_accounts.find(a=>a.account_key===d.source_account && a.active && a.account_type==="salesman" && a.payment_method==="Cash" && s.salesmen.some(x=>x.id===a.salesman_id && x.user_id===user.id));
+      if (!account) throw Error("Choose your own salesman cash collection account");
+      const balance=Number(account.opening_balance_paisa||0)+localCashbookLedger(s).filter(e=>e.account_key===account.account_key && e.business_date<=dt).reduce((sum,e)=>sum+Number(e.amount_paisa),0);
+      if (balance<amount) throw Error("Insufficient cash in your collection");
+      const baseEntry={transaction_id:op.id,business_date:dt,source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:d.description||"Cash handed to office",created_by:user.id,created_at:now,pending_sync:!user.practice,salesman_id:account.salesman_id};
+      s.cashbook_entries.push({...baseEntry,id:uid(),posting_key:`command:${op.id}:out`,account_key:account.account_key,amount_paisa:-amount,entry_type:"transfer_out"},{...baseEntry,id:uid(),posting_key:`command:${op.id}:in`,account_key:"cash_hand",amount_paisa:amount,entry_type:"transfer_in",description:(d.description||"Cash handed to office")+" — received by office"});
+      result={ok:true,transaction_id:op.id};
+      break;
+    }
+    case "cashbook.adjust": {
+      if (!["admin","manager"].includes(user.role)) throw Error("Management access required");
+      const amount = Number(d.amount_paisa);
+      if (!Number.isSafeInteger(amount) || amount === 0) throw Error("Adjustment amount cannot be zero");
+      if (!String(d.description||"").trim()) throw Error("A reason is required for an adjustment");
+      if (s.cashbook_accounts.length && !s.cashbook_accounts.some(a=>a.account_key===d.account_key && a.active)) throw Error("Choose an active account");
+      s.cashbook_entries.push({id:uid(),posting_key:`command:${op.id}`,transaction_id:op.id,business_date:d.date||today(),account_key:d.account_key,amount_paisa:amount,entry_type:"adjustment",source_table:"cashbook",source_id:op.id,reference:d.reference||"",description:d.description,created_by:user.id,created_at:now,pending_sync:!user.practice});
+      result = { ok:true, transaction_id:op.id };
+      break;
+    }
+    case "cashbook.close.submit": {
+      if (!["admin","manager","salesman"].includes(user.role)) throw Error("Cashbook closing access required");
+      const dt=d.date||today(), note=String(d.notes||"").trim();
+      const liquidAccounts=s.cashbook_accounts.filter(a=>a.active && a.account_type!=="receivable");
+      const ledger=localCashbookLedger(s);
+      const actuals=Array.isArray(d.actuals)?d.actuals:[];
+      if (!actuals.length) throw Error("Enter actual balances");
+      for (const item of actuals) {
+        const account=liquidAccounts.find(a=>a.account_key===item.account_key);
+        if (!account) throw Error("Unknown account");
+        if (user.role==="salesman" && (!account.salesman_id || !s.salesmen.some(x=>x.id===account.salesman_id && x.user_id===user.id))) throw Error("You can only close your own collection accounts");
+        const prior=s.cashbook_daily_closings.find(x=>x.business_date===dt && x.account_key===account.account_key);
+        if (prior?.status==="approved") throw Error("This account is already approved for the selected date");
+        const expected=Number(account.opening_balance_paisa||0)+ledger.filter(e=>e.account_key===account.account_key && e.business_date<=dt).reduce((sum,e)=>sum+Number(e.amount_paisa),0);
+        const actual=Number(item.actual_balance_paisa), variance=actual-expected;
+        if (!Number.isSafeInteger(actual)||actual<0) throw Error("Actual balance cannot be negative");
+        if (variance && !note) throw Error("A reason is required for any difference");
+        const row={...prior,id:prior?.id||uid(),business_date:dt,account_key:account.account_key,expected_balance_paisa:expected,actual_balance_paisa:actual,variance_paisa:variance,notes:note,status:"submitted",submitted_by:user.id,submitted_at:now,pending_sync:!user.practice};
+        upsert(s.cashbook_daily_closings,row,"id");
+      }
+      result={ok:true,submitted:actuals.length};
+      break;
+    }
+    case "cashbook.close.approve": {
+      if (!admin && user.role!=="manager") throw Error("Management approval required");
+      const row=find("cashbook_daily_closings",d.closing_id);
+      if (!row) throw Error("Closing record not found");
+      if (row.status==="approved") throw Error("Closing already approved");
+      if (row.variance_paisa && !String(row.notes||"").trim()) throw Error("A reason is required for the variance");
+      if (row.variance_paisa) s.cashbook_entries.push({id:uid(),posting_key:`cashbook-close:${row.id}:variance`,transaction_id:`CLOSE-${row.id}`,business_date:row.business_date,account_key:row.account_key,amount_paisa:Number(row.variance_paisa),entry_type:"adjustment",source_table:"cashbook_daily_closings",source_id:row.id,description:`Approved reconciliation adjustment: ${row.notes}`,created_by:user.id,created_at:now,pending_sync:!user.practice});
+      row.status="approved"; row.approved_by=user.id; row.approved_at=now; result={ok:true,closing_id:row.id};
+      break;
+    }
+    case "closing.manager_submit": {
+      if (user.role !== "manager") throw Error("Only a manager can submit the team closing");
+      if (!d.date) throw Error("Business date is required");
+      if (!d.actual_stock || typeof d.actual_stock !== "object" || Array.isArray(d.actual_stock))
+        throw Error("Counted stock is required");
+      s.manager_daily_closings ||= [];
+      const old = s.manager_daily_closings.find(
+        (r) => r.manager_user_id === user.id && r.business_date === d.date,
+      );
+      if (old && (!["rejected", "reopened"].includes(old.status) || old.version !== d.expected_version))
+        throw Error("Manager closing already submitted or changed; reload before retrying");
+      const opening = Number(d.opening_cash_paisa || 0),
+        handed = Number(d.cash_handed_over_paisa || 0),
+        actualCash = Number(d.actual_cash_paisa || 0);
+      if (opening < 0 || handed < 0 || actualCash < 0) throw Error("Cash amounts cannot be negative");
+      const prior = s.manager_daily_closings
+        .filter((r) => r.manager_user_id === user.id && r.business_date < d.date && r.status === "approved")
+        .sort((a, b) => b.business_date.localeCompare(a.business_date))[0];
+      if (prior && Number(prior.actual_cash_paisa) !== opening)
+        throw Error("Opening cash must match the previous approved closing");
+      const balances = Object.fromEntries(
+        ["cash_in_bank_paisa", "cash_in_hand_paisa", "cash_in_easypaisa_paisa", "cash_in_jazzcash_paisa", "market_credit_paisa"]
+          .map((key) => [key, Number(d[key] || 0)]),
+      );
+      if (Object.values(balances).some((v) => !Number.isFinite(v) || v < 0))
+        throw Error("Closing balances cannot be negative");
+      const fig = managerClosingFigures(s, user.id, d.date);
+      const expectedCash = opening + fig.cashReceived - fig.cashExpenses - handed;
+      const cashVariance = actualCash - expectedCash;
+      const stockVariance = {};
+      for (const pid of new Set([...Object.keys(fig.expectedStock), ...Object.keys(d.actual_stock)])) {
+        const expected = Number(fig.expectedStock[pid] || 0), actual = Number(d.actual_stock[pid] || 0);
+        if (actual !== expected) stockVariance[pid] = { expected, actual, variance: actual - expected };
+      }
+      if ((cashVariance !== 0 || Object.keys(stockVariance).length) && !String(d.reason || "").trim())
+        throw Error("A reason is required for cash or stock variance");
+      result = {
+        ...old,
+        id: old?.id || uid(),
+        manager_user_id: user.id,
+        business_date: d.date,
+        team_salesman_ids: fig.team,
+        sales_count: fig.salesCount,
+        sales_total_paisa: fig.salesTotal,
+        collections_by_method: fig.collectionsByMethod,
+        collections_total_paisa: fig.collectionsTotal,
+        cash_received_paisa: fig.cashReceived,
+        expenses_total_paisa: fig.expensesTotal,
+        cash_expenses_paisa: fig.cashExpenses,
+        stock_movements: fig.stockMovements,
+        opening_cash_paisa: opening,
+        cash_handed_over_paisa: handed,
+        expected_cash_paisa: expectedCash,
+        actual_cash_paisa: actualCash,
+        cash_variance_paisa: cashVariance,
+        ...balances,
+        expected_stock: fig.expectedStock,
+        actual_stock: d.actual_stock,
+        stock_variances: stockVariance,
+        reason: d.reason || "",
+        notes: d.notes || "",
+        status: "submitted",
+        version: (old?.version || 0) + 1,
+        submitted_by: user.id,
+        submitted_at: now,
+        approved_by: null,
+        approved_at: null,
+        decision_by: null,
+        decision_at: null,
+        decision_reason: "",
+      };
+      upsert(s.manager_daily_closings, result);
+      break;
+    }
+    case "closing.manager_approve":
+    case "closing.manager_reject":
+    case "closing.manager_reopen": {
+      if (!admin) throw Error("Admin approval required");
+      s.manager_daily_closings ||= [];
+      const old = s.manager_daily_closings.find((r) => r.id === d.id);
+      if (!old || old.version !== d.expected_version) throw Error("Closing changed; refresh before updating");
+      const reason = String(d.reason || "").trim();
+      if (op.kind === "closing.manager_approve" && old.status !== "submitted")
+        throw Error("Only submitted manager closings can be approved");
+      if (op.kind === "closing.manager_reject" && (old.status !== "submitted" || !reason))
+        throw Error("A rejection reason is required for a submitted manager closing");
+      if (op.kind === "closing.manager_reopen" && (!["approved", "rejected"].includes(old.status) || !reason))
+        throw Error("A reopening reason is required for an approved or rejected manager closing");
+      const approved = op.kind === "closing.manager_approve";
+      result = {
+        ...old,
+        status: approved ? "approved" : op.kind === "closing.manager_reject" ? "rejected" : "reopened",
+        approved_by: approved ? user.id : null,
+        approved_at: approved ? now : null,
+        decision_by: user.id,
+        decision_at: now,
+        decision_reason: reason,
+        version: old.version + 1,
+      };
+      upsert(s.manager_daily_closings, result);
+      break;
+    }
     case "closing.submit": {
       const ownsSeller = s.salesmen.some(
         (row) => row.id === d.salesman_id && row.user_id === user.id && row.active,
       );
-      if (!admin && !ownsSeller)
-        throw Error("Only the assigned salesman or management may submit this closing");
+      // v39: a manager may close for any active salesman (company-wide), not only assigned ones.
+      const managesSeller = user.role === "manager" && s.salesmen.some(
+        (row) => row.id === d.salesman_id && row.active && !row.deleted_at,
+      );
+      if (!admin && !ownsSeller && !managesSeller)
+        throw Error("Only the assigned salesman, a manager, or Admin may submit this closing");
       const old = s.daily_closings.find(
         (row) =>
           row.salesman_id === d.salesman_id && row.business_date === d.date,
@@ -865,7 +1211,35 @@ export class Store extends EventTarget {
       ...empty(),
       ...data,
       settings: { ...DEFAULTS, ...data.settings },
+      cashbook_loaded: false,
+      cashbook_error: "",
     };
+    try {
+      const [accounts, entries, closings] = await Promise.all([
+        this.all("cashbook_accounts"),
+        this.all("cashbook_entries"),
+        this.all("cashbook_daily_closings"),
+      ]);
+      this.base.cashbook_accounts = accounts;
+      this.base.cashbook_entries = entries;
+      this.base.cashbook_daily_closings = closings;
+      this.base.cashbook_loaded = true;
+    } catch (cashbookError) {
+      this.base.cashbook_error = cashbookError?.message || String(cashbookError);
+      this.base.cashbook_loaded = false;
+    }
+    // Safety net: if the snapshot returned no products for a non-admin login (for example an
+    // older snapshot function), read them directly. Row-level security still applies.
+    if (this.user?.role && this.user.role !== "admin" && !(this.base.products || []).length) {
+      try {
+        const [products, tiers] = await Promise.all([this.all("products"), this.all("price_tiers")]);
+        const stripCost = ({ cost_paisa, ...rest }) => rest;
+        this.base.products = products.filter((p) => !p.deleted_at).map(stripCost);
+        this.base.price_tiers = tiers;
+      } catch (productError) {
+        this.base.products_error = productError?.message || String(productError);
+      }
+    }
     this.persist();
     this.replay();
   }
@@ -890,6 +1264,108 @@ export class Store extends EventTarget {
       this.persist();
       this.replay();
       return n.result;
+    }
+    if (kind === "cashbook.close.approve" && this.client && !navigator.onLine) {
+      throw Error("Daily closing approval requires an online connection.");
+    }
+    // Salesman profile and Manager assignment must be committed and verified before
+    // the UI reports success. The generic offline queue can otherwise leave an
+    // optimistic local row while the server rejects manager_user_id, or refresh under
+    // RLS can make the assigned row appear to vanish from one role's view.
+    if (kind === "master.save" && data?.table === "salesmen" && this.client && navigator.onLine) {
+      if (this.queue.length) {
+        await this.sync();
+        if (this.queue.length || this.error) {
+          throw Error("A previous change is still pending. Resolve the sync issue before assigning this salesman: " + (this.error || "pending changes remain"));
+        }
+      }
+      this.busy = true;
+      this.emit();
+      try {
+        await this.verifyUser();
+        const { data: saved, error } = await this.client.rpc("apply_command", { op_id: op.id, kind, data });
+        if (error) {
+          const message = error.message || String(error);
+          if (/manager_user_id|column .* does not exist|schema cache|unknown command/i.test(message)) {
+            throw Error("Supabase did not accept the salesman assignment. Apply supabase/fix_salesman_manager_assignment_v55_7.sql, then retry. Original error: " + message);
+          }
+          throw error;
+        }
+        if (!saved?.id || String(saved.id) !== String(data?.record?.id)) {
+          throw Error("Supabase did not confirm the saved salesman profile. No success was reported; refresh the page and try again.");
+        }
+        const requestedManager = data?.record?.manager_user_id || null;
+        const savedManager = saved.manager_user_id || null;
+        if (String(savedManager || "") !== String(requestedManager || "")) {
+          throw Error("Supabase saved the salesman profile but did not persist the selected Manager. Apply the v55.7 SQL fix and save the assignment again.");
+        }
+        const index = this.base.salesmen.findIndex((row) => String(row.id) === String(saved.id));
+        if (index < 0) this.base.salesmen.push(saved); else this.base.salesmen[index] = saved;
+        this.persist();
+        this.error = "";
+        this.lastResult = saved;
+        this.replay();
+        try {
+          await this.refresh();
+        } catch (refreshError) {
+          this.error = "Salesman assignment was saved, but the full data refresh failed: " + (refreshError?.message || String(refreshError));
+          this.emit();
+        }
+        return saved;
+      } finally {
+        this.busy = false;
+        this.emit();
+      }
+    }
+    // Expense account selection must be committed by Supabase before the editor closes.
+    // The generic optimistic queue previously swallowed an RPC error and left the form
+    // appearing saved while cashbook_account_key remained NULL in public.expenses.
+    if (kind === "master.save" && data?.table === "expenses" && this.client && navigator.onLine) {
+      if (this.queue.length) {
+        await this.sync();
+        if (this.queue.length || this.error) {
+          throw Error("A previous change is still pending. Resolve the sync error before saving this expense: " + (this.error || "pending changes remain"));
+        }
+      }
+      this.busy = true;
+      this.emit();
+      try {
+        await this.verifyUser();
+        const { data: saved, error } = await this.client.rpc("apply_command", {
+          op_id: op.id,
+          kind,
+          data,
+        });
+        if (error) {
+          const message = error.message || String(error);
+          if (/schema cache|could not find the function|function .* does not exist|unknown command/i.test(message)) {
+            throw Error("Supabase rejected the expense save. Confirm that cashbook_account_key exists on public.expenses and is allowed by private.save_master(text,jsonb,integer), then run NOTIFY pgrst, 'reload schema'. Original error: " + message);
+          }
+          throw error;
+        }
+        if (!saved?.id || saved.id !== data?.record?.id || saved.cashbook_account_key !== data?.record?.cashbook_account_key) {
+          throw Error("Supabase did not confirm the selected expense account. The expense editor was kept open; refresh the Expenses list and check the database migration.");
+        }
+        const index = this.base.expenses.findIndex((e) => e.id === saved.id);
+        if (index < 0) this.base.expenses.push(saved);
+        else this.base.expenses[index] = saved;
+        this.persist();
+        this.error = "";
+        this.lastResult = saved;
+        this.replay();
+        try {
+          await this.refresh();
+        } catch (refreshError) {
+          this.error = "Expense was saved successfully, but the full data refresh failed: " + (refreshError?.message || String(refreshError));
+          this.emit();
+        }
+        return saved;
+      } catch (error) {
+        throw Error(error?.message || "Expense save failed. Check Supabase permissions and schema migration.");
+      } finally {
+        this.busy = false;
+        this.emit();
+      }
     }
     // Product writes must not be reported as successful while merely queued.
     // In the old path, an RPC rejection was swallowed by sync(), the optimistic
@@ -992,6 +1468,45 @@ export class Store extends EventTarget {
       } catch (error) {
         // Preserve the real PostgREST message for the form's inline alert.
         throw Error(error?.message || "Product save failed. Check database permissions and schema migration.");
+      } finally {
+        this.busy = false;
+        this.emit();
+      }
+    }
+    // Stock issues/returns change two linked ledgers. When online, wait for the
+    // database transaction to confirm before the UI closes the form; otherwise
+    // an RPC/RLS/migration error could be swallowed by the generic offline queue.
+    if ((["stock.add", "stock.issue", "stock.return"].includes(kind) || kind.startsWith("cashbook.") || kind.startsWith("closing.manager_")) && this.client && navigator.onLine) {
+      if (this.queue.length) {
+        await this.sync();
+        if (this.queue.length || this.error) {
+          throw Error("A previous change is still pending. Resolve the sync error before changing stock: " + (this.error || "pending changes remain"));
+        }
+      }
+      this.busy = true;
+      this.emit();
+      try {
+        await this.verifyUser();
+        const { data: result, error } = await this.client.rpc(commandRpc(kind), {
+          op_id: op.id,
+          kind,
+          data,
+        });
+        if (error) {
+          const message = error.message || String(error);
+          if (/schema cache|could not find the function|function .* does not exist|unknown command/i.test(message)) {
+            throw Error((kind === "stock.add" ? "The stock-entry database function is missing or outdated. Apply supabase/fix_stock_entry_idempotency.sql, then refresh the app. Original error: " : kind.startsWith("closing.manager_") ? "The manager closing migration is missing. Apply supabase/manager_closing_expenses_v40.sql in the Supabase SQL editor and refresh the app. Original error: " : kind.startsWith("cashbook.") ? "The Cash & Bank Book migration may be missing. Apply supabase/cash_bank_book.sql after the existing schema and operational migrations. Original error: " : "The Supabase stock-operation migration may be missing or outdated. Apply supabase/operational_modules.sql and refresh the schema cache. Original error: ") + message);
+          }
+          throw error;
+        }
+        try {
+          await this.refresh();
+        } catch (refreshError) {
+          this.error = "Stock operation was accepted by Supabase, but the data refresh failed: " + (refreshError?.message || String(refreshError));
+          this.emit();
+        }
+        this.lastResult = result;
+        return result || { confirmed: true };
       } finally {
         this.busy = false;
         this.emit();

@@ -91,7 +91,7 @@ const canViewAllClosings = () =>
 const canBase = (p) =>
   // Managers receive operational access by role; financial, pricing and system-wide
   // modules require an explicit permission (or Admin role).
-  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","orders","stock","staff"].includes(p)) ||
+  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","orders","stock","staff","expenses"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
     ([

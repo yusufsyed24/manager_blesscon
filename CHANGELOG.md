@@ -589,3 +589,8 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Loss category in the expense doughnut chart is red.
 - Added manager/salesman salary advance visibility in profiles and salary breakdowns, plus Admin salary history details.
 - Added Supabase migration `supabase/expense_salary_visibility_v55_32.sql`; it must be run separately in the live project.
+
+## v55.33 — Manager expense access and payroll visibility
+- Manager role now includes the Expenses page in built-in navigation permissions.
+- Added employee salary advances to the shared store table list so Admin salary/advance views can receive these records.
+- No business records or product pricing/stock logic changed.

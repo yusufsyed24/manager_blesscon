@@ -27,6 +27,7 @@ export const TABLES = [
   "cashbook_entries",
   "cashbook_daily_closings",
   "expenses",
+  "employee_salary_advances",
   "audit_log",
   "profiles",
   "user_roles",
