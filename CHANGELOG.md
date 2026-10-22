@@ -1,3 +1,7 @@
+# v55.41 — Manager salary setup visibility
+
+See `CHANGELOG_V55_41.md`.
+
 # v55.26 — Admin Salary Advances
 
 - Admin can issue a salary advance to a salesman or manager with a required reason, date, amount, and payment account.

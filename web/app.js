@@ -563,7 +563,7 @@ async function hydrateSalesmanNotifications() {
   if (salaryValue && salaryMeta) {
     const result = await client.rpc("own_salary_snapshot");
     if (result.error) { salaryValue.textContent = "Unavailable"; salaryMeta.textContent = "Salary calculation could not be loaded. Contact Admin."; }
-    else if (result.data) { salaryValue.textContent = money(result.data.total_paisa || 0); salaryMeta.textContent = result.data.status === "posted" ? `Posted for ${result.data.salary_period}` : `Estimate for ${result.data.salary_period} · pending Admin approval`; }
+    else if (result.data) { salaryValue.textContent = money(result.data.total_paisa ?? result.data.gross_paisa ?? 0); salaryMeta.textContent = `${result.data.status === "posted" ? `Posted for ${result.data.salary_period}` : `Estimate for ${result.data.salary_period} · pending Admin approval`} · Base earned ${money(result.data.base_salary_paisa || 0)} · Attendance ${num(result.data.attendance_days).toFixed(1)}/${num(result.data.working_days)} days`; }
   }
   if (!root) return;
   const { data, error } = await client.from("employee_notifications").select("id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,expires_at,created_at").eq("recipient_salesman_id", own().id).order("created_at", { ascending: false }).limit(50);
@@ -2069,6 +2069,15 @@ function renderSettings() {
       )}</div></section><section class="panel"><h2>Default Rani wholesale tiers</h2><p class="muted">Minimum cartons are inclusive. The first starts at 0, so loose-box orders receive a rate. Product overrides take priority; untick overrides on a product to use these defaults.</p><div class="grid three">${s.tiers.map((t, i) => field("Tier " + (i + 1) + " minimum cartons", "tier_min_" + i, t.min, "number", 'min="0" step="0.01" required') + field("Tier " + (i + 1) + " label", "tier_label_" + i, t.label, "text", "required") + field("Tier " + (i + 1) + " rate / box (Rs.)", "tier_rate_" + i, t.rate_paisa / 100, "number", 'min="0" step="0.01" required')).join("")}</div></section><section class="panel"><h2>Incentive slabs</h2><div class="grid">${s.incentives.map((t, i) => field("Slab " + (i + 1) + " minimum achievement %", "incentive_min_" + i, t.min, "number", 'min="0" required') + field("Slab " + (i + 1) + " incentive (Rs.)", "incentive_amount_" + i, t.amount_paisa / 100, "number", 'min="0" required')).join("")}</div></section><button class="gold" type="submit">Save settings</button></form>`
   );
 }
+async function managerPayrollModal(managerId) {
+  if (!admin()) throw Error("Only Admin can configure manager salary parameters.");
+  const profile = (S().profiles || []).find(p => String(p.id) === String(managerId));
+  if (!profile || (S().user_roles || []).find(r => String(r.user_id) === String(managerId))?.role !== "manager") throw Error("Manager account not found.");
+  const { data, error } = await client.from("manager_payroll_settings").select("manager_user_id,base_salary_paisa,allowance_paisa,incentive_per_carton_paisa,monthly_target,working_days").eq("manager_user_id", managerId).maybeSingle();
+  if (error && !/does not exist|schema cache/i.test(error.message || "")) throw error;
+  const cfg = data || {};
+  modal("Manager salary parameters · " + (profile.display_name || profile.email || "Manager"), `<form id="manager-payroll-settings-form" data-manager="${esc(managerId)}"><section class="panel"><p class="muted">These settings apply to this manager only. Base salary and allowance are prorated by attendance; incentive is paid only on the manager's own confirmed cartons above the individual target. The manager's own sales do not count toward the team target.</p><div class="grid">${field("Monthly base salary (Rs.)", "base_salary", num(cfg.base_salary_paisa)/100, "number", 'min="0" step="0.01" required')}${field("Monthly allowance (Rs.)", "allowance", num(cfg.allowance_paisa)/100, "number", 'min="0" step="0.01" required')}${field("Incentive per carton above target (Rs.)", "incentive_per_carton", num(cfg.incentive_per_carton_paisa)/100, "number", 'min="0" step="0.01" required')}${field("Individual monthly target (cartons)", "monthly_target", num(cfg.monthly_target), "number", 'min="0" step="0.01" required')}${field("Working days per month", "working_days", num(cfg.working_days)||26, "number", 'min="1" max="31" step="1" required')}</div>${error ? '<p class="notice">Manager payroll settings table is not available yet. Apply the payroll attendance migration, then reopen this form.</p>' : ''}</section><button class="gold" type="submit">Save manager salary parameters</button></form>`);
+}
 function managersPanel() {
   const s = S(),
     from = monthStart(today()),
@@ -2102,7 +2111,7 @@ function managersPanel() {
         teamRemaining = Math.max(0, target - teamTargetMet),
         pct = (teamTargetMet / target) * 100;
       return [
-        esc(m.display_name),
+        `${esc(m.display_name)}<div class="manager-salary-setup-action">${btn("Set up salary details", "edit-manager-payroll", m.id, "", "gold")}</div>`,
         `${target.toFixed(2)} cartons`,
         `${team.toFixed(2)} cartons`,
         `+${ownCartons.toFixed(2)} cartons<br><small>${own.length} orders · ${money(ownValue)}</small>`,
@@ -2111,7 +2120,7 @@ function managersPanel() {
         (() => { const paid = s.expenses.filter(e => String(e.manager_user_id) === String(m.id) && e.salary_period && !e.deleted_at).sort((a,b)=>String(b.salary_period).localeCompare(String(a.salary_period)))[0]; const advanceTotal = (s.employee_salary_advances || []).filter(a=>String(a.manager_user_id)===String(m.id)&&a.status==="posted").reduce((n,a)=>n+Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa)),0); return `<b>Salary net paid:</b> ${paid ? money(paid.amount_paisa) + ` <small>(${esc(paid.salary_period)})</small>` : "Not released"}${paid?.description ? `<p class="muted">${esc(paid.description)}</p>` : ""}<br><b>Outstanding advance:</b> ${money(advanceTotal)}<br>${btn("Release salary", "post-manager-salary", m.id, "", "gold")}`; })(),
       ];
     });
-  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation. Manager salary is entered for each pay period; outstanding advances are deducted before net payment.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement", "Payroll"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
+  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation. Use <b>Set up salary details</b> beside each manager's name to configure base salary, allowance, individual target, working days and incentive. Outstanding advances are deducted before net payment.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement", "Payroll"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
 }
 function renderUsers() {
   const s = S();
@@ -3475,6 +3484,9 @@ async function action(act, id, element) {
       await postSalary(id);
       render();
       break;
+    case "edit-manager-payroll":
+      await managerPayrollModal(id);
+      break;
     case "post-manager-salary":
       await postManagerSalary(id);
       break;
@@ -4424,6 +4436,14 @@ document.addEventListener("submit", async (e) => {
         const saved = existing.data ? await client.from("attendance_records").update(payload).eq("id", existing.data.id) : await client.from("attendance_records").insert(payload);
         if (saved.error) throw saved.error;
         close(); await store.refresh?.(); render(); toast("Attendance saved."); break;
+      }
+      case "manager-payroll-settings-form": {
+        if (!admin()) throw Error("Only Admin can configure manager salary parameters.");
+        const managerId = form.dataset.manager;
+        const record = { manager_user_id: managerId, base_salary_paisa: paisa(f.base_salary), allowance_paisa: paisa(f.allowance), incentive_per_carton_paisa: paisa(f.incentive_per_carton), monthly_target: Math.max(0, num(f.monthly_target)), working_days: Math.max(1, Math.min(31, Math.round(num(f.working_days)||26))), updated_at: new Date().toISOString() };
+        const saved = await client.from("manager_payroll_settings").upsert(record, { onConflict: "manager_user_id" });
+        if (saved.error) throw saved.error;
+        close(); toast("Manager salary parameters saved."); await store.refresh?.(); render(); break;
       }
       case "settings-form":
         await saveSettings(form);

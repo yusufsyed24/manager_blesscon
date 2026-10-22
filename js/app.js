@@ -2111,16 +2111,16 @@ function managersPanel() {
         teamRemaining = Math.max(0, target - teamTargetMet),
         pct = (teamTargetMet / target) * 100;
       return [
-        esc(m.display_name),
+        `${esc(m.display_name)}<div class="manager-salary-setup-action">${btn("Set up salary details", "edit-manager-payroll", m.id, "", "gold")}</div>`,
         `${target.toFixed(2)} cartons`,
         `${team.toFixed(2)} cartons`,
         `+${ownCartons.toFixed(2)} cartons<br><small>${own.length} orders · ${money(ownValue)}</small>`,
         teamTargetMet >= target ? badge("Target achieved", "green") : `<b>${teamRemaining.toFixed(2)}</b> cartons remaining`,
         `${pct.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div>`,
-        (() => { const paid = s.expenses.filter(e => String(e.manager_user_id) === String(m.id) && e.salary_period && !e.deleted_at).sort((a,b)=>String(b.salary_period).localeCompare(String(a.salary_period)))[0]; const advanceTotal = (s.employee_salary_advances || []).filter(a=>String(a.manager_user_id)===String(m.id)&&a.status==="posted").reduce((n,a)=>n+Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa)),0); return `<b>Salary net paid:</b> ${paid ? money(paid.amount_paisa) + ` <small>(${esc(paid.salary_period)})</small>` : "Not released"}${paid?.description ? `<p class="muted">${esc(paid.description)}</p>` : ""}<br><b>Outstanding advance:</b> ${money(advanceTotal)}<br>${btn("Salary parameters", "edit-manager-payroll", m.id)} ${btn("Release salary", "post-manager-salary", m.id, "", "gold")}`; })(),
+        (() => { const paid = s.expenses.filter(e => String(e.manager_user_id) === String(m.id) && e.salary_period && !e.deleted_at).sort((a,b)=>String(b.salary_period).localeCompare(String(a.salary_period)))[0]; const advanceTotal = (s.employee_salary_advances || []).filter(a=>String(a.manager_user_id)===String(m.id)&&a.status==="posted").reduce((n,a)=>n+Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa)),0); return `<b>Salary net paid:</b> ${paid ? money(paid.amount_paisa) + ` <small>(${esc(paid.salary_period)})</small>` : "Not released"}${paid?.description ? `<p class="muted">${esc(paid.description)}</p>` : ""}<br><b>Outstanding advance:</b> ${money(advanceTotal)}<br>${btn("Release salary", "post-manager-salary", m.id, "", "gold")}`; })(),
       ];
     });
-  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation. Manager salary is entered for each pay period; outstanding advances are deducted before net payment.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement", "Payroll"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
+  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation. Use <b>Set up salary details</b> beside each manager's name to configure base salary, allowance, individual target, working days and incentive. Outstanding advances are deducted before net payment.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement", "Payroll"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
 }
 function renderUsers() {
   const s = S();
