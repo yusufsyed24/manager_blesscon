@@ -598,3 +598,6 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 ## v55.34 — Salesman login linking repair
 - Show existing unlinked/orphan-linked salesman profiles in Create Login.
 - Persist `user_id` when linking even if manager assignment is unchanged.
+
+## v55.35
+- Create Login now directly loads salesman profiles for Admin from Supabase so existing profiles can be selected; surfaces permission/load errors rather than silently showing only the create-new option.

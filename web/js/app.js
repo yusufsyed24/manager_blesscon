@@ -2959,7 +2959,15 @@ async function saveSettings(form) {
   render();
   toast("Settings saved");
 }
-function userModal(id) {
+async function userModal(id) {
+  let linkableSalesmen = S().salesmen;
+  if (!id && client && admin()) {
+    // business_snapshot can omit profiles that are not in its current scope. Load the
+    // authoritative list directly so Admin can link an existing profile.
+    const { data: sellerRows, error: sellerLoadError } = await client.from("salesmen").select("*").order("name");
+    if (sellerLoadError) throw Error("Could not load existing salesman profiles for linking: " + sellerLoadError.message);
+    linkableSalesmen = sellerRows || [];
+  }
   const p = S().profiles.find((p) => p.id === id),
     role = S().user_roles.find((r) => r.user_id === id)?.role || "salesman";
   if (!id) {
@@ -2970,8 +2978,7 @@ function userModal(id) {
         "salesman_id",
         [
           ["", "Create a new salesman profile"],
-          ...S()
-            .salesmen
+          ...linkableSalesmen
             .filter((seller) => {
               if (seller.deleted_at) return false;
               // Include unlinked profiles and profiles whose old user_id no longer
