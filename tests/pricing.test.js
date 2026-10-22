@@ -63,3 +63,14 @@ it("forbids salesman overrides", () =>
       "wholesale",
     ),
   ).toThrow("Admin"));
+
+it("allows a manager to override a sales-order rate and retains the saved rate", () => {
+  const savedLine = {
+    product_id: "0", cartons: 1, loose_boxes: 0,
+    rate_paisa: 19900, override_reason: "Manager agreed price",
+  };
+  const priced = priceLines([savedLine], products, "wholesale", DEFAULTS, [], true)[0];
+  expect(priced.rate_paisa).toBe(19900);
+  expect(priced.amount_paisa).toBe(19900 * 24);
+  expect(priced.override_reason).toBe("Manager agreed price");
+});

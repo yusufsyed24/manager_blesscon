@@ -1,6 +1,6 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "55.28.0",
+  "version": "55.29.0",
   "description": "Manager and salesman salary release with editable advances, payroll deductions and audited Cash & Bank Book adjustments",
   "directories": {
     "doc": "docs",

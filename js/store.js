@@ -278,7 +278,7 @@ export function localApply(base, op, user) {
           input.channel,
           s.settings,
           s.price_tiers,
-          admin,
+          admin || user.role === "manager",
         );
     if (!lines.length || lines.some((l) => l.boxes <= 0))
       throw Error("Enter positive quantities");

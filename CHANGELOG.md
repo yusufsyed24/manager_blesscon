@@ -576,3 +576,9 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Added `supabase/employee_salary_advances_v55_27.sql` as an additive migration after v55.26.
 - Important: the existing salary-release screen is for salesmen. Manager advances can be recorded/edited, but the app does not yet have a manager payroll-release workflow to apply those deductions.
 - Validation: JavaScript syntax checks passed; live Supabase behavior is not verified.
+
+## v55.29 — Manager sales-order price overrides
+
+- Enabled editable per-box rates for Manager-role Sales Orders.
+- Saved manual rates and their reason remain in place when reopening/editing an order; lines without overrides continue using automatic pricing.
+- Added `supabase/manager_order_price_override_v55_29.sql` to permit manager overrides server-side while retaining existing team/document authorization guards.

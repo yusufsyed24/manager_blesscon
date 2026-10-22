@@ -104,7 +104,7 @@ export function priceLines(
   channel,
   settings = DEFAULTS,
   tiers = [],
-  admin = false,
+  canOverride = false,
 ) {
   const enriched = lines.map((l) => {
     const p = products.find((p) => p.id === l.product_id);
@@ -133,7 +133,7 @@ export function priceLines(
   return enriched.map(({ p, ...l }) => {
     const r = getRate(p, invoiceCartons, channel, settings, tiers);
     const override = l.override_reason?.trim();
-    if (override && !admin) throw Error("Admin required for manual rates");
+    if (override && !canOverride) throw Error("Admin or Manager required for manual rates");
     const rate = override ? Number(l.rate_paisa) : r.rate_paisa;
     if (!Number.isSafeInteger(rate) || rate < 0) throw Error("Invalid rate");
     return {
