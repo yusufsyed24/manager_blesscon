@@ -1,7 +1,7 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "55.31.0",
-  "description": "Manager sales-order save sync fix for manager-created customers",
+  "version": "55.32.0",
+  "description": "Expense access scope, loss chart color, and salary advance visibility",
   "directories": {
     "doc": "docs",
     "test": "tests"

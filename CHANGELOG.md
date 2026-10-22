@@ -582,3 +582,10 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Enabled editable per-box rates for Manager-role Sales Orders.
 - Saved manual rates and their reason remain in place when reopening/editing an order; lines without overrides continue using automatic pricing.
 - Added `supabase/manager_order_price_override_v55_29.sql` to permit manager overrides server-side while retaining existing team/document authorization guards.
+
+## v55.32 — Expense scope, loss chart color, salary and advance visibility
+
+- Manager expense page is limited to the manager's own daily expense records; Admin can review all manager expenses.
+- Loss category in the expense doughnut chart is red.
+- Added manager/salesman salary advance visibility in profiles and salary breakdowns, plus Admin salary history details.
+- Added Supabase migration `supabase/expense_salary_visibility_v55_32.sql`; it must be run separately in the live project.
