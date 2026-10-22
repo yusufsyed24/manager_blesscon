@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-29-manager-order-price-override-20261022";
+const CACHE = "blesscon-static-v55-30-manager-master-save-sync-20261022";
 const ASSETS = [
   "./",
   "./index.html",
