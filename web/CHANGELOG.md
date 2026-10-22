@@ -572,3 +572,8 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Show active existing salesman profiles in Admin Create Login even when `user_id` references a stale `profiles` row.
 - Fetch selected salesman profile directly if it is absent from cached snapshot before saving the user link.
 - No database migration applied; live linking must be verified in Supabase.
+
+
+## Payroll attendance display correction
+
+Salary profile views now show attendance credited, configured working days, monthly base salary per attendance day, prorated base earned, prorated allowance, target and above-target carton incentive, gross estimate, and advance-adjusted estimate where available. The SQL snapshot returns the original monthly base salary separately from the attendance-prorated amount. Apply the SQL migration before expecting live calculation data.

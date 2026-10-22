@@ -9,3 +9,6 @@ Setup:
 6. Verify manager advance schema uses manager_user_id, and employee_salary_advances contains amount_paisa, recovered_paisa, status, salesman_id, manager_user_id before applying.
 
 Not live-tested: no connection to your Supabase project was used. Run on a backup/staging project first. Do not deploy if Microsoft Defender flags the archive; this package has not been independently malware-certified.
+
+
+Payroll display correction: manager and salesman profile salary views now explicitly show attendance credited and monthly base salary per attendance day, alongside the attendance-prorated salary and target incentive breakdown. Apply supabase/payroll_attendance_target_v55_38.sql before relying on the figures. Live database execution has not been performed in this environment.

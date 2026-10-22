@@ -616,3 +616,14 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 
 ## v55.38
 - Attendance-prorated salary and allowance, target-threshold incentives, and manager salary snapshot support. See `CHANGELOG_V55_38.md`.
+
+
+## v55.39 — Attendance salary visibility
+- Added attendance-days and attendance-proration details to salesman and manager salary profile breakdowns.
+- Displayed target threshold, extra cartons eligible for incentive, advances/recoveries/outstanding, and estimated net after advances.
+- JavaScript syntax checks passed; full check script could not run because `typescript` is not installed in the build environment. Not live-tested against Supabase.
+
+
+## Payroll attendance display correction
+
+Salary profile views now show attendance credited, configured working days, monthly base salary per attendance day, prorated base earned, prorated allowance, target and above-target carton incentive, gross estimate, and advance-adjusted estimate where available. The SQL snapshot returns the original monthly base salary separately from the attendance-prorated amount. Apply the SQL migration before expecting live calculation data.
