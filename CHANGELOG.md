@@ -612,3 +612,7 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Added Admin Settings for salesman and manager monthly allowance and incentive per confirmed carton, plus manager base salary.
 - Added `supabase/payroll_carton_incentive_v55_37.sql` with employee-specific salary snapshot RPCs.
 - Rates default to zero until configured. Manager's own sales count toward their personal incentive, not the team target.
+
+
+## v55.38
+- Attendance-prorated salary and allowance, target-threshold incentives, and manager salary snapshot support. See `CHANGELOG_V55_38.md`.
