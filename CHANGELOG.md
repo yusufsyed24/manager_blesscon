@@ -627,3 +627,9 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 ## Payroll attendance display correction
 
 Salary profile views now show attendance credited, configured working days, monthly base salary per attendance day, prorated base earned, prorated allowance, target and above-target carton incentive, gross estimate, and advance-adjusted estimate where available. The SQL snapshot returns the original monthly base salary separately from the attendance-prorated amount. Apply the SQL migration before expecting live calculation data.
+
+
+## v55.40 — Admin manager payroll settings and attendance salary fix
+- Added per-manager salary parameter form in Admin → Users & Access.
+- Exposed attendance credited and attendance-adjusted base salary in salesman overview summary.
+- Requires the payroll migration and live schema verification.
