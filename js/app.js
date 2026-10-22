@@ -2767,22 +2767,25 @@ async function advanceSalaryModal(preselectedSalesmanId = "") {
   if (!employees.length) throw Error("No active salesmen or manager accounts were found.");
   const preferred = preselectedSalesmanId ? `salesman:${preselectedSalesmanId}` : employees[0].value;
   const defaultAccount = accounts.find(a => /cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
-  const history = await client.from("employee_salary_advances").select("id,employee_name,employee_type,advance_date,amount_paisa,reason,status,account_key,reference,created_at").order("advance_date", { ascending: false }).limit(100);
-  const rows = history.error ? [] : (history.data || []).map(a => [esc(a.employee_name), esc(a.employee_type), esc(a.advance_date), money(a.amount_paisa), esc(a.reason), esc((accounts.find(x => x.account_key === a.account_key) || {}).label || a.account_key), badge(a.status || "posted"), esc(a.reference || "—")]);
-  modal("Release advance salary", `<form id="salary-advance-form"><section class="panel"><p class="muted">Record an employee advance with a mandatory reason. The selected cash/bank/wallet account will be debited automatically.</p>${select("Employee", "employee", employees.map(e => [e.value,e.label]), preferred, "required")}${field("Advance amount (PKR)", "amount", "", "number", 'min="0.01" step="0.01" required')}${field("Payment date", "advance_date", today(), "date", "required")}${select("Pay from account", "account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}<div class="field"><label for="f-reason">Reason for advance salary <span class="required">*</span></label><textarea id="f-reason" name="reason" required minlength="3" maxlength="1000" placeholder="Explain why this advance is being issued"></textarea></div>${field("Reference / notes (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm advance payment</button></form><section class="panel"><h2>Recent advance salary records</h2>${history.error ? `<p class="notice danger">History could not load: ${esc(history.error.message)}. Apply the advance-salary SQL migration first.</p>` : table(["Employee","Type","Date","Amount","Reason","Paid from","Status","Reference"], rows, "No advance salary records yet.")}</section>`);
+  const history = await client.from("employee_salary_advances").select("id,employee_name,employee_type,advance_date,amount_paisa,recovered_paisa,reason,status,account_key,reference,created_at").order("advance_date", { ascending: false }).limit(100);
+  const rows = history.error ? [] : (history.data || []).map(a => [esc(a.employee_name), esc(a.employee_type), esc(a.advance_date), money(a.amount_paisa), money(Math.max(0, Number(a.amount_paisa || 0) - Number(a.recovered_paisa || 0))), esc(a.reason), esc((accounts.find(x => x.account_key === a.account_key) || {}).label || a.account_key), badge(a.status || "posted"), a.status === "posted" ? btn("Edit amount", "edit-salary-advance", a.id) : `<span class="muted">Reversed</span>`]);
+  modal("Release advance salary", `<form id="salary-advance-form"><section class="panel"><p class="muted">Record an employee advance with a mandatory reason. The selected cash/bank/wallet account will be debited automatically. Any outstanding advance will be deducted from the employee's actual salary before the remaining amount is paid.</p>${select("Employee", "employee", employees.map(e => [e.value,e.label]), preferred, "required")}${field("Advance amount (PKR)", "amount", "", "number", 'min="0.01" step="0.01" required')}${field("Payment date", "advance_date", today(), "date", "required")}${select("Pay from account", "account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}<div class="field"><label for="f-reason">Reason for advance salary <span class="required">*</span></label><textarea id="f-reason" name="reason" required minlength="3" maxlength="1000" placeholder="Explain why this advance is being issued"></textarea></div>${field("Reference / notes (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm advance payment</button></form><section class="panel"><h2>Recent advance salary records</h2>${history.error ? `<p class="notice danger">History could not load: ${esc(history.error.message)}. Apply the advance-salary SQL migration first.</p>` : table(["Employee","Type","Date","Advance amount","Outstanding","Reason","Paid from","Status","Action"], rows, "No advance salary records yet.")}</section>`);
+}
+
+async function editSalaryAdvance(id) {
+  if (!admin()) throw Error("Only Admin can edit salary advances.");
+  const { data: advance, error } = await client.from("employee_salary_advances").select("id,employee_name,amount_paisa,recovered_paisa,reason,status").eq("id", id).single();
+  if (error) throw error;
+  if (advance.status !== "posted") throw Error("This advance is reversed and cannot be edited.");
+  modal("Edit advance salary", `<form id="salary-advance-edit-form" data-id="${esc(advance.id)}"><section class="panel"><p><b>Employee:</b> ${esc(advance.employee_name)}</p><p class="muted">Changing the amount will post an adjustment to the same Cash & Bank Book account and keep an audit record.</p>${field("Advance amount (PKR)", "amount", (Number(advance.amount_paisa)/100).toFixed(2), "number", 'min="0.01" step="0.01" required')}<div class="field"><label for="f-reason">Reason for advance salary *</label><textarea id="f-reason" name="reason" required minlength="3" maxlength="1000">${esc(advance.reason)}</textarea></div></section><button class="gold" type="submit">Save advance changes</button></form>`);
 }
 
 async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const s = S().salesmen.find((x) => x.id === id);
-  const achieved = S()
-      .salesman_daily_targets.filter(
-        (d) => d.salesman_id === id && d.date.startsWith(month),
-      )
-      .reduce((a, d) => a + num(d.achieved_cartons), 0),
-    pay = salary(s, achieved, S().settings);
-  const old = S().expenses.find(
-    (e) => e.salesman_id === id && e.salary_period === month,
-  );
+  if (!s) throw Error("Salesman not found.");
+  const achieved = S().salesman_daily_targets.filter(d => d.salesman_id === id && d.date.startsWith(month)).reduce((a, d) => a + num(d.achieved_cartons), 0);
+  const pay = salary(s, achieved, S().settings);
+  const old = S().expenses.find(e => e.salesman_id === id && e.salary_period === month);
   if (old && !old.deleted_at) {
     if (automatic) return;
     throw Error("Salary already posted for " + month);
@@ -2790,29 +2793,43 @@ async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable" && (!manager() || !a.salesman_id || a.salesman_id === own()?.id));
   if (!accounts.length) throw Error("No active payment accounts are available. Ask Admin to configure Cash & Bank Book accounts.");
   const defaultAccount = accounts.find(a => /cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
+  const advanceResult = await client.from("employee_salary_advances").select("id,employee_name,amount_paisa,recovered_paisa,reason,advance_date").eq("salesman_id", id).eq("status", "posted").order("advance_date", { ascending: true });
+  if (advanceResult.error) throw Error("Could not load outstanding salary advances. Apply the v55.27 salary deduction migration first. " + advanceResult.error.message);
+  const advances = (advanceResult.data || []).map(a => ({...a, outstanding: Math.max(0, Number(a.amount_paisa || 0) - Number(a.recovered_paisa || 0))})).filter(a => a.outstanding > 0);
+  const outstandingAdvance = advances.reduce((sum, a) => sum + a.outstanding, 0);
+  const advanceDeduction = Math.min(Number(pay.total || 0), outstandingAdvance);
+  const netPay = Math.max(0, Number(pay.total || 0) - advanceDeduction);
+  const advanceReasons = advances.map(a => `${a.reason} (${money(a.outstanding)} outstanding)`).join("; ");
   if (!automatic) {
-    modal("Release salary · " + s.name, `<form id="salary-post-form" data-salesman="${esc(id)}" data-month="${esc(month)}"><section class="panel"><p><b>Salary period:</b> ${esc(month)}</p><p><b>Salary amount:</b> ${money(pay.total)}</p><p class="muted">Base plus earned incentive. Advances and deductions are not included.</p>${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm salary payment</button></form>`);
+    modal("Release salary · " + s.name, `<form id="salary-post-form" data-salesman="${esc(id)}" data-month="${esc(month)}"><section class="panel"><p><b>Salary period:</b> ${esc(month)}</p>${table(["Salary calculation","Amount"], [["Gross salary",money(pay.total)], ["Outstanding advances",money(outstandingAdvance)], ["Advance deduction this salary",money(advanceDeduction)], ["Net salary to release",`<b>${money(netPay)}</b>`]], "Salary calculation unavailable.")}<p class="muted">Outstanding advances will be deducted oldest first. The salary record will include the advance deduction and reasons, and recovered amounts will not be deducted again.</p>${advances.length ? `<p><b>Advance reasons:</b> ${esc(advanceReasons)}</p>` : `<p class="muted">No outstanding salary advances for this employee.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
     return;
   }
-  // Automatic monthly posting uses the configured cash-in-hand account unless an existing employee salary preference is present.
+  if (netPay <= 0) {
+    // Do not create an invalid zero-value expense. Keep outstanding advance balances for a future salary period.
+    return;
+  }
   const accountKey = s.salary_account_key || defaultAccount;
   const account = accounts.find(a => a.account_key === accountKey) || accounts[0];
-  await store.run("master.save", {
-    table: "expenses",
-    record: {
-      id: old?.id || "SAL-" + id + "-" + month,
-      date: monthEnd(month + "-01"),
-      category: "Salaries",
-      description: `Salary released to ${s.name} — ${month}; base + incentive (${achieved.toFixed(2)} cartons)${automatic ? " (automatic posting)" : ""}`,
-      amount_paisa: pay.total,
-      method: /jazzcash/i.test(account.label) ? "JazzCash" : /easypaisa/i.test(account.label) ? "Easypaisa" : /cash/i.test(account.label) ? "Cash" : /mcb/i.test(account.label) ? "MCB Bank" : /al habib/i.test(account.label) ? "Al Habib Bank" : "Bank Account",
-      cashbook_account_key: account.account_key,
-      salesman_id: id,
-      salary_period: month,
-    },
-    expected_version: old?.version,
-  });
-  if (!automatic) toast("Salary payment and linked expense posted.");
+  await store.run("master.save", { table: "expenses", record: {
+    id: old?.id || "SAL-" + id + "-" + month,
+    date: monthEnd(month + "-01"), category: "Salaries",
+    description: `Salary released to ${s.name} — ${month}; gross ${money(pay.total)}; advance deduction ${money(advanceDeduction)}${advanceReasons ? "; advances: " + advanceReasons : ""}${automatic ? " (automatic posting)" : ""}`,
+    amount_paisa: netPay,
+    method: /jazzcash/i.test(account.label) ? "JazzCash" : /easypaisa/i.test(account.label) ? "Easypaisa" : /cash/i.test(account.label) ? "Cash" : /mcb/i.test(account.label) ? "MCB Bank" : /al habib/i.test(account.label) ? "Al Habib Bank" : "Bank Account",
+    cashbook_account_key: account.account_key, salesman_id: id, salary_period: month,
+  }, expected_version: old?.version });
+  if (advanceDeduction > 0) {
+    let remaining = advanceDeduction;
+    for (const advance of advances) {
+      if (remaining <= 0) break;
+      const applied = Math.min(remaining, advance.outstanding);
+      const newRecovered = Number(advance.recovered_paisa || 0) + applied;
+      const updated = await client.from("employee_salary_advances").update({ recovered_paisa: newRecovered, last_deducted_salary_period: month }).eq("id", advance.id).eq("recovered_paisa", Number(advance.recovered_paisa || 0)).select("id");
+      if (updated.error || !updated.data?.length) throw Error("Salary was posted, but an advance recovery record could not be updated. Do not repost this salary; contact Admin to reconcile advance recovery.");
+      remaining -= applied;
+    }
+  }
+  if (!automatic) toast(`Salary released: gross ${money(pay.total)}, advance deduction ${money(advanceDeduction)}, net paid ${money(netPay)}.`);
 }
 async function saveSettings(form) {
   const f = new FormData(form),
@@ -3379,6 +3396,9 @@ async function action(act, id, element) {
       break;
     case "advance-salary":
       await advanceSalaryModal(id);
+      break;
+    case "edit-salary-advance":
+      await editSalaryAdvance(id);
       break;
     case "delete-expense": {
       const e = S().expenses.find((x) => x.id === id);
@@ -4156,20 +4176,56 @@ document.addEventListener("submit", async (e) => {
         toast("Advance salary recorded and payment account debited.");
         close(); render(); break;
       }
+      case "salary-advance-edit-form": {
+        if (!admin()) throw Error("Only Admin can edit salary advances.");
+        const advanceId = form.dataset.id;
+        const amount = Math.round(Number(f.amount) * 100);
+        const reason = String(f.reason || "").trim();
+        if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Advance amount must be greater than zero.");
+        if (reason.length < 3) throw Error("Enter a clear reason for the salary advance.");
+        const { data: current, error: currentError } = await client.from("employee_salary_advances").select("id,employee_name,amount_paisa,recovered_paisa,status").eq("id", advanceId).single();
+        if (currentError) throw currentError;
+        if (current.status !== "posted") throw Error("This advance is reversed and cannot be edited.");
+        if (amount < Number(current.recovered_paisa || 0)) throw Error("The edited advance amount cannot be lower than the amount already recovered through salary.");
+        if (!confirm(`Update ${current.employee_name}'s advance from ${money(current.amount_paisa)} to ${money(amount)}? The Cash & Bank Book will post the adjustment.`)) break;
+        const { error } = await client.from("employee_salary_advances").update({ amount_paisa: amount, reason }).eq("id", advanceId);
+        if (error) throw error;
+        toast("Advance amount updated; cashbook adjustment and audit record posted.");
+        await advanceSalaryModal();
+        break;
+      }
       case "salary-post-form": {
         if (!admin()) throw Error("Only Admin can release salary.");
         const salesmanId = form.dataset.salesman, month = form.dataset.month;
         const seller = S().salesmen.find(x => x.id === salesmanId);
         if (!seller) throw Error("Salesman not found.");
-        const amount = salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total;
+        const grossAmount = salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total;
+        const advanceResult = await client.from("employee_salary_advances").select("id,amount_paisa,recovered_paisa,reason,advance_date").eq("salesman_id", salesmanId).eq("status", "posted").order("advance_date", {ascending:true});
+        if (advanceResult.error) throw Error("Could not load salary advances: " + advanceResult.error.message);
+        const advances = (advanceResult.data || []).map(a=>({...a,outstanding:Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0))})).filter(a=>a.outstanding>0);
+        const outstandingAdvance = advances.reduce((sum,a)=>sum+a.outstanding,0);
+        const deduction = Math.min(grossAmount,outstandingAdvance);
+        const amount = Math.max(0,grossAmount-deduction);
         if (!f.cashbook_account_key) throw Error("Choose the account used to pay this salary.");
         const account = (S().cashbook_accounts||[]).find(a=>a.account_key===f.cashbook_account_key && a.active && a.account_type!=="receivable");
         if (!account) throw Error("Select an active cash or bank account.");
-        if (!confirm(`Release ${money(amount)} to ${seller.name} for ${month} from ${account.label}? This will create the linked Salary expense and debit the selected account.`)) break;
+        const reasons = advances.map(a=>a.reason).join("; ");
+        if (!confirm(`Release salary to ${seller.name} for ${month}?\nGross salary: ${money(grossAmount)}\nAdvance deduction: ${money(deduction)}\nNet amount to pay: ${money(amount)}\nAccount: ${account.label}\n${reasons ? "Advance reasons: " + reasons + "\n" : ""}The selected account will be debited only for the net amount.`)) break;
+        if (amount <= 0) throw Error("The outstanding advance equals or exceeds this salary. No positive salary amount remains to release. The advance balance has not been deducted; review the salary and advances before proceeding.");
         const achieved = S().salesman_daily_targets.filter(d=>d.salesman_id===salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0);
         const prior = S().expenses.find(e=>e.salesman_id===salesmanId && e.salary_period===month && !e.deleted_at);
         if (prior) throw Error("Salary already posted for " + month);
-        await store.run("master.save", {table:"expenses", record:{id:"SAL-"+salesmanId+"-"+month,date:f.date||today(),category:"Salaries",description:`Salary released to ${seller.name} — ${month}; base + incentive (${achieved.toFixed(2)} cartons)${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:amount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,salesman_id:salesmanId,salary_period:month}});
+        await store.run("master.save", {table:"expenses", record:{id:"SAL-"+salesmanId+"-"+month,date:f.date||today(),category:"Salaries",description:`Salary released to ${seller.name} — ${month}; gross ${money(grossAmount)}; advance deduction ${money(deduction)}${reasons ? "; advance reasons: "+reasons : "; no outstanding advance"}; base + incentive (${achieved.toFixed(2)} cartons)${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:amount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,salesman_id:salesmanId,salary_period:month}});
+        if (deduction > 0) {
+          let remaining = deduction;
+          for (const advance of advances) {
+            if (remaining <= 0) break;
+            const applied = Math.min(remaining, advance.outstanding);
+            const updated = await client.from("employee_salary_advances").update({recovered_paisa:Number(advance.recovered_paisa||0)+applied,last_deducted_salary_period:month}).eq("id",advance.id).eq("recovered_paisa",Number(advance.recovered_paisa||0)).select("id");
+            if (updated.error || !updated.data?.length) throw Error("Salary was posted, but an advance recovery record could not be updated. Do not repost this salary; contact Admin to reconcile advance recovery.");
+            remaining -= applied;
+          }
+        }
         // Make the newly posted salary immediately visible in Expenses. The shared
         // expense filters may otherwise hide it (for example, a previously selected
         // category such as Transport or a date range that excludes the payment date).
@@ -4180,7 +4236,7 @@ document.addEventListener("submit", async (e) => {
         filter.to = f.date || today();
         filter.category = "All categories";
         page = "expenses";
-        toast("Salary released; the linked Salary expense is now shown in Expenses.");
+        toast(`Salary released; gross ${money(grossAmount)}, advance deduction ${money(deduction)}, net paid ${money(amount)}. The linked Salary expense is shown in Expenses.`);
         close(); render(); break;
       }
       case "notification-form": {

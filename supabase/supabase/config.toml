@@ -1,0 +1,18 @@
+project_id = "blesscon-candy-manager"
+[functions.admin-create-user]
+verify_jwt = false
+# The function validates the bearer token using auth.getUser() and checks is_admin().
+# This also supports Supabase publishable keys; no service key is sent to browsers.
+
+[functions.admin-reset-user-password]
+verify_jwt = false
+# The function validates the bearer token, requires an active Admin via is_admin(),
+# and uses the service role only server-side to reset another user's password.
+
+[functions.admin-user-directory]
+verify_jwt = false
+# The function verifies the bearer token and requires an active Admin before exposing Auth emails.
+
+[functions.admin-delete-user]
+verify_jwt = false
+# The function validates the caller JWT and requires an active Admin; service role stays server-side.

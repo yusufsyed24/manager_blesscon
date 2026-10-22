@@ -1,0 +1,16 @@
+Product Save Button Fix — validation log (2026-10-14)
+
+PASS: node --check js/app.js
+PASS: node --check all js/*.js, tests/*.js, and web/js/*.js
+PASS: node scripts/release.mjs completed
+PASS: root/deployed js/app.js and js/store.js are byte-identical
+PASS: ZIP integrity check will be performed after packaging
+
+NOT RUN / BLOCKED:
+FAIL TO START: npm test -- --reporter=dot
+Reason: vitest: not found (dependencies are not installed in this environment).
+
+FAIL TO START: npm run check
+Reason: ERR_MODULE_NOT_FOUND for package 'typescript' imported by scripts/check.mjs.
+
+Not verified: live Supabase product create/update. The deployed database must have the product.save migration applied, the logged-in user must be an admin, and the live app_config.js must retain the project's working public Supabase URL and publishable/anon key.

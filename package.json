@@ -1,7 +1,7 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "55.26.0",
-  "description": "Admin salary advance management with audited Cash & Bank Book integration",
+  "version": "55.27.0",
+  "description": "Editable salary advances with salary deductions and audited Cash & Bank Book adjustments",
   "directories": {
     "doc": "docs",
     "test": "tests"

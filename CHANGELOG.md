@@ -567,3 +567,12 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - After salary release, refresh the connected business snapshot and verify the linked salary expense exists.
 - Reset stale expense category/date filters and open the Expenses module with the newly released salary expense in view.
 - If the expense cannot be found after refresh, show an explicit error instead of silently reporting success.
+
+## v55.27.0 — Editable salary advances and salary deduction
+- Added Admin-only editing for advance amount and reason before any amount has been recovered.
+- Editing an advance posts a balancing Cash & Bank Book adjustment and an audit-log entry; employee, original payment account and date remain immutable in the edit flow.
+- Salary release for salesmen now displays gross salary, outstanding advances, deduction, reasons and net salary to pay.
+- Outstanding advances are applied oldest-first, and recovered amounts are persisted to prevent repeat deductions in later salary periods.
+- Added `supabase/employee_salary_advances_v55_27.sql` as an additive migration after v55.26.
+- Important: the existing salary-release screen is for salesmen. Manager advances can be recorded/edited, but the app does not yet have a manager payroll-release workflow to apply those deductions.
+- Validation: JavaScript syntax checks passed; live Supabase behavior is not verified.
