@@ -22,7 +22,6 @@ declare
 end if;$new$;
   old_b text := $old$if t='customers' and not adm then select id into k from public.salesmen where user_id=auth.uid() and active and deleted_at is null; if k is null then raise exception 'Active salesman required'; end if; r:=r||jsonb_build_object('salesman_id',k); end if;$old$;
   new_b text := $new$if t='customers' and not adm then select id into k from public.salesmen where user_id=auth.uid() and active and deleted_at is null; if k is not null then r:=r||jsonb_build_object('salesman_id',k); elsif public.is_manager() then if nullif(r->>'salesman_id','') is not null and not exists(select 1 from public.salesmen sm where sm.id=r->>'salesman_id' and sm.manager_user_id=auth.uid() and sm.active and sm.deleted_at is null) then raise exception 'Manager can assign a customer only to an active salesman on their own team'; end if; else raise exception 'Active salesman required'; end if; end if;$new$;
-  old_c text := $old$if t='customers' and not adm then select id into k from public.salesmen where user_id=auth.uid() and active and deleted_at is null; if k is null then raise exception 'Active salesman required'; end if; r:=r||jsonb_build_object('salesman_id',k); end if;$old_c$;
 begin
   select pg_get_functiondef(to_regprocedure('private.save_master(text,jsonb,integer)')) into fn;
   if fn is null then raise exception 'private.save_master(text,jsonb,integer) was not found. Install the main Blesscon schema first.'; end if;

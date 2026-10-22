@@ -1309,28 +1309,37 @@ function renderCashBook() {
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
   let accountLedgerEntries = relevantEntries.filter(e => cashbookAccountFilter ? e.account_key === cashbookAccountFilter : e.business_date === date);
-  // Market Credit transaction history shows ONLY invoices that still have an
-  // unpaid balance. Recovery/payment rows are intentionally never displayed here.
+  // Market Credit ledger shows both the receivable created by a credit sale
+  // and every recovery against it, including the account where cash was received.
   if (cashbookAccountFilter === "market_credit") {
     accountLedgerEntries = [];
     const ordersById = new Map((s.orders || []).map(order => [String(order.id), order]));
-    const paidByInvoice = new Map();
-    for (const payment of s.payments || []) {
-      if (payment.voided_at || String(payment.date || "") > date || !payment.invoice_id) continue;
-      const invoiceId = String(payment.invoice_id);
-      paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + Math.abs(num(payment.amount_paisa)));
-    }
+    const invoicesById = new Map((s.invoices || []).map(inv => [String(inv.id), inv]));
     for (const inv of s.invoices || []) {
       const order = ordersById.get(String(inv.order_id));
       if (!order || order.status !== "confirmed" || String(order.date || "") > date) continue;
-      const outstanding = Math.max(0, num(inv.total_paisa) - (paidByInvoice.get(String(inv.id)) || 0));
-      if (outstanding <= 0) continue;
       accountLedgerEntries.push({
-        id: `market-unpaid-invoice:${inv.id}`, business_date: order.date,
-        account_key: "market_credit", amount_paisa: outstanding,
+        id: `market-invoice:${inv.id}`, business_date: order.date,
+        created_at: inv.created_at || order.created_at || "",
+        account_key: "market_credit", amount_paisa: Math.abs(num(inv.total_paisa)),
         entry_type: "receivable", source_table: "invoices", source_id: inv.id,
-        description: `Unpaid Market Credit — ${customerName(order.customer_id)}`,
-        created_by: inv.created_by
+        description: `Credit receivable created — ${customerName(order.customer_id)}`,
+        created_by: inv.created_by, related_invoice_id: inv.id
+      });
+    }
+    for (const payment of s.payments || []) {
+      if (payment.voided_at || String(payment.date || "") > date || !payment.invoice_id) continue;
+      const inv = invoicesById.get(String(payment.invoice_id));
+      const order = inv && ordersById.get(String(inv.order_id));
+      if (!inv || !order || order.status !== "confirmed") continue;
+      const receivedAccount = payment.cashbook_account_key || cashbookMethodKey(payment.method, order.salesman_id);
+      accountLedgerEntries.push({
+        id: `market-recovery:${payment.id}`, business_date: payment.date,
+        created_at: payment.created_at || "", account_key: "market_credit",
+        amount_paisa: -Math.abs(num(payment.amount_paisa)), entry_type: "receivable_recovery",
+        source_table: "payments", source_id: payment.id,
+        description: `Cash received — ${customerName(order.customer_id)} · ${accountLabel(receivedAccount)} · ${payment.method || "payment"}`,
+        created_by: payment.created_by, related_invoice_id: inv.id, received_account_key: receivedAccount
       });
     }
   }

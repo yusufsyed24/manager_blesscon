@@ -1,6 +1,6 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "55.30.0",
+  "version": "55.31.0",
   "description": "Manager sales-order save sync fix for manager-created customers",
   "directories": {
     "doc": "docs",

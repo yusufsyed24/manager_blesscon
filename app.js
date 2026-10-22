@@ -1309,28 +1309,37 @@ function renderCashBook() {
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
   let accountLedgerEntries = relevantEntries.filter(e => cashbookAccountFilter ? e.account_key === cashbookAccountFilter : e.business_date === date);
-  // Market Credit transaction history shows ONLY invoices that still have an
-  // unpaid balance. Recovery/payment rows are intentionally never displayed here.
+  // Market Credit ledger shows both the receivable created by a credit sale
+  // and every recovery against it, including the account where cash was received.
   if (cashbookAccountFilter === "market_credit") {
     accountLedgerEntries = [];
     const ordersById = new Map((s.orders || []).map(order => [String(order.id), order]));
-    const paidByInvoice = new Map();
-    for (const payment of s.payments || []) {
-      if (payment.voided_at || String(payment.date || "") > date || !payment.invoice_id) continue;
-      const invoiceId = String(payment.invoice_id);
-      paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + Math.abs(num(payment.amount_paisa)));
-    }
+    const invoicesById = new Map((s.invoices || []).map(inv => [String(inv.id), inv]));
     for (const inv of s.invoices || []) {
       const order = ordersById.get(String(inv.order_id));
       if (!order || order.status !== "confirmed" || String(order.date || "") > date) continue;
-      const outstanding = Math.max(0, num(inv.total_paisa) - (paidByInvoice.get(String(inv.id)) || 0));
-      if (outstanding <= 0) continue;
       accountLedgerEntries.push({
-        id: `market-unpaid-invoice:${inv.id}`, business_date: order.date,
-        account_key: "market_credit", amount_paisa: outstanding,
+        id: `market-invoice:${inv.id}`, business_date: order.date,
+        created_at: inv.created_at || order.created_at || "",
+        account_key: "market_credit", amount_paisa: Math.abs(num(inv.total_paisa)),
         entry_type: "receivable", source_table: "invoices", source_id: inv.id,
-        description: `Unpaid Market Credit — ${customerName(order.customer_id)}`,
-        created_by: inv.created_by
+        description: `Credit receivable created — ${customerName(order.customer_id)}`,
+        created_by: inv.created_by, related_invoice_id: inv.id
+      });
+    }
+    for (const payment of s.payments || []) {
+      if (payment.voided_at || String(payment.date || "") > date || !payment.invoice_id) continue;
+      const inv = invoicesById.get(String(payment.invoice_id));
+      const order = inv && ordersById.get(String(inv.order_id));
+      if (!inv || !order || order.status !== "confirmed") continue;
+      const receivedAccount = payment.cashbook_account_key || cashbookMethodKey(payment.method, order.salesman_id);
+      accountLedgerEntries.push({
+        id: `market-recovery:${payment.id}`, business_date: payment.date,
+        created_at: payment.created_at || "", account_key: "market_credit",
+        amount_paisa: -Math.abs(num(payment.amount_paisa)), entry_type: "receivable_recovery",
+        source_table: "payments", source_id: payment.id,
+        description: `Cash received — ${customerName(order.customer_id)} · ${accountLabel(receivedAccount)} · ${payment.method || "payment"}`,
+        created_by: payment.created_by, related_invoice_id: inv.id, received_account_key: receivedAccount
       });
     }
   }
@@ -2172,7 +2181,7 @@ function openEditor(quote, id) {
     items: old
       ? s[it]
           .filter((l) => l[quote ? "quotation_id" : "order_id"] === id)
-          .map((l) => ({ ...l, override_reason: "" }))
+          .map((l) => ({ ...l }))
       : [
           {
             product_id: visible(s.products).find((p) => p.active && (user?.role !== "salesman" || heldStock(p.id, own()?.id) > 0))?.id || "",
@@ -2183,7 +2192,7 @@ function openEditor(quote, id) {
   };
   modal(
     (old ? "Edit " : "New ") + (quote ? "quotation" : "sale"),
-    `<form id="document-form">${old ? '<p class="notice">Editing recalculates prices using current tiers. Review the rates before saving.</p>' : ""}<div class="grid three">${field("Customer ID / name search", "customer_id", draft.customer_id, "text", 'list="customer-list" required')}<datalist id="customer-list">${visible(
+    `<form id="document-form">${old ? '<p class="notice">Saved manual product rates are retained when editing. Lines without a manual override continue to use the current pricing rules.</p>' : ""}<div class="grid three">${field("Customer ID / name search", "customer_id", draft.customer_id, "text", 'list="customer-list" required')}<datalist id="customer-list">${visible(
       s.customers,
     )
       .map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`)
@@ -2219,7 +2228,7 @@ function renderLines() {
     const found = products.some(p => p.id === l.product_id);
     const options = products.map(p => `<option value="${esc(p.id)}" ${l.product_id===p.id?"selected":""}>${esc(p.name)} (${esc(p.id)}): Rs. ${num(S().price_tiers.find(t=>t.product_id===p.id && t.min_cartons===1)?.rate_paisa ?? p.wholesale_paisa)/100}/box</option>`).join("");
     const picker = products.length ? `<div class="field"><label for="line-search-${i}">Search products</label><input id="line-search-${i}" data-product-search="${i}" type="search" placeholder="Type product name or ID"><label for="line-p-${i}">Product</label><select id="line-p-${i}" data-line-field="product_id" required><option value="">Select product…</option>${l.product_id&&!found?`<option selected disabled value="${esc(l.product_id)}">Missing/inactive product (${esc(l.product_id)})</option>`:""}${options}</select></div>` : `<p class="notice">No products yet. Import your workbook (Import page) or add a product.</p><button type="button" class="secondary" data-act="add-product">Add a product</button>`;
-    return `<div class="line-editor" data-line="${i}">${picker}<div class="field"><label for="line-c-${i}">Cartons</label><input id="line-c-${i}" data-line-field="cartons" type="number" min="0" step="1" value="${l.cartons}" required></div><div class="field"><label for="line-l-${i}">Loose boxes</label><input id="line-l-${i}" data-line-field="loose_boxes" type="number" min="0" step="1" value="${l.loose_boxes}" required></div><div class="field"><label for="line-r-${i}">Rate / box (Rs.)</label><input id="line-r-${i}" data-line-field="manual_rate" type="number" min="0" step="0.01" value="${num(l.rate_paisa)/100}" ${admin()?"":"readonly"}></div><div class="line-total" id="line-total-${i}"></div><button type="button" class="icon-button" aria-label="Remove product line ${i+1}" data-act="remove-line" data-id="${i}">×</button><div class="line-note" id="line-note-${i}">${l.product_id&&!found?"This product is missing or inactive. Choose an active product.":""}</div>${admin()?`<div class="override"><span class="muted">Manual override reason</span><input data-line-field="override_reason" aria-label="Override reason for line ${i+1}" value="${esc(l.override_reason||"")}" placeholder="Leave blank for automatic pricing"></div>`:""}</div>`;
+    return `<div class="line-editor" data-line="${i}">${picker}<div class="field"><label for="line-c-${i}">Cartons</label><input id="line-c-${i}" data-line-field="cartons" type="number" min="0" step="1" value="${l.cartons}" required></div><div class="field"><label for="line-l-${i}">Loose boxes</label><input id="line-l-${i}" data-line-field="loose_boxes" type="number" min="0" step="1" value="${l.loose_boxes}" required></div><div class="field"><label for="line-r-${i}">Rate / box (Rs.)</label><input id="line-r-${i}" data-line-field="manual_rate" type="number" min="0" step="0.01" value="${num(l.rate_paisa)/100}" ${mgmt()?"":"readonly"}></div><div class="line-total" id="line-total-${i}"></div><button type="button" class="icon-button" aria-label="Remove product line ${i+1}" data-act="remove-line" data-id="${i}">×</button><div class="line-note" id="line-note-${i}">${l.product_id&&!found?"This product is missing or inactive. Choose an active product.":""}</div>${mgmt()?`<div class="override"><span class="muted">Manual override reason</span><input data-line-field="override_reason" aria-label="Override reason for line ${i+1}" value="${esc(l.override_reason||"")}" placeholder="Leave blank for automatic pricing"></div>`:""}</div>`;
   }).join("");
   draft.items.forEach((l,i)=>{ const search=$("line-search-"+i), select=$("line-p-"+i); if(search&&select) search.addEventListener("input",()=>{const q=norm(search.value); for(const o of [...select.options]) if(o.value) o.hidden=!norm(o.textContent).includes(q);}); });
 }
@@ -2235,7 +2244,7 @@ function calcEditor() {
       draft.channel,
       S().settings,
       S().price_tiers,
-      admin(),
+      mgmt(),
     );
     let subtotal = 0;
     priced.forEach((l, i) => {
@@ -2288,7 +2297,7 @@ function refreshConvertPayment(form) {
   let total = Number(q.total_paisa);
   if (form.elements.reprice?.checked) {
     const lines=S().quotation_items.filter(l=>l.quotation_id===q.id);
-    try { total=priceLines(lines,S().products,q.channel,S().settings,S().price_tiers,admin()).reduce((a,l)=>a+l.amount_paisa,0)-Number(q.discount_paisa||0); } catch {}
+    try { total=priceLines(lines,S().products,q.channel,S().settings,S().price_tiers,mgmt()).reduce((a,l)=>a+l.amount_paisa,0)-Number(q.discount_paisa||0); } catch {}
   }
   const status=form.elements.payment_status?.value || "unpaid", amount=form.elements.payment_amount;
   if (status==="paid") { amount.value=(total/100).toFixed(2); amount.readOnly=true; }
