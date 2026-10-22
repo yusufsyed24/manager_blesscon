@@ -594,3 +594,7 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Manager role now includes the Expenses page in built-in navigation permissions.
 - Added employee salary advances to the shared store table list so Admin salary/advance views can receive these records.
 - No business records or product pricing/stock logic changed.
+
+## v55.34 — Salesman login linking repair
+- Show existing unlinked/orphan-linked salesman profiles in Create Login.
+- Persist `user_id` when linking even if manager assignment is unchanged.

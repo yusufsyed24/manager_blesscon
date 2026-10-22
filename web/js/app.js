@@ -2971,8 +2971,16 @@ function userModal(id) {
         [
           ["", "Create a new salesman profile"],
           ...S()
-            .salesmen.filter((x) => !x.user_id)
-            .map((s) => [s.id, s.name]),
+            .salesmen
+            .filter((seller) => {
+              if (seller.deleted_at) return false;
+              // Include unlinked profiles and profiles whose old user_id no longer
+              // exists in the loaded user directory (orphaned link). A profile
+              // linked to a real login is not offered to a second login.
+              if (!seller.user_id) return true;
+              return !S().profiles.some((profile) => String(profile.id) === String(seller.user_id));
+            })
+            .map((seller) => [seller.id, `${seller.name}${seller.user_id ? " (repair old login link)" : ""}`]),
         ],
       )}${select("Assign salesman to manager (optional)", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], "")}</div><p class="muted">The login is created without sending an email. Share the password securely. If a manager is selected, the salesman appears in that manager's team overview. Deleting a login later preserves linked business history.</p><button class="gold">Create login</button></form>`,
     );
@@ -4669,7 +4677,10 @@ document.addEventListener("submit", async (e) => {
         }
         if (f.role === "salesman" && f.salesman_id) {
           const linked = S().salesmen.find((seller) => seller.id === f.salesman_id || seller.user_id === data.user_id);
-          if (linked && linked.manager_user_id !== (f.manager_user_id || null)) {
+          if (linked && (String(linked.user_id || "") !== String(data.user_id) || String(linked.manager_user_id || "") !== String(f.manager_user_id || ""))) {
+            // Always persist the new auth user link, even when manager assignment
+            // already matches. Previously this condition could leave the profile
+            // unlinked if only user_id needed updating.
             await store.run("master.save", { table: "salesmen", record: { ...linked, user_id: data.user_id, manager_user_id: f.manager_user_id || null }, expected_version: linked.version });
           }
         }
