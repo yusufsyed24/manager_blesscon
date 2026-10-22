@@ -1,3 +1,10 @@
+# v55.26 — Admin Salary Advances
+
+- Admin can issue a salary advance to a salesman or manager with a required reason, date, amount, and payment account.
+- Advances are recorded in a dedicated table and automatically debit the selected Cash & Bank Book account.
+- Added recent advance history and an additive Supabase migration.
+- Payroll recovery/deduction is not automatically changed by this release.
+
 # Changelog
 
 ## v55.22 — Market Credit transaction history isolation (2026-10-22)

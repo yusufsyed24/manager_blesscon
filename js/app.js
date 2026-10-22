@@ -1599,7 +1599,7 @@ function renderStaff() {
     head(
       "Salesmen & targets",
       manager() ? "Manage your assigned team, attendance, areas, stock accountability and operational messages." : "Manage employee profiles, assign managers, monitor targets and review fieldwork.",
-      (admin() || manager()) ? btn("+ Create salesman", "add-staff", "", "", "gold") + btn("Manage areas", "manage-areas") : "",
+      (admin() || manager()) ? btn("+ Create salesman", "add-staff", "", "", "gold") + btn("Manage areas", "manage-areas") + (admin() ? btn("+ Advance salary", "advance-salary", "", "", "gold") : "") : "",
     ) +
     `<section class="panel"><div class="panel-heading"><h2>Team overview</h2><span>${esc(attendanceDate)} · ${sellers.length} assigned salesman${sellers.length===1?"":"men"}</span></div>${table(
       ["Salesman", "Attendance", "Assigned area", "Today / target", "Monthly progress", "Stock in hand", "Actions"],
@@ -1614,7 +1614,7 @@ function renderStaff() {
           `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`,
           `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons · ${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100,t.percent)}%"></span></div>`,
           `${held.toFixed(2)} boxes`,
-          `<div class="actions">${btn("Details", "salesman-profile", t.id)}${(admin()||manager())?btn("Assign area", "assign-area", t.id):""}${(admin()||manager())?btn("Attendance", "mark-attendance", t.id):""}${(admin()||manager())?btn("Message", "notify-salesman", t.id):""}${(admin())?btn("Edit", "edit-staff", t.id)+btn("Post salary", "post-salary", t.id)+btn("Delete", "delete-salesman", t.id, "", "danger"):manager()?btn("Edit", "edit-staff", t.id):""}</div>`
+          `<div class="actions">${btn("Details", "salesman-profile", t.id)}${(admin()||manager())?btn("Assign area", "assign-area", t.id):""}${(admin()||manager())?btn("Attendance", "mark-attendance", t.id):""}${(admin()||manager())?btn("Message", "notify-salesman", t.id):""}${(admin())?btn("Edit", "edit-staff", t.id)+btn("Post salary", "post-salary", t.id)+btn("Advance salary", "advance-salary", t.id)+btn("Delete", "delete-salesman", t.id, "", "danger"):manager()?btn("Edit", "edit-staff", t.id):""}</div>`
         ];
       }), "No salesman profiles are assigned to this account.")}</section>
     ${admin() ? `<section class="panel"><div class="panel-heading"><h2>Employee fieldwork & documents</h2><span class="muted">Administrator access</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>` : ""}
@@ -2747,6 +2747,31 @@ function targetsModal(id) {
     )}`,
   );
 }
+async function advanceSalaryModal(preselectedSalesmanId = "") {
+  if (!admin()) throw Error("Only Admin can release salary advances.");
+  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable");
+  if (!accounts.length) throw Error("No active cash or bank accounts are available. Configure Cash & Bank Book accounts first.");
+  const employees = [];
+  for (const seller of (S().salesmen || []).filter(x => x.active !== false && !x.deleted_at)) {
+    employees.push({ value: `salesman:${seller.id}`, label: `Salesman — ${seller.name}` });
+  }
+  const roleResult = await client.from("user_roles").select("user_id").eq("role", "manager");
+  if (roleResult.error) throw roleResult.error;
+  const managerIds = [...new Set((roleResult.data || []).map(x => x.user_id).filter(Boolean))];
+  if (managerIds.length) {
+    const profileResult = await client.from("profiles").select("id,display_name").in("id", managerIds);
+    if (profileResult.error) throw profileResult.error;
+    for (const profile of (profileResult.data || [])) employees.push({ value: `manager:${profile.id}`, label: `Manager — ${profile.display_name || profile.id}` });
+    for (const managerId of managerIds.filter(id => !(profileResult.data || []).some(p => p.id === id))) employees.push({ value: `manager:${managerId}`, label: `Manager — ${managerId}` });
+  }
+  if (!employees.length) throw Error("No active salesmen or manager accounts were found.");
+  const preferred = preselectedSalesmanId ? `salesman:${preselectedSalesmanId}` : employees[0].value;
+  const defaultAccount = accounts.find(a => /cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
+  const history = await client.from("employee_salary_advances").select("id,employee_name,employee_type,advance_date,amount_paisa,reason,status,account_key,reference,created_at").order("advance_date", { ascending: false }).limit(100);
+  const rows = history.error ? [] : (history.data || []).map(a => [esc(a.employee_name), esc(a.employee_type), esc(a.advance_date), money(a.amount_paisa), esc(a.reason), esc((accounts.find(x => x.account_key === a.account_key) || {}).label || a.account_key), badge(a.status || "posted"), esc(a.reference || "—")]);
+  modal("Release advance salary", `<form id="salary-advance-form"><section class="panel"><p class="muted">Record an employee advance with a mandatory reason. The selected cash/bank/wallet account will be debited automatically.</p>${select("Employee", "employee", employees.map(e => [e.value,e.label]), preferred, "required")}${field("Advance amount (PKR)", "amount", "", "number", 'min="0.01" step="0.01" required')}${field("Payment date", "advance_date", today(), "date", "required")}${select("Pay from account", "account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}<div class="field"><label for="f-reason">Reason for advance salary <span class="required">*</span></label><textarea id="f-reason" name="reason" required minlength="3" maxlength="1000" placeholder="Explain why this advance is being issued"></textarea></div>${field("Reference / notes (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm advance payment</button></form><section class="panel"><h2>Recent advance salary records</h2>${history.error ? `<p class="notice danger">History could not load: ${esc(history.error.message)}. Apply the advance-salary SQL migration first.</p>` : table(["Employee","Type","Date","Amount","Reason","Paid from","Status","Reference"], rows, "No advance salary records yet.")}</section>`);
+}
+
 async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const s = S().salesmen.find((x) => x.id === id);
   const achieved = S()
@@ -3351,6 +3376,9 @@ async function action(act, id, element) {
     case "post-salary":
       await postSalary(id);
       render();
+      break;
+    case "advance-salary":
+      await advanceSalaryModal(id);
       break;
     case "delete-expense": {
       const e = S().expenses.find((x) => x.id === id);
@@ -4104,6 +4132,30 @@ document.addEventListener("submit", async (e) => {
       case "master-form":
         await saveMaster(form);
         break;
+      case "salary-advance-form": {
+        if (!admin()) throw Error("Only Admin can release salary advances.");
+        const [employeeType, employeeId] = String(f.employee || "").split(":", 2);
+        if (!['salesman','manager'].includes(employeeType) || !employeeId) throw Error("Select a valid employee.");
+        const amount = Math.round(Number(f.amount) * 100);
+        if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Advance amount must be greater than zero.");
+        const reason = String(f.reason || "").trim();
+        if (reason.length < 3) throw Error("Enter a clear reason for the salary advance.");
+        const account = (S().cashbook_accounts || []).find(a => a.account_key === f.account_key && a.active && a.account_type !== "receivable");
+        if (!account) throw Error("Choose an active cash, bank, or wallet account.");
+        const employeeName = employeeType === "salesman"
+          ? (S().salesmen || []).find(x => String(x.id) === employeeId)?.name
+          : (await client.from("profiles").select("display_name").eq("id", employeeId).maybeSingle()).data?.display_name;
+        if (!employeeName) throw Error("Could not verify the selected employee. Refresh and try again.");
+        if (!confirm(`Release ${money(amount)} as an advance to ${employeeName} from ${account.label}?\nReason: ${reason}\nThis will debit the selected account.`)) break;
+        const payload = { employee_type: employeeType, employee_name: employeeName, advance_date: f.advance_date || today(), amount_paisa: amount, reason, account_key: account.account_key, reference: String(f.reference || "").trim() || null, created_by: user.id };
+        if (employeeType === "salesman") payload.salesman_id = employeeId;
+        else payload.manager_user_id = employeeId;
+        const result = await client.from("employee_salary_advances").insert(payload).select("id").single();
+        if (result.error) throw result.error;
+        await store.refresh();
+        toast("Advance salary recorded and payment account debited.");
+        close(); render(); break;
+      }
       case "salary-post-form": {
         if (!admin()) throw Error("Only Admin can release salary.");
         const salesmanId = form.dataset.salesman, month = form.dataset.month;

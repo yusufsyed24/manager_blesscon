@@ -1,7 +1,7 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "55.23.0",
-  "description": "Connected Admin\u2013Manager\u2013Salesman business manager with explicit bank destination validation and audited Cash & Bank Book",
+  "version": "55.26.0",
+  "description": "Admin salary advance management with audited Cash & Bank Book integration",
   "directories": {
     "doc": "docs",
     "test": "tests"

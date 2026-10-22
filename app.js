@@ -73,7 +73,7 @@ const S = () => store.state,
   mgmt = () => user?.role === "admin" || user?.role === "manager",
   own = () => S().salesmen.find((s) => s.user_id === user.id);
 const canStockWrite = () =>
-  admin() ||
+  admin() || manager() ||
   S().user_permissions.some(
     (permission) =>
       permission.user_id === user.id &&
@@ -88,9 +88,10 @@ const canViewAllClosings = () =>
       permission.section === "closing" &&
       permission.can_view,
   );
-const can = (p) =>
-  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","products","stock","staff","expenses"].includes(p)) ||
-  (user?.role === "salesman" && ["dashboard","myprofile","dsr","closing","cashbook","orders","invoices","quotes","ledger","stock","products"].includes(p)) ||
+const canBase = (p) =>
+  // Managers receive operational access by role; financial, pricing and system-wide
+  // modules require an explicit permission (or Admin role).
+  (user?.role === "manager" && ["dashboard","myprofile","dsr","closing","orders","stock","staff"].includes(p)) ||
   admin() ||
   (!["settings", "users", "audit", "import"].includes(p) &&
     ([
@@ -109,6 +110,11 @@ const can = (p) =>
       S().user_permissions.some(
         (x) => x.user_id === user.id && x.section === p && x.can_view,
       )));
+// A salesman only gets his overview, his own profile and his daily report / closing.
+// This must NOT fall through to the generic list in canBase(), which is why a salesman
+// used to see Cash & Bank Book, Invoices, Quotations, Ledger, Products, Salesmen & targets.
+const SALESMAN_PAGES = ["myprofile"];
+const can = (p) => (user?.role === "salesman" ? SALESMAN_PAGES.includes(p) : (manager() && p === "cashbook") ? false : canBase(p));
 const badge = (s, t = "") =>
   `<span class="badge ${t || (/PAID|Accepted|Synced|OK/.test(s) && !/PART|UNPAID/.test(s) ? "green" : /PART|Draft|Sent|Pending|30/.test(s) ? "amber" : /UNPAID|Expired|cancel|Rejected/.test(s) ? "red" : "")}">${esc(s)}</span>`;
 const btn = (text, act, id = "", extra = "", cls = "secondary") =>
@@ -117,8 +123,8 @@ const field = (label, name, value = "", type = "text", extra = "") =>
   `<div class="field"><label for="f-${name}">${label}</label><input id="f-${name}" name="${name}" type="${type}" value="${esc(value)}" ${extra}></div>`;
 const area = (label, name, value = "") =>
   `<div class="field"><label for="f-${name}">${label}</label><textarea id="f-${name}" name="${name}">${esc(value)}</textarea></div>`;
-const select = (label, name, options, value = "") =>
-  `<div class="field"><label for="f-${name}">${label}</label><select id="f-${name}" name="${name}">${options
+const select = (label, name, options, value = "", extra = "") =>
+  `<div class="field"><label for="f-${name}">${label}</label><select id="f-${name}" name="${name}" ${extra}>${options
     .map((o) => {
       const [v, t] = Array.isArray(o) ? o : [o, o];
       return `<option value="${esc(v)}" ${String(value) === String(v) ? "selected" : ""}>${esc(t)}</option>`;
@@ -271,13 +277,18 @@ function syncBadge() {
         : "";
 }
 function shell() {
-  try {
-    const savedPage = localStorage.getItem("blesscon:last-page");
-    if (savedPage && NAV.some((item) => item[0] === savedPage)) page = savedPage;
-  } catch {}
+  // Salesman accounts have one destination only: their own profile page. Do not
+  // restore a previously selected management module from shared-device storage.
+  if (user?.role === "salesman") page = "myprofile";
+  else {
+    try {
+      const savedPage = localStorage.getItem("blesscon:last-page");
+      if (savedPage && NAV.some((item) => item[0] === savedPage)) page = savedPage;
+    } catch {}
+  }
   const nav = NAV.filter((x) => can(x[0]));
   $("app").innerHTML =
-    `<div class="layout"><aside class="sidebar" id="sidebar"><div class="brand"><img src="${ICON}" alt="Blesscon Candy logo"><div><b>BLESSCON CANDY</b><small>Business Manager</small></div></div><nav aria-label="Main navigation">${nav.map((n, i) => `${[0, 5, 10].includes(i) ? `<div class="nav-section">${i === 0 ? "BUSINESS" : i === 5 ? "OPERATIONS" : "ADMINISTRATION"}</div>` : ""}<button data-page="${n[0]}" class="${page === n[0] ? "active" : ""}"><span class="nav-icon" aria-hidden="true">${n[2]}</span>${n[1]}</button>`).join("")}</nav><div class="sidebar-footer">${esc(user.name || user.email || "Owner")}<br>${esc(user.role)}<hr><small>Karachi business dates · PKR</small></div></aside><div><header class="topbar"><div class="actions"><button class="mobile-menu icon-button" data-act="menu" aria-label="Toggle navigation">☰</button><span class="muted">${new Date(today() + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span></div><div class="actions"><span id="sync-status"></span>${btn("↻ Sync", "sync")}${btn("Account", "account")}${btn("Sign out", "logout")}</div></header><main id="main" class="main-content" tabindex="-1">${user.practice ? '<div class="notice">Practice workspace — example products only. This data is stored on this device and never sent to your business database.</div>' : ""}<div id="sync-alert"></div><div id="page"></div></main></div></div>`;
+    `<div class="layout"><aside class="sidebar" id="sidebar"><div class="brand"><img src="${ICON}" alt="Blesscon Candy logo"><div><b>BLESSCON CANDY</b><small>Business Manager</small></div></div><nav aria-label="Main navigation">${nav.map((n, i) => `${user?.role !== "salesman" && [0, 5, 10].includes(i) ? `<div class="nav-section">${i === 0 ? "BUSINESS" : i === 5 ? "OPERATIONS" : "ADMINISTRATION"}</div>` : ""}<button data-page="${n[0]}" class="${page === n[0] ? "active" : ""}"><span class="nav-icon" aria-hidden="true">${n[2]}</span>${n[1]}</button>`).join("")}</nav><div class="sidebar-footer">${esc(user.name || user.email || "Owner")}<br>${esc(user.role)}<hr><small>Karachi business dates · PKR</small></div></aside><div><header class="topbar"><div class="actions"><button class="mobile-menu icon-button" data-act="menu" aria-label="Toggle navigation">☰</button><span class="muted">${new Date(today() + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span></div><div class="actions"><span id="sync-status"></span>${btn("↻ Sync", "sync")}${btn("Account", "account")}${btn("Sign out", "logout")}</div></header><main id="main" class="main-content" tabindex="-1">${user.practice ? '<div class="notice">Practice workspace — example products only. This data is stored on this device and never sent to your business database.</div>' : ""}<div id="sync-alert"></div><div id="page"></div></main></div></div>`;
   render();
 }
 function head(title, description, actions = "") {
@@ -288,6 +299,9 @@ function render() {
   charts.forEach((c) => c.destroy());
   charts = [];
   const s = S();
+  // Enforce the salesman page restriction even if an old saved route or a stale
+  // click attempts to select another module.
+  if (user?.role === "salesman") page = "myprofile";
   if (page === "myprofile" && !admin() && !["manager", "salesman", "user"].includes(user.role)) page = "dashboard";
   if (!can(page) && page !== "myprofile") page = "dashboard";
   // Keep the selected module across refreshes on this device. The normal
@@ -299,7 +313,7 @@ function render() {
     else b.removeAttribute("aria-current");
   });
   const methods = {
-    dashboard: user.role === "salesman" ? renderSalesmanDashboard : renderDashboard,
+    dashboard: user.role === "salesman" ? renderSalesmanDashboard : manager() ? renderManagerDashboard : renderDashboard,
     myprofile: renderMyProfile,
     dsr: renderDailyReport,
     closing: renderDailyClosing,
@@ -321,12 +335,19 @@ function render() {
   $("page").innerHTML = methods[page]();
   if (page === "myprofile" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load admin fieldwork: " + e.message));
   else if (page === "myprofile" && manager()) hydrateManagerFieldwork().catch((e) => toast("Could not load Manager fieldwork: " + e.message));
-  else if (page === "myprofile") hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
+  else if (page === "myprofile") {
+    hydrateSalesmanProfile().catch((e) => toast("Could not load profile details: " + e.message));
+    if (user.role === "salesman") hydrateSalesmanNotifications().catch((e) => toast("Could not load messages: " + e.message));
+  }
   if (page === "staff" && admin()) hydrateAdminFieldwork().catch((e) => toast("Could not load salesman fieldwork: " + e.message));
+  if (page === "staff" && client) hydrateTeamNotifications().catch((e) => toast("Could not load team notifications: " + e.message));
   if (page === "dsr")
     $("page").insertAdjacentHTML("beforeend", dsrClosingSection());
   syncBadge();
   if (page === "dashboard" || page === "pnl") drawCharts();
+  if (page === "dashboard" && user.role === "salesman") hydrateSalesmanNotifications().catch((e) => toast("Could not load notifications: " + e.message));
+  if (page === "dashboard" && manager()) hydrateManagerNotifications().catch((e) => toast("Could not load management messages: " + e.message));
+  if ((page === "staff" || (page === "dashboard" && manager())) && (admin() || manager())) hydrateSalesmanPhotoNodes().catch((e) => toast("Could not load employee photos: " + e.message));
 }
 async function hydrateManagerFieldwork() {
   if (!manager() || !client || page !== "myprofile") return;
@@ -361,6 +382,50 @@ async function hydrateManagerFieldwork() {
   }
 }
 
+function salesmanDayBody(sid, day) {
+  const s = S(), id = String(sid), d = String(day || today());
+  const moves = (s.salesman_stock_movements || []).filter((m) => String(m.salesman_id) === id);
+  const sold = new Map();
+  for (const o of s.orders.filter((o) => String(o.salesman_id) === id && o.status === "confirmed" && !o.deleted_at && o.date === d))
+    for (const i of (s.order_items || []).filter((i) => i.order_id === o.id))
+      sold.set(i.product_id, (sold.get(i.product_id) || 0) + num(i.boxes));
+  const ids = new Set([...moves.map((m) => m.product_id), ...sold.keys()]);
+  const rows = [...ids].map((pid) => {
+    const mv = moves.filter((m) => String(m.product_id) === String(pid));
+    const sum = (f) => mv.filter(f).reduce((n, m) => n + num(m.boxes), 0);
+    const opening = sum((m) => String(m.date) < d);
+    const issued = sum((m) => String(m.date) === d && m.kind === "issue");
+    const returned = Math.abs(sum((m) => String(m.date) === d && String(m.kind).startsWith("return")));
+    const soldBoxes = sold.get(pid) || 0;
+    const closing = sum((m) => String(m.date) <= d);
+    const name = visible(s.products).find((p) => String(p.id) === String(pid))?.name || pid;
+    return { name, opening, issued, returned, soldBoxes, closing };
+  }).filter((r) => r.opening || r.issued || r.returned || r.soldBoxes || r.closing)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const tot = rows.reduce((t, r) => ({ opening: t.opening + r.opening, issued: t.issued + r.issued, returned: t.returned + r.returned, soldBoxes: t.soldBoxes + r.soldBoxes, closing: t.closing + r.closing }), { opening: 0, issued: 0, returned: 0, soldBoxes: 0, closing: 0 });
+  const cells = (r) => [r.opening, r.issued, r.returned, r.soldBoxes, r.closing].map((v) => String(Math.round(v * 100) / 100));
+  const body = rows.map((r) => [esc(r.name), ...cells(r)]);
+  if (rows.length) body.push(["<b>Total</b>", ...cells(tot).map((v) => `<b>${v}</b>`)]);
+  return `<div class="cards">${card("Stock assigned that day", tot.issued + " boxes", esc(d))}${card("Sold that day", tot.soldBoxes + " boxes", esc(d))}${card("Stock in hand at end of day", tot.closing + " boxes", esc(d))}</div>` +
+    table(["Product", "Opening", "Assigned", "Returned", "Sold", "In hand"], body, "No stock was assigned to you and nothing was sold on this day.");
+}
+async function hydrateSalesmanSalary(seller) {
+  const el = $("my-salary-panel");
+  if (!el || !client) return;
+  const month = today().slice(0, 7);
+  const boxes = S().orders
+    .filter((o) => String(o.salesman_id) === String(seller.id) && o.status === "confirmed" && !o.deleted_at && String(o.date || "").startsWith(month))
+    .reduce((n, o) => n + (S().order_items || []).filter((i) => i.order_id === o.id).reduce((a, i) => a + num(i.boxes), 0), 0);
+  const r = await client.rpc("own_salary_snapshot");
+  if (!el.isConnected) return;
+  if (r.error) { el.innerHTML = `<p class="notice danger">Salary could not be loaded: ${esc(r.error.message)}. Contact Admin.</p>`; return; }
+  const pay = r.data || {};
+  const boxesPerCarton = Math.max(1, num(S().settings?.boxes_per_carton) || 24);
+  const targetBoxes = Math.round(num(pay.monthly_target) * boxesPerCarton);
+  el.innerHTML = `<div class="cards">${card("Boxes sold this month", Math.round(boxes) + " boxes", `${num(pay.achieved_cartons).toFixed(2)} carton-equivalent sold`)}${card("Monthly target", `${num(pay.monthly_target).toFixed(2)} cartons`, `${targetBoxes} boxes at ${boxesPerCarton} boxes/carton · ${num(pay.achievement_percent).toFixed(1)}% achieved`)}${card("Estimated salary", money(pay.total_paisa || 0), pay.status === "posted" ? "Posted for " + esc(pay.salary_period) : "Estimate for " + esc(pay.salary_period))}</div>` +
+    table(["Component", "Amount"], [["Base salary", money(pay.base_salary_paisa || 0)], ["Target incentive", money(pay.incentive_paisa || 0)], ["<b>Total</b>", `<b>${money(pay.total_paisa || 0)}</b>`]], "") +
+    `<p class="muted">Your incentive depends on the share of your monthly target you have sold. This is an estimate until it shows as Posted.</p>`;
+}
 async function hydrateSalesmanProfile() {
   const seller = own();
   if (!seller || !client || page !== "myprofile") return;
@@ -369,10 +434,11 @@ async function hydrateSalesmanProfile() {
     const { data, error } = await client.storage.from("employee-private").createSignedUrl(seller.photo_path, 3600);
     if (!error && data?.signedUrl && avatar.isConnected) avatar.innerHTML = `<img src="${esc(data.signedUrl)}" alt="Your profile photo">`;
   }
-  const [attendance, documents, visits] = await Promise.all([
+  const [attendance, documents, visits, assignments] = await Promise.all([
     client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", { ascending: false }).limit(30),
-    client.from("employee_documents").select("document_type,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", { ascending: false }).limit(50),
+    client.from("employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", { ascending: false }).limit(50),
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", { ascending: false }).limit(30),
+    client.from("salesman_area_assignments").select("area_name,effective_from,effective_to,instructions").eq("salesman_id", seller.id).order("effective_from", { ascending: false }).limit(50),
   ]);
   const history = (id, result, headers, rows, emptyText) => {
     const el = $(id); if (!el || !el.isConnected) return;
@@ -380,8 +446,41 @@ async function hydrateSalesmanProfile() {
     el.innerHTML = table(headers, result.data.map(rows), emptyText);
   };
   history("my-attendance-history", attendance, ["Date","Check-in","Check-out","Status"], r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleTimeString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleTimeString() : "—"), esc(r.status)], "No attendance records yet.");
-  history("my-document-history", documents, ["Document","Type","Uploaded","Size"], r => [esc(r.file_name), esc(r.document_type), esc(new Date(r.created_at).toLocaleDateString()), `${Math.ceil(num(r.size_bytes)/1024)} KB`], "No documents uploaded yet.");
+  const docsEl = $("my-document-history");
+  if (docsEl?.isConnected) {
+    if (documents.error) docsEl.innerHTML = `<p class="notice danger">Unable to load your documents: ${esc(documents.error.message)}. Ask Admin to verify employee-document permissions.</p>`;
+    else {
+      const docRows = await Promise.all((documents.data || []).map(async d => {
+        const signed = d.file_path ? await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600) : { data: null, error: { message: "File path missing" } };
+        const link = signed.data?.signedUrl ? `<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">View / download</a>` : `<span class="muted">${esc(signed.error?.message || "File unavailable")}</span>`;
+        return [esc(d.file_name), esc(({identity:"NIC / identity",education:"Educational certificate",employment:"Employment document",appointment:"Appointment letter",contract:"Employment contract",salary_bank:"Salary / bank document",other:"Other"})[d.document_type] || d.document_type), esc(new Date(d.created_at).toLocaleDateString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, link];
+      }));
+      docsEl.innerHTML = table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded yet. Contact your manager to upload your NIC, education and employment documents.");
+    }
+  }
   history("my-visit-history", visits, ["Visited","Customer","Area","Purpose","Location"], r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(4)}, ${num(r.longitude).toFixed(4)}`], "No customer visits recorded yet.");
+  history("my-area-history", assignments, ["Area","Effective from","Effective until","Instructions"], r => [esc(r.area_name), esc(r.effective_from), esc(r.effective_to || "Current"), esc(r.instructions || "—")], "No area assignments recorded yet.");
+  const areaNode = $("my-current-area");
+  if (areaNode?.isConnected) {
+    const t = today();
+    const current = (assignments.data || []).filter((a) => a.effective_from <= t && (!a.effective_to || a.effective_to >= t)).map((a) => a.area_name);
+    areaNode.textContent = current.length ? current.join(", ") : "Not assigned";
+  }
+  const dayInput = $("my-day-date");
+  if (dayInput && !dayInput.dataset.bound) {
+    dayInput.dataset.bound = "1";
+    dayInput.addEventListener("change", () => { const body = $("my-day-body"); if (body) body.innerHTML = salesmanDayBody(seller.id, dayInput.value || today()); });
+  }
+  await hydrateSalesmanSalary(seller);
+}
+
+function salesmanTargetDetails(salesmanId) {
+  const seller = own();
+  if (!seller || seller.id !== salesmanId) throw Error("You can only view your own target details.");
+  const s = S(), target = targetRows().find(t => t.id === seller.id);
+  const days = s.salesman_daily_targets.filter(d => d.salesman_id === seller.id && d.date >= monthStart(today()) && d.date <= today()).sort((a,b)=>a.date.localeCompare(b.date));
+  const rows = days.map(d => [esc(d.date), num(d.effective_target).toFixed(2), num(d.achieved_cartons).toFixed(2), num(d.achieved_boxes), Math.max(0,num(d.effective_target)-num(d.achieved_cartons)).toFixed(2), num(d.carried_forward_out).toFixed(2)]);
+  modal("My monthly target · " + today().slice(0,7), `<section class="panel"><div class="cards">${card("Monthly target", `${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved", `${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining", `${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement", `${num(target?.percent).toFixed(1)}%`)}</div>${table(["Date","Daily target (ct)","Achieved (ct)","Boxes","Remaining (ct)","Carry forward (ct)"], rows, "No daily target records are available for this month.")}<p class="muted">Quantities only. Cancelled, returned and reversed sales follow the business target policy.</p></section>`);
 }
 
 function renderSalesmanDashboard() {
@@ -389,17 +488,143 @@ function renderSalesmanDashboard() {
   if (!seller) return head("My overview", "Your login is not linked to a salesman profile.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
   const sid = seller.id, orders = s.orders.filter(o => o.salesman_id === sid && o.status !== "cancelled" && !o.deleted_at);
   const todays = orders.filter(o => o.date === today()), month = orders.filter(o => String(o.date || "").startsWith(today().slice(0,7)));
-  const movements = s.salesman_stock_movements.filter(m => m.salesman_id === sid);
-  const held = visible(s.products).map(p => ({name:p.name, qty:heldStock(p.id, sid), product_id:p.id, unit:p.unit || "boxes", retail_paisa:p.retail_paisa})).filter(x=>x.qty>0);
-  const collection = s.payments.filter(p => { const inv=s.invoices.find(i=>i.id===p.invoice_id); const order=inv&&s.orders.find(o=>o.id===inv.order_id); return order?.salesman_id===sid && (p.date===today() || p.created_at?.slice(0,10)===today()); }).reduce((n,p)=>n+num(p.amount_paisa),0);
+  const held = visible(s.products).map(p => ({name:p.name, qty:heldStock(p.id, sid), unit:p.unit || "boxes"})).filter(x=>x.qty>0);
   const target = targetRows().find(t=>t.id===sid);
-  const ownCustomerIds = new Set(s.customers.filter(c=>c.salesman_id===sid).map(c=>c.id));
-  const ownOutstanding = s.invoices.filter(i=>{const o=s.orders.find(x=>x.id===i.order_id);return o?.salesman_id===sid;}).reduce((n,i)=>n+Math.max(0,num(i.total_paisa)-s.payments.filter(p=>p.invoice_id===i.id).reduce((a,p)=>a+num(p.amount_paisa),0)),0);
-  return head("My overview", `Welcome, ${seller.name}. This dashboard shows your own activity only.`, btn("Open my profile", "go-myprofile", "", "", "gold")) +
-    `<div class="cards">${card("Today's sales",money(todays.reduce((n,o)=>n+num(o.total_paisa),0)),`${todays.length} order(s)`,true)}${card("This month's sales",money(month.reduce((n,o)=>n+num(o.total_paisa),0)),`${month.length} order(s)`)}${card("Today's collection",money(collection),"Payments linked to your sales")}${card("My customer outstanding",money(ownOutstanding),"Open invoice balances assigned to you")}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Boxes currently recorded against you")}${card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}</div>
-    <section class="panel"><div class="panel-heading"><h2>My stock in hand</h2>${btn("View stock details","go-stock")}</div>${table(["Product","Balance (boxes)"],held.map(x=>[esc(x.name),x.qty.toFixed(2)]),"No stock currently recorded against your account.")}</section>
-    <section class="panel"><div class="panel-heading"><h2>My latest sales</h2>${btn("View sales","go-myorders")}</div>${table(["Order","Date","Customer","Amount"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.number),esc(o.date),esc(s.customers.find(c=>c.id===o.customer_id)?.name||"Customer"),money(o.total_paisa)]),"No sales recorded yet.")}</section>
-    <section class="panel"><h2>Fieldwork shortcuts</h2><div class="actions">${btn("Attendance & customer visits","go-myprofile","","","gold")}${btn("Daily closing","go-closing")}${btn("Daily sales report","go-dsr")}</div></section>`;
+  const soldQuantity = list => list.reduce((sum,o) => sum + (s.order_items||[]).filter(i => i.order_id===o.id).reduce((n,i)=>n+num(i.boxes),0),0);
+  const photo = seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="${esc(seller.name)} profile photo">` : "♙";
+  return head("My overview", `Welcome, ${seller.name}. This dashboard shows your own operational activity only.`, btn("Open my profile", "go-myprofile", "", "", "gold")) +
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="salesman-dashboard-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p>Employee ID: ${esc(seller.id)} · Date of birth: ${esc(seller.date_of_birth || "Not recorded")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div></section>
+    <div class="cards">${card("Quantity sold today",soldQuantity(todays),`${todays.length} confirmed order(s)`,true)}${card("Quantity sold this month",soldQuantity(month),`${month.length} confirmed order(s)`)}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Recorded quantity against you")}${card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}<div class="card"><div class="label">Monthly salary</div><div class="value" id="salesman-salary-value">Loading…</div><div class="meta" id="salesman-salary-meta">Waiting for the server calculation</div></div></div>
+    <section class="panel"><div class="panel-heading"><h2>My stock in hand</h2></div>${table(["Product","Balance","Unit"],held.map(x=>[esc(x.name),x.qty.toFixed(2),esc(x.unit)]),"No stock currently recorded against your account.")}</section>
+    <section class="panel"><div class="panel-heading"><h2>My latest sales quantities</h2></div>${table(["Date","Order","Quantity"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.date),esc(o.number),num((s.order_items||[]).filter(i=>i.order_id===o.id).reduce((n,i)=>n+num(i.boxes),0))]),"No sales recorded yet.")}</section>
+    <section class="panel"><div class="panel-heading"><h2>Messages from management</h2><span class="muted">Updates and instructions</span></div><div id="salesman-notifications"><p class="muted">Loading messages…</p></div></section>
+    <section class="panel"><h2>Quick access</h2><div class="actions">${btn("View my profile","go-myprofile","","","gold")}${btn("Monthly target details","my-target-details",sid)}${btn("Salary breakdown","my-salary-details",sid)}${btn("Daily sales report","go-dsr")}</div></section>`;
+}
+
+async function hydrateSalesmanPhotoNodes() {
+  if (!client || !(admin() || manager())) return;
+  const scope = manager() ? new Set(managerTeamIds(S(), user.id).map(String)) : null;
+  const sellers = visible(S().salesmen).filter(s => (!scope || scope.has(String(s.id))) && s.photo_path && s.user_id);
+  await Promise.all(sellers.map(async seller => {
+    const node = $("team-photo-" + seller.id); if (!node || !node.isConnected) return;
+    const signed = await client.storage.from("employee-private").createSignedUrl(seller.photo_path, 3600);
+    if (!signed.error && signed.data?.signedUrl && node.isConnected) node.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="${esc(seller.name)} profile photo" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`;
+  }));
+}
+async function hydrateTeamNotifications() {
+  if (!client || !(admin() || manager()) || page !== "staff") return;
+  const root = $("team-notification-history"); if (!root) return;
+  const { data, error } = await client.from("employee_notifications").select("id,recipient_salesman_id,recipient_user_id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,created_at").order("created_at", { ascending: false }).limit(100);
+  if (error) { root.innerHTML = `<p class="notice danger">Could not load message history: ${esc(error.message)}</p>`; return; }
+  const sellers = new Map(S().salesmen.map(s => [String(s.id), s.name]));
+  const managerNames = new Map((S().profiles || []).map(p => [String(p.id), p.display_name || p.full_name || p.name || "Manager"]));
+  const rows = (data || []).filter(n => admin() || (n.recipient_salesman_id && managerTeamIds(S(), user.id).includes(n.recipient_salesman_id))).map(n => [n.recipient_salesman_id ? esc(sellers.get(String(n.recipient_salesman_id)) || n.recipient_salesman_id) : esc(managerNames.get(String(n.recipient_user_id)) || "Manager"), esc(n.title || "Message"), esc(n.message), esc(n.priority), n.read_at ? (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")) : badge("Unread","amber"), esc(new Date(n.created_at).toLocaleString())]);
+  root.innerHTML = table(["Recipient","Title","Message","Priority","Status","Sent"], rows, "No messages have been sent yet.");
+}
+async function hydrateManagerNotifications() {
+  if (!client || !manager()) return;
+  const root = $("manager-notifications");
+  if (!root) return;
+  const { data, error } = await client.from("employee_notifications")
+    .select("id,recipient_user_id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,expires_at,created_at,created_by")
+    .eq("recipient_user_id", user.id).order("created_at", { ascending: false }).limit(50);
+  if (error) { root.innerHTML = `<p class="notice danger">Messages unavailable: ${esc(error.message)}. Apply the management-messages migration.</p>`; return; }
+  const active = (data || []).filter(n => !n.expires_at || n.expires_at >= new Date().toISOString());
+  const unread = active.filter(n => !n.read_at).length;
+  const rows = active.map(n => [`<b>${esc(n.title || "Message")}</b>${n.read_at ? "" : ` ${badge("UNREAD","amber")}`}<small>${esc(new Date(n.created_at).toLocaleString())} · ${esc(n.priority)}</small>`, esc(n.message), n.requires_acknowledgement && !n.acknowledged_at ? btn("Acknowledge", "ack-manager-notification", n.id, "", "gold") : (!n.read_at ? btn("Mark read", "read-manager-notification", n.id) : (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")))]);
+  root.innerHTML = `<p class="notice">${unread} unread message${unread===1?"":"s"}</p>` + table(["Message","Details","Action"], rows, "No messages from the administrator yet.");
+}
+
+async function hydrateSalesmanNotifications() {
+  if (!client || user?.role !== "salesman" || !own()) return;
+  const root = $("salesman-notifications");
+  const avatar = $("salesman-dashboard-avatar");
+  if (avatar && own()?.photo_path) { const signed = await client.storage.from("employee-private").createSignedUrl(own().photo_path, 3600); if (!signed.error && signed.data?.signedUrl) avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="${esc(own().name)} profile photo">`; }
+  const salaryValue = $("salesman-salary-value"), salaryMeta = $("salesman-salary-meta");
+  if (salaryValue && salaryMeta) {
+    const result = await client.rpc("own_salary_snapshot");
+    if (result.error) { salaryValue.textContent = "Unavailable"; salaryMeta.textContent = "Salary calculation could not be loaded. Contact Admin."; }
+    else if (result.data) { salaryValue.textContent = money(result.data.total_paisa || 0); salaryMeta.textContent = result.data.status === "posted" ? `Posted for ${result.data.salary_period}` : `Estimate for ${result.data.salary_period} · pending Admin approval`; }
+  }
+  if (!root) return;
+  const { data, error } = await client.from("employee_notifications").select("id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,expires_at,created_at").eq("recipient_salesman_id", own().id).order("created_at", { ascending: false }).limit(50);
+  if (error) { root.innerHTML = `<p class="notice danger">Notifications unavailable: ${esc(error.message)}. Apply the revamp migration and verify access policies.</p>`; return; }
+  const activeMessages = (data || []).filter(n => !n.expires_at || n.expires_at >= new Date().toISOString());
+  const unreadCount = activeMessages.filter(n => !n.read_at).length;
+  const rows = activeMessages.map(n => [`<b>${esc(n.title || "Message")}</b>${n.read_at ? "" : ` ${badge("UNREAD","amber")}`}<small>${esc(new Date(n.created_at).toLocaleString())} · ${esc(n.priority)}</small>`, esc(n.message), n.requires_acknowledgement && !n.acknowledged_at ? btn("Acknowledge", "ack-notification", n.id, "", "gold") : (!n.read_at ? btn("Mark read", "read-notification", n.id) : (n.acknowledged_at ? badge("Acknowledged","green") : badge("Read","green")))]);
+  root.innerHTML = `<p class="notice">${unreadCount} unread message${unreadCount===1?"":"s"}</p>` + table(["Message","Details","Action"], rows, "No messages from your manager or administrator.");
+}
+function notificationModal(salesmanId = "") {
+  if (!(admin() || manager())) throw Error("Only Admin or an authorized Manager can send messages.");
+  const sellers = visible(S().salesmen).filter(s => admin() || managerTeamIds(S(), user.id).includes(s.id));
+  const choices = sellers.map(s => [s.id, `${s.name} (${s.id})`]);
+  if (salesmanId && !choices.some(x => x[0] === salesmanId)) throw Error("This salesman is outside your assigned team.");
+  let recipientField;
+  if (admin()) {
+    const managerIds = [...new Set((S().user_roles || []).filter(r => String(r.role || "").toLowerCase() === "manager").map(r => String(r.user_id)))];
+    const profileNames = new Map((S().profiles || []).map(p => [String(p.id), p.display_name || p.full_name || p.name || "Manager"]));
+    const managerChoices = managerIds.map(id => [`manager:${id}`, `${profileNames.get(id) || "Manager"} + their salesmen`]);
+    const options = salesmanId
+      ? [[`salesman:${salesmanId}`, `Salesman: ${sellers.find(s=>s.id===salesmanId)?.name || salesmanId} (also notify assigned Manager)`]]
+      : [["__all_managers__", "All Managers and their assigned salesmen"], ["__all_salesmen__", "All salesmen (also notify their Managers)"], ...managerChoices, ...choices.map(([id,label]) => [`salesman:${id}`, `Salesman: ${label} (also notify assigned Manager)`])];
+    recipientField = select("Recipients", "recipient_scope", options, options[0]?.[0] || "__all_managers__");
+  } else {
+    recipientField = salesmanId
+      ? `<p>Recipient: <b>${esc(sellers.find(s=>s.id===salesmanId)?.name || salesmanId)}</b></p><input type="hidden" name="recipient_salesman_id" value="${esc(salesmanId)}">`
+      : select("Recipient", "recipient_salesman_id", [["__team__", "All salesmen in my assigned team"], ...choices], "__team__");
+  }
+  modal(salesmanId ? "Message salesman" : "Team announcement", `<form id="notification-form" data-salesman="${esc(salesmanId)}"><div class="grid">${recipientField}${field("Title", "title", "", "text", 'required maxlength="160"')}${area("Message", "message", "")}${select("Priority", "priority", [["low","Low"],["normal","Normal"],["high","High"],["urgent","Urgent"]], "normal")}${select("Acknowledgement", "requires_acknowledgement", [["false","No acknowledgement required"],["true","Require acknowledgement"]], "false")}${field("Optional expiry date", "expires_at", "", "date")}</div><button class="gold" type="submit">Send message</button></form>`);
+}
+
+async function areaAssignmentModal(salesmanId) {
+  if (!(admin() || manager())) throw Error("Admin or Manager access required.");
+  const seller = S().salesmen.find(s => s.id === salesmanId);
+  if (!seller || (manager() && !managerTeamIds(S(), user.id).includes(salesmanId))) throw Error("This salesman is outside your assigned team.");
+  if (!client) throw Error("Area assignment requires an online connection.");
+  const { data, error } = await client.from("sales_areas").select("name").eq("active", true).order("name");
+  if (error) throw error;
+  const choices = [["", "Select an area"], ...(data || []).map(a => [a.name,a.name])];
+  if (choices.length === 1) throw Error("No active areas exist. Ask an Admin to create an area in Manage areas.");
+  const current = seller.territory || seller.area || "";
+  modal("Assign sales area · " + seller.name, `<form id="area-assignment-form" data-salesman="${esc(salesmanId)}"><div class="grid">${select("Existing active area", "area_name", choices, choices.some(a=>a[0]===current)?current:"")}${field("Effective from", "effective_from", today(), "date", "required")}${field("Effective until (optional)", "effective_to", "", "date")}${area("Operational instructions", "instructions", "")}</div><p class="muted">Choose an active area from the Admin catalogue. Assignments are effective-dated and historical assignments are preserved.</p><button class="gold" type="submit">Save area assignment</button></form>`);
+}
+async function manageAreasModal() {
+  if (!(admin() || manager()) || !client) throw Error("Only an online Admin or Manager can manage area definitions.");
+  const { data, error } = await client.from("sales_areas").select("id,name,description,active,created_at").order("name");
+  if (error) throw error;
+  const rows = (data||[]).map(a=>[`<b>${esc(a.name)}</b><small>${esc(a.description||"")}</small>`,a.active?badge("Active","green"):badge("Inactive","amber"),esc(a.created_at?new Date(a.created_at).toLocaleDateString():"—"),admin()?btn(a.active?"Deactivate":"Activate","toggle-area",a.id):"—"]);
+  modal("Manage sales areas", `<section class="panel">${table(["Area","Status","Created",...(admin()?["Action"]:[])],rows,"No areas yet. Add your first area below.")}</section><form id="sales-area-form"><div class="grid">${field("Area name","name","","text",'required maxlength="120"')}${field("Description / instructions","description","")}</div><button class="gold" type="submit">Add area</button></form><p class="muted">${admin()?"Deactivating an area prevents new assignments but preserves its historical assignments.":"Managers can create active areas for their assigned salesmen. Only Admin can deactivate or reactivate areas."}</p>`);
+}
+
+function attendanceModal(salesmanId) {
+  if (!(admin() || manager())) throw Error("Attendance is manager/admin controlled.");
+  const seller = S().salesmen.find(s => s.id === salesmanId);
+  if (!seller || (manager() && !managerTeamIds(S(), user.id).includes(salesmanId))) throw Error("This salesman is outside your assigned team.");
+  modal("Record attendance · " + seller.name, `<form id="attendance-manager-form" data-salesman="${esc(salesmanId)}"><div class="grid">${field("Attendance date", "attendance_date", today(), "date", "required")}${select("Status", "status", [["present","Present"],["late","Late"],["half_day","Half day"],["absent","Absent"],["leave","Leave"],["pending","Pending"]], "present")}${area("Correction reason / manager remarks", "remarks", "")}</div><p class="muted">Saving creates or updates the single attendance record for this salesman and date. Changes are logged by the database audit trigger where configured.</p><button class="gold" type="submit">Save attendance</button></form>`);
+}
+
+function renderManagerDashboard() {
+  const s = S(), teamIds = new Set(managerTeamIds(s, user.id).map(String));
+  const team = visible(s.salesmen).filter(x => teamIds.has(String(x.id)));
+  const from = monthStart(today()), to = today();
+  const teamOrders = s.orders.filter(o => teamIds.has(String(o.salesman_id)) && o.status === "confirmed" && !o.deleted_at && o.date >= from && o.date <= to);
+  const managerOrders = s.orders.filter(o => o.status === "confirmed" && !o.deleted_at && !o.salesman_id && o.created_by === user.id && o.date >= from && o.date <= to);
+  const quantity = orders => orders.reduce((sum, o) => sum + (s.order_items || []).filter(i => i.order_id === o.id).reduce((n, i) => n + num(i.boxes), 0), 0);
+  const cartons = orders => orders.reduce((sum, o) => sum + (s.order_items || []).filter(i => i.order_id === o.id).reduce((n, i) => n + num(i.boxes) / Math.max(1, num(i.boxes_per_carton) || num(s.settings.boxes_per_carton) || 24), 0), 0);
+  const targets = targetRows().filter(t => teamIds.has(String(t.id)));
+  const achievedCartons = targets.reduce((sum, t) => sum + num(t.achieved), 0);
+  const managerCartons = cartons(managerOrders);
+  const teamTarget = num(s.settings.company_monthly_target) || 2000;
+  const remainingTeamTarget = Math.max(0, teamTarget - achievedCartons);
+  const attendance = (s.attendance_records || []).filter(a => teamIds.has(String(a.salesman_id)) && a.attendance_date === today());
+  const present = attendance.filter(a => ["present", "late", "half_day"].includes(a.status)).length;
+  const absent = attendance.filter(a => ["absent", "leave"].includes(a.status)).length;
+  const recorded = new Set(attendance.map(a => String(a.salesman_id))).size;
+  const stockIssues = (s.salesman_stock_movements || []).filter(m => teamIds.has(String(m.salesman_id)) && m.kind === "issue" && m.date === today()).reduce((n,m)=>n+num(m.boxes),0);
+  const stockReturns = (s.salesman_stock_movements || []).filter(m => teamIds.has(String(m.salesman_id)) && String(m.kind).startsWith("return_") && m.date === today()).reduce((n,m)=>n+Math.abs(num(m.boxes)),0);
+  const cards = `<div class="cards">${card("Team monthly target", `${teamTarget.toFixed(2)} cartons`, "Configured team target", true)}${card("Team achieved (salesmen)", `${achievedCartons.toFixed(2)} cartons`, `${(achievedCartons / teamTarget * 100 || 0).toFixed(1)}% of target achieved`)}${card("Your additional cartons sold", `+${managerCartons.toFixed(2)} cartons`, `${managerOrders.length} confirmed order(s) sold directly under your manager account · not counted toward team target`)}${card("Remaining team target", `${remainingTeamTarget.toFixed(2)} cartons`, "Based on salesmen's achievement only", true)}${card("Salesmen present", present, `${team.length} assigned`)}${card("Salesmen absent / leave", absent, "Attendance records today")}${card("Attendance missing", Math.max(0,team.length-recorded), "Not yet recorded")}${card("Boxes sold today", quantity(teamOrders.filter(o=>o.date===today())), "Confirmed team sales quantity")}${card("Stock issued today", stockIssues.toFixed(2), "Existing stock ledger")}${card("Stock returned today", stockReturns.toFixed(2), "Existing stock ledger")}</div>`;
+  return head("Manager overview", "Operational control for your assigned salesmen. Financial account balances, revenue, wholesale prices and profit are not displayed.", btn("Manage salesmen", "go-staff", "", "", "gold")) + cards +
+    `<section class="panel"><div class="panel-heading"><h2>My team</h2>${btn("Open salesmen & targets", "go-staff")}</div>${table(["Salesman","Area","Attendance","Monthly target","Achieved","Remaining","Actions"], targets.map(t => { const seller=team.find(x=>String(x.id)===String(t.id)); const att=attendance.find(a=>String(a.salesman_id)===String(t.id)); return [`<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b>`,esc(seller?.territory||seller?.area||"Not assigned"),esc(att?.status||"Not recorded"),`${num(t.monthly_target).toFixed(2)} cartons`,`${num(t.achieved).toFixed(2)} cartons`,`${Math.max(0,num(t.monthly_target)-num(t.achieved)).toFixed(2)} cartons`,`${btn("Details","salesman-profile",t.id)}${btn("Attendance","mark-attendance",t.id)}${btn("Message","notify-salesman",t.id)}`]; }), "No salesmen are assigned to this manager. Admin should assign employees from Salesmen & Targets.")}</section><section class="panel"><div class="panel-heading"><h2>Messages from Admin</h2><span class="muted">Announcements and instructions</span></div><div id="manager-notifications"><p class="muted">Loading messages…</p></div></section>`;
 }
 
 function renderAdminMyProfile() {
@@ -407,7 +632,7 @@ function renderAdminMyProfile() {
   const profile = S().profiles?.find((p) => String(p.id) === String(current.id)) || {};
   return head("My profile & fieldwork", "Administrator account details and a consolidated view of Manager and salesman attendance, documents, customer visits and profile photos.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="admin-profile-avatar">♙</div><div><h2>${esc(current.name || profile.display_name || "Administrator")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Administrator</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="admin-profile-photo">Upload / change administrator profile picture</label><input id="admin-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="admin-profile-photo-upload">Upload profile picture</button></div><p class="muted">Use a JPG, PNG or WebP image up to 5 MB. Your picture is private and visible to authorized users.</p><p class="muted">This page displays the signed-in administrator account. Salesman records and photos below are read-only and do not require the administrator to be linked to a salesman record.</p></section>
-    <section class="panel"><div class="panel-heading"><h2>Manager fieldwork & uploads</h2><span class="muted">Admin view · BABAR ALI KHAN</span></div><div id="admin-manager-fieldwork-data"><p class="muted">Loading Manager attendance, uploads and visits…</p></div></section><section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
+    <section class="panel"><div class="panel-heading"><h2>Manager fieldwork & uploads</h2><span class="muted">Admin view · manager accounts</span></div><div id="admin-manager-fieldwork-data"><p class="muted">Loading Manager attendance, uploads and visits…</p></div></section><section class="panel"><div class="panel-heading"><h2>Salesman fieldwork & profile photos</h2><span class="muted">Admin view</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>`;
 }
 
 function renderManagerMyProfile() {
@@ -426,23 +651,25 @@ function renderMyProfile() {
   const seller = own();
   if (!seller) return head("My profile", "Your account is not linked to a salesman record.") + '<section class="panel"><p class="notice">Please ask an administrator to link your login to your salesman profile.</p></section>';
   const s = S(), sid = seller.id;
-  const movements = s.salesman_stock_movements.filter(m => m.salesman_id === sid);
-  const productRows = visible(s.products).map(p => {
-    const qty = heldStock(p.id, sid);
-    return qty ? [esc(p.name), qty.toFixed(2), esc(p.unit || "boxes")] : null;
-  }).filter(Boolean);
-  const orders = s.orders.filter(o => o.salesman_id === sid && o.status !== "cancelled" && !o.deleted_at);
-  const todaySales = orders.filter(o => o.date === today()).reduce((n,o) => n + num(o.total_paisa), 0);
-  const monthSales = orders.filter(o => String(o.date || "").startsWith(today().slice(0,7))).reduce((n,o) => n + num(o.total_paisa), 0);
-  const target = targetRows().find(t => t.id === sid);
-  return head("My profile & fieldwork", "Your personal performance, stock, attendance and customer visits.") +
-    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="Your profile photo">` : "♙"}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div><div class="grid"><div class="field"><label for="profile-photo">Update profile photograph</label><input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="profile-photo-upload">Upload photo</button></div><p class="muted">Only your own profile can be updated. Documents are stored privately.</p></section>
-    <div class="cards">${card("Today's sales", money(todaySales), "Your confirmed orders today")}${card("Sales this month", money(monthSales), "Your confirmed orders this month")}${card("Monthly target", `${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`, `${num(target?.percent).toFixed(1)}% achieved`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Boxes across products")}</div>
+  const productRows = visible(s.products).map(p => { const qty = heldStock(p.id, sid); return qty ? [esc(p.name), qty.toFixed(2), esc(p.unit || "boxes")] : null; }).filter(Boolean);
+  const orders = s.orders.filter(o => String(o.salesman_id) === String(sid) && o.status === "confirmed" && !o.deleted_at);
+  const monthOrders = orders.filter(o => String(o.date || "").startsWith(today().slice(0, 7)));
+  const monthBoxes = monthOrders.reduce((n, o) => n + (s.order_items || []).filter(i => i.order_id === o.id).reduce((a, i) => a + num(i.boxes), 0), 0);
+  const monthCartons = monthOrders.reduce((n, o) => n + (s.order_items || []).filter(i => i.order_id === o.id).reduce((a, i) => a + num(i.boxes) / Math.max(1, num(i.boxes_per_carton) || 24), 0), 0);
+  const monthlyTarget = num(seller.monthly_target);
+  const achievementPercent = monthlyTarget > 0 ? monthCartons / monthlyTarget * 100 : 0;
+  const photo = seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="${esc(seller.name)} profile photo">` : "♙";
+  return head("My profile", "Your profile, assigned area, daily stock and sales, monthly target, salary estimate and manager-uploaded documents.") +
+    `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>Date of birth: <b>${esc(seller.date_of_birth || "Not recorded")}</b></p><p>Assigned area: <b id="my-current-area">${esc(seller.territory || seller.area || (client ? "Loading…" : "Not assigned"))}</b></p><p>Status: <b>${seller.active ? "Active" : "Inactive"}</b></p></div></div><p class="notice">Profile details, photograph, date of birth, NIC and education documents can only be changed by authorized management. Please contact your manager if anything needs correction.</p></section>
+    <div class="cards">${card("Boxes sold today", orders.filter(o=>o.date===today()).reduce((n,o)=>n+(s.order_items||[]).filter(i=>i.order_id===o.id).reduce((a,i)=>a+num(i.boxes),0),0), "Confirmed sales quantity")}${card("Monthly target progress", `${monthBoxes} boxes sold · ${monthCartons.toFixed(2)} / ${monthlyTarget.toFixed(2)} cartons`, `${achievementPercent.toFixed(1)}% achieved · salary incentive follows confirmed sales`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Recorded quantity against you")}</div>
+    <section class="panel"><h2>My salary this month</h2><div id="my-salary-panel"><p class="muted">Loading salary…</p></div></section>
+    <section class="panel"><div class="panel-heading"><h2>Stock assigned &amp; sales by day</h2><div class="field" style="margin:0"><label for="my-day-date">Day</label><input id="my-day-date" type="date" value="${today()}" max="${today()}"></div></div><div id="my-day-body">${salesmanDayBody(sid, today())}</div></section>
     <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
-    <section class="panel"><h2>My employee documents</h2><p class="muted">Upload an ID or employment document. Files are private and visible only to you and authorized management.</p><div class="grid"><div class="field"><label for="employee-document-type">Document type</label><select id="employee-document-type"><option value="identity">Identity document</option><option value="employment">Employment document</option><option value="other">Other authorized document</option></select></div><div class="field"><label for="employee-document-file">Choose file</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-document-upload">Upload document</button><div id="profile-upload-status" role="status"></div></section>
-    <section class="panel"><h2>Attendance</h2><p>Record your attendance for today. Check-out is available after check-in.</p><div class="actions">${btn("Check in", "attendance-check-in", sid, "", "gold")}${btn("Check out", "attendance-check-out", sid)}</div><p class="muted">Check-in will request GPS permission to record your location when available. If you decline or GPS is unavailable, attendance can still be recorded without coordinates. Timestamps are recorded when online.</p><div id="my-attendance-history"><p class="muted">Loading your attendance history…</p></div></section>
-    <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission. Location is collected only when you press the button.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional. Denying GPS will not prevent a normal visit record.</p><div id="my-visit-history"><p class="muted">Loading your visit history…</p></div></section>
-    <section class="panel"><h2>My uploaded documents</h2><div id="my-document-history"><p class="muted">Loading your document list…</p></div></section>`;
+    <section class="panel"><h2>Attendance history</h2><p class="muted">Attendance is recorded and corrected by authorized management. This view is read-only.</p><div id="my-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
+    <section class="panel"><h2>Assigned areas & history</h2><div id="my-area-history"><p class="muted">Loading area assignments…</p></div></section>
+    <section class="panel"><h2>My employee documents</h2><p class="muted">Documents uploaded by authorized management are listed below. Contact your manager if a document is missing or outdated.</p><div id="my-document-history"><p class="muted">Loading your document list…</p></div></section>
+    <section class="panel"><div class="panel-heading"><h2>Messages from Admin &amp; Manager</h2><span class="muted">Announcements and instructions</span></div><div id="salesman-notifications"><p class="muted">Loading messages…</p></div></section>
+    <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional.</p><div id="my-visit-history"><p class="muted">Loading your visit history…</p></div></section>`;
 }
 
 function targetRows() {
@@ -453,7 +680,10 @@ function targetRows() {
       const linkedRole = s.user_roles.find(
         (role) => role.user_id === salesman.user_id,
       )?.role;
-      return !salesman.user_id || linkedRole === "salesman";
+      // Admin must always retain visibility of every salesman profile. Also keep
+      // manager-assigned profiles visible even if an older/misconfigured login role
+      // is not "salesman"; the manager scope is enforced separately by managerTeamIds.
+      return admin() || !salesman.user_id || linkedRole === "salesman" || !!salesman.manager_user_id;
     })
     .map((x) => {
       const days = s.salesman_daily_targets.filter(
@@ -557,7 +787,7 @@ function renderDashboard() {
     myCartons = myDirect.reduce((a, o) => a + cartonsOf(o), 0),
     myValue = myDirect.reduce((a, o) => a + num(o.total_paisa), 0),
     companyPanel = mgmt()
-      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · included in the company target and shown as manager achievement`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
+      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · additional manager sales, excluded from the team target`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
       : "",
     todaysClosings = s.daily_closings.filter(
       (closing) =>
@@ -587,6 +817,26 @@ function renderDashboard() {
   const exp = visible(s.products).filter((p) =>
     ["Expired", "≤30 days"].includes(expiryStatus(p.expiry_date)),
   );
+  const warehouse = { cartons: 0, loose: 0, boxes: 0, marketValuePaisa: 0, potentialProfitPaisa: 0, pricedBoxes: 0, incompleteProducts: 0 };
+  if (admin()) {
+    for (const product of visible(s.products)) {
+      const boxes = Math.max(0, balance(product.id, null));
+      const perCarton = Math.max(1, num(product.boxes_per_carton) || 1);
+      warehouse.cartons += Math.floor(boxes / perCarton);
+      warehouse.loose += boxes % perCarton;
+      warehouse.boxes += boxes;
+      const retail = num(product.retail_paisa);
+      const cost = num(product.cost_paisa);
+      if (boxes > 0 && retail > 0) {
+        warehouse.marketValuePaisa += boxes * retail;
+        warehouse.pricedBoxes += boxes;
+      }
+      if (boxes > 0 && retail > 0 && cost > 0) {
+        warehouse.potentialProfitPaisa += boxes * (retail - cost);
+      }
+      if (boxes > 0 && (retail <= 0 || cost <= 0)) warehouse.incompleteProducts += 1;
+    }
+  }
   const dailyRows = report.days.map((day) => [
     esc(day.date),
     money(day.sales_paisa),
@@ -601,10 +851,11 @@ function renderDashboard() {
           head(
             "Business overview",
             "Sales, collections and your team — all in one place.",
-            btn("New quotation", "new-quote") +
+            ((admin() || manager()) ? btn("Manage areas", "manage-areas") : "") +
+              btn("New quotation", "new-quote") +
               btn("+ New sale", "new-order", "", "", "gold"),
           ) +
-          `${companyPanel}<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${p ? card("Profit in period", money(p.net), "Restricted management figure") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
+          `${companyPanel}<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${p ? card(admin() ? "Net profit (period)" : p.net < 0 ? "Loss in period" : "Profit in period", money(admin() ? Math.max(0, p.net) : Math.abs(p.net)), admin() ? "After cost of goods and operating expenses" : "Restricted management figure") : ""}${admin() && p ? card("Net loss (period)", money(Math.max(0, -p.net)), "Loss after cost of goods and operating expenses") : ""}${admin() ? card("Warehouse cartons", warehouse.cartons, `${warehouse.loose} loose boxes · current warehouse stock`) + card("Warehouse boxes", warehouse.boxes, "Total boxes physically held in warehouse") + card("Estimated market value", money(warehouse.marketValuePaisa), `${warehouse.pricedBoxes} boxes valued at saved retail prices${warehouse.incompleteProducts ? ` · ${warehouse.incompleteProducts} products need pricing` : ""}`) + card("Potential stock profit", money(warehouse.potentialProfitPaisa), "Retail value less saved cost; before operating expenses") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
   );
 }
 function renderDailyReport() {
@@ -878,52 +1129,44 @@ function stockOverview() {
 function renderDocs(quote) {
   const s = S(),
     rows = visible(s[quote ? "quotations" : "orders"])
-      .filter((d) =>
-        (d.number + " " + customerName(d.customer_id))
-          .toLowerCase()
-          .includes(filter.search.toLowerCase()),
-      )
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .filter((d) => (d.number + " " + customerName(d.customer_id)).toLowerCase().includes(filter.search.toLowerCase()))
+      .sort((a, b) => b.date.localeCompare(a.date)),
+    showFinancial = admin() || (manager() && can("invoices")) || (!manager() && user.role !== "salesman" && can("invoices"));
+  const headers = ["Document", "Customer", "Date", "Salesman", ...(showFinancial ? ["Amount", "Payment"] : ["Quantity"]), "Status", "Actions"];
   return (
     head(
       quote ? "Quotations" : "Sales orders",
-      quote
-        ? "Create proposals, track acceptance and convert to sales."
-        : "Confirmed sales update stock, invoices and team targets.",
-      btn(
-        quote ? "+ New quotation" : "+ New sale",
-        quote ? "new-quote" : "new-order",
-        "",
-        "",
-        "gold",
-      ),
+      quote ? "Create proposals, track acceptance and convert to sales." : "Confirmed sales update stock, invoices and team targets.",
+      btn(quote ? "+ New quotation" : "+ New sale", quote ? "new-quote" : "new-order", "", "", "gold"),
     ) +
     `<section class="panel"><div class="filters">${field("Search customer or document", "search", filter.search, "search", 'data-filter="search"')}</div>${table(
-      [
-        "Document",
-        "Customer",
-        "Date",
-        "Salesman",
-        "Amount",
-        "Payment",
-        "Status",
-        "Actions",
-      ],
-      rows.map((d) => [
-        `<b>${esc(d.number)}</b>${quote ? "<small>Revision " + d.revision + "</small>" : ""}`,
-        esc(customerName(d.customer_id)),
-        esc(d.date),
-        esc(salesmanName(d.salesman_id)),
-        money(d.total_paisa),
-        quote ? "—" : (() => { const invoice = s.invoices.find(i => i.order_id === d.id); const pay = invoice ? invoiceState(invoice, s.payments) : {status:"UNPAID"}; return badge(d.status === "cancelled" ? "CANCELLED" : pay.status); })(),
-        badge(d.status),
-        `<div class="actions">${btn("View", quote ? "view-quote" : "view-order", d.id)}${(!quote && d.status === "confirmed") || (quote && ["Draft", "Sent"].includes(d.status)) ? btn("Edit", quote ? "edit-quote" : "edit-order", d.id) : ""}${!quote && d.status === "confirmed" && (()=>{const inv=s.invoices.find(i=>i.order_id===d.id);return inv && invoiceState(inv,s.payments).balance>0 && (admin() || s.user_permissions.some(p=>p.user_id===user.id&&p.section==="invoices"&&p.can_create)) ? btn("Receive payment","add-payment",inv.id) : ""})()}${quote && !["Converted", "Expired", "Rejected"].includes(d.status) ? btn("Convert", "convert", d.id) : ""}${quote && ["Draft", "Sent"].includes(d.status) ? btn("Status", "quote-status", d.id) : ""}${admin() ? btn(quote ? "Delete" : "Cancel", quote ? "delete-quote" : "cancel-order", d.id, "", "danger") : ""}</div>`,
-      ]),
+      headers,
+      rows.map((d) => {
+        const qty = (s.order_items || []).filter(i => i.order_id === d.id).reduce((n, i) => n + num(i.boxes), 0);
+        const invoice = !quote ? s.invoices.find(i => i.order_id === d.id) : null;
+        const pay = invoice ? invoiceState(invoice, s.payments) : { status: "UNPAID" };
+        const financial = showFinancial ? [money(d.total_paisa), quote ? "—" : badge(d.status === "cancelled" ? "CANCELLED" : pay.status)] : [quote ? "—" : `${qty} boxes`];
+        return [
+          `<b>${esc(d.number)}</b>${quote ? "<small>Revision " + d.revision + "</small>" : ""}`,
+          esc(customerName(d.customer_id)), esc(d.date), esc(salesmanName(d.salesman_id)), ...financial, badge(d.status),
+          `<div class="actions">${btn("View", quote ? "view-quote" : "view-order", d.id)}${((!quote && d.status === "confirmed") || (quote && ["Draft", "Sent"].includes(d.status))) ? btn("Edit", quote ? "edit-quote" : "edit-order", d.id) : ""}${showFinancial && !quote && d.status === "confirmed" && (()=>{const inv=s.invoices.find(i=>i.order_id===d.id);return inv && invoiceState(inv,s.payments).balance>0 && (admin() || s.user_permissions.some(p=>p.user_id===user.id&&p.section==="invoices"&&p.can_create)) ? btn("Receive payment","add-payment",inv.id) : ""})()}${quote && !["Converted", "Expired", "Rejected"].includes(d.status) ? btn("Convert", "convert", d.id) : ""}${quote && ["Draft", "Sent"].includes(d.status) ? btn("Status", "quote-status", d.id) : ""}${admin() ? btn(quote ? "Delete" : "Cancel", quote ? "delete-quote" : "cancel-order", d.id, "", "danger") : ""}</div>`
+        ];
+      }),
     )}</section>`
   );
 }
+function showOperationalOrder(id) {
+  const s = S(), order = s.orders.find(o => o.id === id);
+  if (!order) throw Error("Sales order not found.");
+  if (user.role === "salesman" && order.salesman_id !== own()?.id) throw Error("You can only view your own sales order.");
+  if (manager() && !can("invoices") && order.salesman_id && !managerTeamIds(s, user.id).includes(order.salesman_id)) throw Error("This order is outside your assigned team.");
+  const items = (s.order_items || []).filter(i => i.order_id === id).map(i => [esc(s.products.find(p => p.id === i.product_id)?.name || i.product_id), num(i.cartons), num(i.boxes), "boxes"]);
+  modal("Sales order · " + order.number, `<section class="panel"><p><b>Customer:</b> ${esc(customerName(order.customer_id))}</p><p><b>Date:</b> ${esc(order.date)} · <b>Status:</b> ${esc(order.status)}</p><p><b>Salesman:</b> ${esc(salesmanName(order.salesman_id))}</p>${table(["Product","Quantity","Boxes","Unit"],items,"No order lines recorded.")}<p class="muted">This operational view intentionally omits selling amounts, payment amounts and profit.</p></section>`);
+}
 
 const CASHBOOK_DEFAULT_ACCOUNTS = [
+  { account_key: "mcb_bank", label: "MCB Bank", account_type: "bank", payment_method: "Bank", opening_balance_paisa: 0, active: true },
+  { account_key: "al_habib_bank", label: "Al Habib Bank", account_type: "bank", payment_method: "Bank", opening_balance_paisa: 0, active: true },
   { account_key: "cash_hand", label: "Cash in Hand", account_type: "cash", opening_balance_paisa: 0, active: true },
   { account_key: "bank_default", label: "Cash in Bank — Default account", account_type: "bank", payment_method: "Bank", opening_balance_paisa: 0, active: true },
   { account_key: "easypaisa", label: "EasyPaisa", account_type: "wallet", payment_method: "Easypaisa", opening_balance_paisa: 0, active: true },
@@ -931,10 +1174,39 @@ const CASHBOOK_DEFAULT_ACCOUNTS = [
   { account_key: "market_credit", label: "Market Credit — Receivables", account_type: "receivable", opening_balance_paisa: 0, active: true },
 ];
 let cashbookDate = today();
+let cashbookAccountFilter = "";
 function cashbookMethodKey(method, salesmanId = "") {
-  const m = /easypaisa/i.test(method || "") ? "easypaisa" : /jazzcash/i.test(method || "") ? "jazzcash" : /bank|cheque/i.test(method || "") ? "bank" : "cash";
+  const text = String(method || "").toLowerCase();
+  const m = /al habib/.test(text) ? "al_habib_bank" : /mcb/.test(text) ? "mcb_bank" : /easypaisa|easy paisa/.test(text) ? "easypaisa" : /jazzcash/.test(text) ? "jazzcash" : /bank|cheque/.test(text) ? "bank" : "cash";
   if (salesmanId) return `salesman:${salesmanId}:${m}`;
-  return ({ cash: "cash_hand", bank: "bank_default", easypaisa: "easypaisa", jazzcash: "jazzcash" })[m];
+  return ({ cash: "cash_hand", bank: "bank_default", mcb_bank: "mcb_bank", al_habib_bank: "al_habib_bank", easypaisa: "easypaisa", jazzcash: "jazzcash" })[m];
+}
+function validateCashbookMethodAccount(method, accountKey) {
+  const m = String(method || "").trim().toLowerCase();
+  if (!accountKey) throw Error("Choose the exact cash, bank, or wallet account before saving this transaction.");
+  const accounts = [...(S().cashbook_accounts || [])];
+  if (user?.practice) for (const a of CASHBOOK_DEFAULT_ACCOUNTS) if (!accounts.some(x => x.account_key === a.account_key)) accounts.push(a);
+  const acct = accounts.find(a => a.account_key === accountKey && a.active !== false);
+  if (!acct) {
+    if (!S().cashbook_loaded && !user?.practice) throw Error("The Cash & Bank Book account list has not loaded. Refresh and try again; no transaction was saved.");
+    throw Error("The selected account is unavailable or inactive. Choose an active account.");
+  }
+  const isMcb = ["mcb bank","cheque — mcb bank","cheque - mcb bank"].includes(m);
+  const isAlHabib = ["al habib bank","cheque — al habib bank","cheque - al habib bank"].includes(m);
+  if (isMcb && !(acct.account_type === "bank" && (acct.account_key === "mcb_bank" || acct.account_key === "pk80mucb1156654281004446" || /mcb/i.test(acct.label || "")))) throw Error("Payment method is MCB Bank. Select the MCB Bank account, not Al Habib Bank or another account.");
+  if (isAlHabib && !(acct.account_type === "bank" && (acct.account_key === "al_habib_bank" || /al habib/i.test(acct.label || "")))) throw Error("Payment method is Al Habib Bank. Select the Al Habib Bank account, not MCB Bank or another account.");
+  if (isMcb || isAlHabib || ["bank","bank account","cheque"].includes(m)) {
+    if (!isMcb && !isAlHabib && acct.account_type !== "bank" && !(acct.account_type === "salesman" && /bank account/i.test(acct.payment_method || ""))) throw Error("This payment method requires a bank account.");
+  } else if (m === "cash") {
+    if (acct.account_type !== "cash" && !(acct.account_type === "salesman" && /^cash$/i.test(acct.payment_method || ""))) throw Error("Cash payments must be assigned to Cash in Hand or the appropriate cash collection account.");
+  } else if (/jazzcash/.test(m)) {
+    if (acct.account_type !== "wallet" && !(acct.account_type === "salesman" && /jazzcash/i.test(acct.payment_method || ""))) throw Error("JazzCash payments must be assigned to the JazzCash account.");
+    if (acct.account_type === "wallet" && !/jazzcash/i.test((acct.payment_method || "") + " " + (acct.label || ""))) throw Error("Select the JazzCash wallet.");
+  } else if (/easypaisa|easy paisa/.test(m)) {
+    if (acct.account_type !== "wallet" && !(acct.account_type === "salesman" && /easypaisa/i.test(acct.payment_method || ""))) throw Error("EasyPaisa payments must be assigned to the EasyPaisa account.");
+    if (acct.account_type === "wallet" && !/easypaisa|easy paisa/i.test((acct.payment_method || "") + " " + (acct.label || ""))) throw Error("Select the EasyPaisa wallet.");
+  }
+  return true;
 }
 function cashbookData() {
   const s = S();
@@ -962,7 +1234,7 @@ function cashbookData() {
       if (!inv || !order || order.status !== "confirmed") continue;
       const key = p.cashbook_account_key || cashbookMethodKey(p.method, order.salesman_id);
       const seller = order.salesman_id && s.salesmen.find(x => x.id === order.salesman_id);
-      const labels = {cash_hand:"Cash in Hand",bank_default:"Cash in Bank — Default account",easypaisa:"EasyPaisa",jazzcash:"JazzCash"};
+      const labels = {cash_hand:"Cash in Hand",bank_default:"Cash in Bank — Default account",mcb_bank:"MCB Bank",al_habib_bank:"Al Habib Bank",easypaisa:"EasyPaisa",jazzcash:"JazzCash"};
       addAccount(key, seller ? `Salesman Collection — ${seller.name} (${p.method})` : (labels[key] || key), seller ? "salesman" : (key === "bank_default" ? "bank" : key === "cash_hand" ? "cash" : "wallet"), p.method, order.salesman_id || null);
       entries.push({posting_key:`local:payment:${p.id}:receipt`,transaction_id:p.transaction_id,business_date:p.date,account_key:key,amount_paisa:num(p.amount_paisa),entry_type:"receipt",source_table:"payments",source_id:p.id,description:`Payment received — ${p.method}`,salesman_id:order.salesman_id});
       entries.push({posting_key:`local:payment:${p.id}:receivable`,transaction_id:p.transaction_id,business_date:p.date,account_key:"market_credit",amount_paisa:-num(p.amount_paisa),entry_type:"receivable",source_table:"payments",source_id:p.id,description:"Receivable recovered",salesman_id:order.salesman_id});
@@ -970,7 +1242,7 @@ function cashbookData() {
     for (const e of s.expenses.filter(x => !x.deleted_at)) {
       const key = e.cashbook_account_key || cashbookMethodKey(e.method, e.salesman_id);
       const seller = e.salesman_id && s.salesmen.find(x => x.id === e.salesman_id);
-      const labels = {cash_hand:"Cash in Hand",bank_default:"Cash in Bank — Default account",easypaisa:"EasyPaisa",jazzcash:"JazzCash"};
+      const labels = {cash_hand:"Cash in Hand",bank_default:"Cash in Bank — Default account",mcb_bank:"MCB Bank",al_habib_bank:"Al Habib Bank",easypaisa:"EasyPaisa",jazzcash:"JazzCash"};
       addAccount(key, seller ? `Salesman Collection — ${seller.name} (${e.method})` : (labels[key] || key), seller ? "salesman" : (key === "bank_default" ? "bank" : key === "cash_hand" ? "cash" : "wallet"), e.method, e.salesman_id || null);
       entries.push({posting_key:`local:expense:${e.id}`,transaction_id:e.id,business_date:e.date,account_key:key,amount_paisa:-num(e.amount_paisa),entry_type:"expense",source_table:"expenses",source_id:e.id,description:`Expense — ${e.category}`,salesman_id:e.salesman_id});
     }
@@ -996,6 +1268,8 @@ function renderCashBook() {
     const closing = opening + dayEntries.reduce((sum,e)=>sum+num(e.amount_paisa),0);
     return {a,opening,received,paid,transferIn,transferOut,closing};
   });
+  // Salesman collection sub-accounts remain in the ledger and total liquid funds, but are intentionally not shown as separate overview cards.
+  const displayedCards = cards.filter(x => x.a.account_type !== "salesman");
   const liquid = cards.filter(x=>isLiquid(x.a)).reduce((sum,x)=>sum+x.closing,0);
   // Receivables are calculated per confirmed invoice, matching the customer-outstanding
   // report. An overpayment on one invoice must not make total receivables negative.
@@ -1034,9 +1308,63 @@ function renderCashBook() {
   }
   const accountOptions = allowedAccounts.map(a=>[a.account_key,a.label]);
   const accountLabel = key => data.accounts.find(a=>a.account_key===key)?.label || CASHBOOK_DEFAULT_ACCOUNTS.find(a=>a.account_key===key)?.label || key;
-  const transactionRows = relevantEntries.filter(e=>e.business_date===date).sort((a,b)=>String(b.created_at||b.business_date).localeCompare(String(a.created_at||a.business_date))).map(e=>[
-    esc(e.business_date), esc(e.reference || e.transaction_id || "—"), esc(e.description || e.entry_type), esc(accountLabel(e.account_key)), `<span class="${num(e.amount_paisa)<0?"negative":"positive"}">${num(e.amount_paisa)<0?"−":"+"}${money(Math.abs(num(e.amount_paisa)))}</span>`, esc(e.entry_type.replaceAll("_"," ")) + (e.pending_sync ? ` ${badge("Pending sync","amber")}` : ""), esc(e.source_table || "—")
-  ]);
+  let accountLedgerEntries = relevantEntries.filter(e => cashbookAccountFilter ? e.account_key === cashbookAccountFilter : e.business_date === date);
+  // Market Credit transaction history shows ONLY invoices that still have an
+  // unpaid balance. Recovery/payment rows are intentionally never displayed here.
+  if (cashbookAccountFilter === "market_credit") {
+    accountLedgerEntries = [];
+    const ordersById = new Map((s.orders || []).map(order => [String(order.id), order]));
+    const paidByInvoice = new Map();
+    for (const payment of s.payments || []) {
+      if (payment.voided_at || String(payment.date || "") > date || !payment.invoice_id) continue;
+      const invoiceId = String(payment.invoice_id);
+      paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + Math.abs(num(payment.amount_paisa)));
+    }
+    for (const inv of s.invoices || []) {
+      const order = ordersById.get(String(inv.order_id));
+      if (!order || order.status !== "confirmed" || String(order.date || "") > date) continue;
+      const outstanding = Math.max(0, num(inv.total_paisa) - (paidByInvoice.get(String(inv.id)) || 0));
+      if (outstanding <= 0) continue;
+      accountLedgerEntries.push({
+        id: `market-unpaid-invoice:${inv.id}`, business_date: order.date,
+        account_key: "market_credit", amount_paisa: outstanding,
+        entry_type: "receivable", source_table: "invoices", source_id: inv.id,
+        description: `Unpaid Market Credit — ${customerName(order.customer_id)}`,
+        created_by: inv.created_by
+      });
+    }
+  }
+  accountLedgerEntries = accountLedgerEntries.sort((a,b)=>String(a.business_date||"").localeCompare(String(b.business_date||"")) || String(a.created_at||"").localeCompare(String(b.created_at||"")));
+  let runningBalances = new Map();
+  const accountForLedger = data.accounts.find(a=>a.account_key===cashbookAccountFilter);
+  if (cashbookAccountFilter) runningBalances.set(cashbookAccountFilter, cashbookAccountFilter === "market_credit" ? 0 : num(accountForLedger?.opening_balance_paisa));
+  const ledgerSummary = cashbookAccountFilter ? {
+    added:accountLedgerEntries.filter(e=>e.entry_type==="receipt" && /external funds introduced/i.test(e.description||"") && num(e.amount_paisa)>0).reduce((n,e)=>n+num(e.amount_paisa),0),
+    collections:accountLedgerEntries.filter(e=>e.source_table==="payments" && num(e.amount_paisa)>0).reduce((n,e)=>n+num(e.amount_paisa),0),
+    salesReceipts:accountLedgerEntries.filter(e=>e.source_table==="payments" && num(e.amount_paisa)>0).reduce((n,e)=>n+num(e.amount_paisa),0),
+    expenses:-accountLedgerEntries.filter(e=>e.entry_type==="expense" && num(e.amount_paisa)<0).reduce((n,e)=>n+num(e.amount_paisa),0),
+    transferIn:accountLedgerEntries.filter(e=>e.entry_type==="transfer_in" && num(e.amount_paisa)>0).reduce((n,e)=>n+num(e.amount_paisa),0),
+    transferOut:-accountLedgerEntries.filter(e=>e.entry_type==="transfer_out" && num(e.amount_paisa)<0).reduce((n,e)=>n+num(e.amount_paisa),0),
+    corrections:accountLedgerEntries.filter(e=>["adjustment","reversal"].includes(e.entry_type)).reduce((n,e)=>n+num(e.amount_paisa),0)
+  } : null;
+  const transactionRows = accountLedgerEntries.map(e=>{
+    const prior = runningBalances.get(e.account_key) ?? 0;
+    const next = prior + num(e.amount_paisa); runningBalances.set(e.account_key,next);
+    const sourceId = e.source_id || "—";
+    const sourceTable = String(e.source_table||"").toLowerCase();
+    const linkedOrder = sourceTable === "orders" ? S().orders.find(o=>o.id===sourceId) : sourceTable === "invoices" ? S().orders.find(o=>o.id===S().invoices.find(i=>i.id===sourceId)?.order_id) : sourceTable === "payments" ? S().orders.find(o=>o.id===S().invoices.find(i=>i.id===S().payments.find(p=>p.id===sourceId)?.invoice_id)?.order_id) : null;
+    const expense = sourceTable === "expenses" ? S().expenses.find(x=>String(x.id)===String(sourceId)) : null;
+    const salaryExpense = expense && /salary/i.test(String(expense.category || "") + " " + String(expense.description || ""));
+    const employeeId = expense?.employee_id || expense?.salesman_id || expense?.recipient_id;
+    const employee = employeeId ? (S().salesmen.find(x=>String(x.id)===String(employeeId)) || S().profiles.find(x=>String(x.id)===String(employeeId))) : null;
+    const employeeName = employee?.name || employee?.full_name || expense?.employee_name || expense?.recipient_name;
+    const salaryText = salaryExpense ? `Salary released to ${employeeName || expense?.description || "employee"}` : "";
+    const description = salaryText || e.description || e.entry_type;
+    const relatedParty = linkedOrder ? customerName(linkedOrder.customer_id) : salaryExpense ? (employeeName || "Salary recipient") : (expense ? (expense.category || "Expense") : "—");
+    const actor = S().profiles.find(p=>p.id===e.created_by) || S().salesmen.find(p=>p.user_id===e.created_by || p.id===e.created_by);
+    const actorName = actor?.name || actor?.full_name || actor?.email || (e.created_by && e.created_by !== user?.id ? "User" : e.created_by ? (user?.name || "You") : "—");
+    return [esc(e.business_date), esc(description), esc(accountLabel(e.account_key)), `<span class="${num(e.amount_paisa)<0?"negative":"positive"}">${num(e.amount_paisa)<0?"−":"+"}${money(Math.abs(num(e.amount_paisa)))}</span>`, money(next), esc(e.entry_type.replaceAll("_"," ")) + (e.pending_sync ? ` ${badge("Pending sync","amber")}` : ""), esc(relatedParty), esc(actorName)];
+  }).reverse();
   const closings = (s.cashbook_daily_closings || []).filter(c => c.business_date === date && (mgmt() || allowedAccounts.some(a=>a.account_key===c.account_key)));
   const allCloseAccounts = allowedAccounts.filter(a => a.account_type !== "receivable" && (mgmt() || (a.salesman_id && a.salesman_id === own()?.id)));
   const closeAccounts = allCloseAccounts.filter(a=>!(s.cashbook_daily_closings||[]).some(c=>c.business_date===date && c.account_key===a.account_key && ["submitted","approved"].includes(c.status)));
@@ -1051,16 +1379,16 @@ function renderCashBook() {
     ? `<div class="notice danger"><b>Cash & Bank Book migration required.</b> This view is not yet connected to the authoritative ledger. Apply <code>supabase/cash_bank_book.sql</code> after the existing schema and operational migrations, then refresh. ${esc(s.cashbook_error || "")}</div>`
     : user?.practice ? `<div class="notice">Practice mode: balances are a local preview derived from sample transactions. They are not connected to a live bank or Supabase ledger.</div>` : "";
   const canWrite = mgmt() && !user?.practice && s.cashbook_loaded;
-  const actions = `${canWrite ? btn("Transfer between accounts","cashbook-transfer","","","gold")+btn("Record adjustment","cashbook-adjust")+(admin()?btn("Add bank / wallet account","cashbook-add-account"):"") : ""}${user?.role==="salesman" && s.cashbook_loaded ? btn("Hand over cash","cashbook-handover","","","gold") : ""}${btn("Export CSV","cashbook-csv")}${btn("Print","cashbook-print")}`;
+  const actions = `${canWrite ? (admin()?btn("Add Money","cashbook-add-money","","","gold"):"")+btn("Transfer between accounts","cashbook-transfer","","","gold")+btn("Record adjustment","cashbook-adjust")+(admin()?btn("Add bank / wallet account","cashbook-add-account"):"") : ""}${user?.role==="salesman" && s.cashbook_loaded ? btn("Hand over cash","cashbook-handover","","","gold") : ""}${btn("Export CSV","cashbook-csv")}${btn("Print","cashbook-print")}`;
   return head("5. Cash & Bank Book","Know exactly how much money is held in each account, including salesman-held collections and market credit.",actions)
     + migrationNotice
     + priorWarning
     + pendingNotice
     + `<section class="panel"><div class="filters">${field("Business date","cashbook-date",date,"date",'data-cashbook-date="true"')}${btn("Today","cashbook-today")}</div>
-      <div class="cashbook-summary-grid"><article class="cashbook-summary"><span>Liquid funds at selected-date close</span><b>${money(liquid)}</b><small>Includes salesman-held collections once; excludes market credit</small></article><article class="cashbook-summary"><span>Market Credit outstanding</span><b>${money(market)}</b><small>Receivables only — not money received</small></article><article class="cashbook-summary"><span>Accounts tracked</span><b>${allowedAccounts.length}</b><small>Opening and closing calculated from ledger movements</small></article></div>
-      <h2>Account balances · ${esc(date)}</h2>${table(["Account","Opening","Increases / receipts", "Decreases / payments / recoveries", "Transfers in","Transfers out","Expected closing",...(admin()?["Actions"]:[])],cards.map(x=>[esc(x.a.label),money(x.a.account_key==="market_credit" ? x.opening : cashbookAccountOpening(x.a,date)+amount(x.a.account_key,before)),money(x.received),money(x.paid),money(x.transferIn),money(x.transferOut),`<b>${money(x.closing)}</b>`,...(admin() && ["bank","wallet"].includes(x.a.account_type) ? [btn("Edit","cashbook-edit-account",x.a.account_key)] : admin()?["—"]:[])]),"No accounts available")}
-      <p class="muted">Expected closing = opening + signed receipts/payments + transfers. Customer recoveries reduce Market Credit (receivables) and increase only the account that actually received the money. Bank-to-bank transfers decrease the source and increase the destination by the same amount; they do not change total liquid funds. A closing count is a separate verification and must not overwrite this calculated balance.</p>
-      <h2>Transactions for ${esc(date)}</h2>${table(["Date","Reference","Description","Account","Amount","Type","Source"],transactionRows,"No ledger transactions for this date")}</section>
+      <div class="cashbook-summary-grid"><article class="cashbook-summary"><span>Liquid funds at selected-date close</span><b>${money(liquid)}</b><small>Includes salesman-held collections once; excludes market credit</small></article><article class="cashbook-summary"><span>Market Credit outstanding</span><b>${money(market)}</b><small>Receivables only — not money received</small></article><article class="cashbook-summary"><span>Accounts tracked</span><b>${displayedCards.length}</b><small>Opening and closing calculated from ledger movements</small></article></div>
+      <h2>Accounts · ${esc(date)}</h2><div class="cashbook-account-grid">${displayedCards.sort((a,b)=>({mcb_bank:0,al_habib_bank:1,jazzcash:2,easypaisa:3,cash_hand:4,market_credit:5}[a.a.account_key]??99)-({mcb_bank:0,al_habib_bank:1,jazzcash:2,easypaisa:3,cash_hand:4,market_credit:5}[b.a.account_key]??99)).map(x=>`<article class="cashbook-account-card ${x.a.account_type==='receivable'?'receivable':''}"><div class="cashbook-account-head"><span>${esc(x.a.label)}</span><small>${esc(({bank:'Bank account',wallet:'Digital wallet',cash:'Cash in hand',receivable:'Receivables',salesman:'Salesman-held funds'}[x.a.account_type]||x.a.account_type))}</small></div><b class="cashbook-account-balance">${money(x.closing)}</b><div class="cashbook-account-meta"><span>Opening</span><strong>${money(x.a.account_key==="market_credit"?x.opening:cashbookAccountOpening(x.a,date)+amount(x.a.account_key,before))}</strong></div><div class="cashbook-account-meta"><span>Receipts / increases</span><strong>${money(x.received)}</strong></div><div class="cashbook-account-meta"><span>Payments / recoveries</span><strong>${money(x.paid)}</strong></div><div class="cashbook-account-actions">${btn(cashbookAccountFilter===x.a.account_key?"Viewing ledger":"View transactions","cashbook-account-ledger",x.a.account_key)}${admin()&&["bank","wallet"].includes(x.a.account_type)?btn("Edit account","cashbook-edit-account",x.a.account_key):""}</div></article>`).join("")}</div>
+      <p class="muted">Expected closing = opening + valid credits − valid debits, including transfers. Market Credit is receivables, not cash. A transfer moves value between accounts without increasing total liquid funds. A physical closing count never overwrites the calculated ledger balance.</p>
+      <h2 id="cashbook-transactions">${cashbookAccountFilter?`Account ledger · ${esc(accountLabel(cashbookAccountFilter))}`:`Transactions for ${esc(date)}`}</h2>${cashbookAccountFilter?`<div class="cashbook-summary-grid"><article class="cashbook-summary"><span>External funds added</span><b>${money(ledgerSummary.added)}</b></article><article class="cashbook-summary"><span>Sales-related collections</span><b>${money(ledgerSummary.salesReceipts)}</b></article><article class="cashbook-summary"><span>Expenses paid</span><b>${money(ledgerSummary.expenses)}</b></article><article class="cashbook-summary"><span>Transfers in</span><b>${money(ledgerSummary.transferIn)}</b></article><article class="cashbook-summary"><span>Transfers out</span><b>${money(ledgerSummary.transferOut)}</b></article><article class="cashbook-summary"><span>Net corrections / reversals</span><b>${money(ledgerSummary.corrections)}</b></article></div><p class="actions">${btn("Show selected date transactions","cashbook-account-ledger-clear")}</p>`:""}${table(["Date","Description","Account","Money in / out","Running balance","Type / status","Customer / related party","Created by"],transactionRows,cashbookAccountFilter?"No transactions for this account":"No ledger transactions for this date")}</section>
       ${closeForm}
       <section class="panel"><h2>Daily closing register · ${esc(date)}</h2>${table(["Account","Expected","Actual counted","Variance","Status","Notes","Submitted by","Action"],closeRows,"No daily closing submitted for this date")}</section>
       ${canWrite ? `<section class="panel"><h2>Salesman stock and cash closing</h2><p>Use Daily closing for salesman stock reconciliation and the existing cash-count workflow. Cash & Bank Book closing adjustments are only posted after management approval.</p><div class="actions">${btn("Open Daily closing","go-closing")}</div></section>` : ""}`;
@@ -1157,8 +1485,9 @@ function renderStock() {
     row.boxes += Number(movement.boxes);
     sellerRows.set(key, row);
   }
+  const warehouseWrite = admin() || S().user_permissions.some(permission => permission.user_id === user.id && permission.section === "stock" && (permission.can_create || permission.can_edit));
   const actions =
-    (mgmt() ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
+    (warehouseWrite ? btn("+ Warehouse movement", "add-stock", "", "", "gold") : "") +
     (canStockWrite() ? btn("Issue to salesman", "stock-issue", "", "", "gold") : "") +
     (admin() || own() || canStockWrite()
       ? btn("Receive salesman return", "stock-return")
@@ -1262,33 +1591,37 @@ function renderProducts() {
 }
 function renderStaff() {
   const s = S(),
-    targets = targetRows();
+    scope = manager() ? new Set(managerTeamIds(s, user.id).map(String)) : null,
+    sellers = visible(s.salesmen).filter(x => !scope || scope.has(String(x.id))),
+    targets = targetRows().filter(t => !scope || scope.has(String(t.id))),
+    attendanceDate = today();
   return (
     head(
       "Salesmen & targets",
-      "Daily shortfalls carry to the next working day, including month boundaries.",
-      admin() ? btn("+ Salesman", "add-staff", "", "", "gold") : "",
+      manager() ? "Manage your assigned team, attendance, areas, stock accountability and operational messages." : "Manage employee profiles, assign managers, monitor targets and review fieldwork.",
+      (admin() || manager()) ? btn("+ Create salesman", "add-staff", "", "", "gold") + btn("Manage areas", "manage-areas") + (admin() ? btn("+ Advance salary", "advance-salary", "", "", "gold") : "") : "",
     ) +
-    `<section class="panel"><div class="panel-heading"><h2>Monthly leaderboard</h2><span>${esc(today().slice(0, 7))}</span></div>${table(
-      [
-        "Salesman",
-        "Today target / achieved",
-        "MTD cartons",
-        "Achievement",
-        ...(admin() || can("pnl") ? ["Incentive", "Salary projection"] : []),
-        "Actions",
-      ],
-      targets.map((t, i) => [
-        `${i + 1}. <b>${esc(t.name)}</b><small>${t.active ? "Active" : "Inactive"} · ${esc(t.phone)}</small>`,
-        `${num(t.day?.effective_target).toFixed(2)} / ${num(t.day?.achieved_cartons).toFixed(2)}`,
-        `${t.achieved.toFixed(2)} / ${t.monthly_target}`,
-        `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`,
-        ...(admin() || can("pnl") ? [money(t.incentive), money(t.total)] : []),
-        `<div class="actions">${btn("Daily tracking", "targets", t.id)}${admin() ? btn("Edit", "edit-staff", t.id) + btn("Post salary", "post-salary", t.id) : ""}</div>`,
-      ]),
-    )}</section>${admin() ? `<section class="panel"><div class="panel-heading"><h2>Salesman profile & fieldwork records</h2><span class="muted">Admin-only view of submitted records and private uploads</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>` : ""}`
+    `<section class="panel"><div class="panel-heading"><h2>Team overview</h2><span>${esc(attendanceDate)} · ${sellers.length} assigned salesman${sellers.length===1?"":"men"}</span></div>${table(
+      ["Salesman", "Attendance", "Assigned area", "Today / target", "Monthly progress", "Stock in hand", "Actions"],
+      targets.map((t, i) => {
+        const seller = sellers.find(x => String(x.id) === String(t.id));
+        const att = (s.attendance_records || []).find(a => String(a.salesman_id)===String(t.id) && a.attendance_date===attendanceDate);
+        const held = visible(s.products).reduce((sum, product) => sum + heldStock(product.id, t.id), 0);
+        return [
+          `<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b><small>${esc(t.id)} · ${esc(t.phone||"No phone")}</small>`,
+          esc(att?.status || "Not recorded"),
+          esc(seller?.territory || seller?.area || "Not assigned"),
+          `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`,
+          `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons · ${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100,t.percent)}%"></span></div>`,
+          `${held.toFixed(2)} boxes`,
+          `<div class="actions">${btn("Details", "salesman-profile", t.id)}${(admin()||manager())?btn("Assign area", "assign-area", t.id):""}${(admin()||manager())?btn("Attendance", "mark-attendance", t.id):""}${(admin()||manager())?btn("Message", "notify-salesman", t.id):""}${(admin())?btn("Edit", "edit-staff", t.id)+btn("Post salary", "post-salary", t.id)+btn("Advance salary", "advance-salary", t.id)+btn("Delete", "delete-salesman", t.id, "", "danger"):manager()?btn("Edit", "edit-staff", t.id):""}</div>`
+        ];
+      }), "No salesman profiles are assigned to this account.")}</section>
+    ${admin() ? `<section class="panel"><div class="panel-heading"><h2>Employee fieldwork & documents</h2><span class="muted">Administrator access</span></div><div id="admin-fieldwork-data"><p class="muted">Loading attendance, documents, visits and profile photos…</p></div></section>` : ""}
+    <section class="panel"><div class="panel-heading"><h2>Team notifications</h2>${btn("Send team announcement", "notify-team", "", "", "gold")}</div><p class="muted">Messages are stored in Supabase and appear in the recipient's salesman dashboard.</p><div id="team-notification-history"><p class="muted">Loading messages…</p></div></section>`
   );
 }
+
 async function resolveSalesmanPhoto(seller) {
   const bucket = client.storage.from("employee-private");
   let path = seller.photo_path || "";
@@ -1361,35 +1694,41 @@ async function hydrateAdminFieldwork() {
   root.innerHTML = `<h3>Employee profile photos</h3>${photoHtml}<h3>Attendance</h3>${attendanceHtml}<h3>Uploaded employee documents</h3><p class="muted">Private links expire after one hour.</p>${documentsHtml}<h3>Customer visits & optional GPS</h3>${visitsHtml}`;
   const managerRoot = $("admin-manager-fieldwork-data");
   if (managerRoot) {
-    const managerUserId = "d2cf42d4-3806-44f1-9deb-369920e2f152";
-    const [ma, md, mv, mp] = await Promise.all([
-      client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id",managerUserId).order("attendance_date",{ascending:false}).limit(200),
-      client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id",managerUserId).order("created_at",{ascending:false}).limit(200),
-      client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id",managerUserId).order("visited_at",{ascending:false}).limit(200),
-      client.from("profiles").select("avatar_path,display_name").eq("id",managerUserId).maybeSingle()
-    ]);
+    const managerProfiles = S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager"));
     const errHtml = r => r.error ? `<p class="notice danger">Could not load: ${esc(r.error.message)}. Apply <code>supabase/manager_profile_fieldwork.sql</code>.</p>` : "";
-    const docRows = md.error ? [] : await Promise.all((md.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];}));
-    let avatarHtml = "No profile photo uploaded.";
-    if (!mp.error && mp.data?.avatar_path) { const signed=await client.storage.from("employee-private").createSignedUrl(mp.data.avatar_path,3600); if(signed.data?.signedUrl) avatarHtml=`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open Manager profile photo</a>`; }
-    managerRoot.innerHTML = `<h3>Manager profile</h3><p><b>BABAR ALI KHAN</b> · ${avatarHtml}</p><h3>Manager attendance</h3>${errHtml(ma)||table(["Date","Check-in","Check-out","Status","GPS"],(ma.data||[]).map(r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager attendance records.")}<h3>Manager uploads</h3><p class="muted">Private links expire after one hour.</p>${errHtml(md)||table(["Document","Type","Uploaded","Size","File"],docRows,"No Manager documents uploaded.")}<h3>Manager fieldwork visits</h3>${errHtml(mv)||table(["Visited","Customer","Area","Purpose","Notes","GPS"],(mv.data||[]).map(r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No Manager fieldwork visits.")}`;
+    const sections = await Promise.all(managerProfiles.map(async managerProfile => {
+      const managerUserId = managerProfile.id;
+      const [ma, md, mv, mp] = await Promise.all([
+        client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id",managerUserId).order("attendance_date",{ascending:false}).limit(200),
+        client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id",managerUserId).order("created_at",{ascending:false}).limit(200),
+        client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id",managerUserId).order("visited_at",{ascending:false}).limit(200),
+        client.from("profiles").select("avatar_path,display_name").eq("id",managerUserId).maybeSingle()
+      ]);
+      const docRows = md.error ? [] : await Promise.all((md.data||[]).map(async d=>{const signed=await client.storage.from("employee-private").createSignedUrl(d.file_path,3600);return [esc(d.file_name),esc(d.document_type),esc(new Date(d.created_at).toLocaleString()),`${Math.ceil(num(d.size_bytes)/1024)} KB`,signed.data?.signedUrl?`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open private file</a>`:esc(signed.error?.message||"Unavailable")];}));
+      let avatarHtml = "No profile photo uploaded.";
+      if (!mp.error && mp.data?.avatar_path) { const signed=await client.storage.from("employee-private").createSignedUrl(mp.data.avatar_path,3600); if(signed.data?.signedUrl) avatarHtml=`<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open profile photo</a>`; }
+      return `<section class="panel"><h3>${esc(managerProfile.display_name || managerProfile.id)}</h3><p>${avatarHtml}</p><h4>Attendance</h4>${errHtml(ma)||table(["Date","Check-in","Check-out","Status","GPS"],(ma.data||[]).map(r=>[esc(r.attendance_date),esc(r.check_in_at?new Date(r.check_in_at).toLocaleString():"—"),esc(r.check_out_at?new Date(r.check_out_at).toLocaleString():"—"),esc(r.status),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No attendance records.")}<h4>Documents</h4>${errHtml(md)||table(["Document","Type","Uploaded","Size","File"],docRows,"No documents uploaded.")}<h4>Fieldwork visits</h4>${errHtml(mv)||table(["Visited","Customer","Area","Purpose","Notes","GPS"],(mv.data||[]).map(r=>[esc(new Date(r.visited_at).toLocaleString()),esc(r.customer_label||"—"),esc(r.area||"—"),esc(r.purpose||"—"),esc(r.notes||"—"),r.latitude==null?"Not shared":`<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]),"No fieldwork visits.")}</section>`;
+    }));
+    managerRoot.innerHTML = sections.join("") || `<p class="muted">No Manager accounts are configured. Create a Manager login in Users & Access.</p>`;
   }
 }
 async function openAdminSalesmanProfile(salesmanId) {
-  if (!admin()) throw Error("Administrator access is required to view employee profiles.");
+  if (!(admin() || manager())) throw Error("Authorized management access is required to view employee profiles.");
+  if (manager() && !managerTeamIds(S(), user.id).includes(salesmanId)) throw Error("This salesman is outside your assigned team.");
   if (!client) throw Error("Employee profiles require a connected Supabase session.");
   modal("Salesman profile", '<p class="muted">Loading saved profile and fieldwork details…</p>');
-  const sellerResult = await client.from("salesmen").select("id,name,phone,territory,area,photo_path,user_id,joining_date,active").eq("id", salesmanId).maybeSingle();
+  const sellerResult = await client.from("salesmen").select("id,name,phone,date_of_birth,territory,area,photo_path,user_id,joining_date,active,manager_user_id").eq("id", salesmanId).maybeSingle();
   if (sellerResult.error) {
     modal("Salesman profile", `<p class="notice danger">Unable to load salesman profile: ${esc(sellerResult.error.message)}. Apply the updated <code>supabase/salesman_self_service.sql</code> migration and confirm the current login has the admin role.</p>`);
     return;
   }
   const seller = sellerResult.data;
   if (!seller) { modal("Salesman profile", '<p class="notice">No linked salesman profile was found. Use Edit access to link or create the salesman profile.</p>'); return; }
-  const [attendance, documents, visits] = await Promise.all([
-    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", {ascending:false}).limit(100),
+  const [attendance, documents, visits, assignments] = await Promise.all([
+    client.from("attendance_records").select("attendance_date,check_in_at,check_out_at,status,remarks,check_in_latitude,check_in_longitude,check_in_location_accuracy_m").eq("salesman_id", seller.id).order("attendance_date", {ascending:false}).limit(100),
     client.from("employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("salesman_id", seller.id).order("created_at", {ascending:false}).limit(100),
     client.from("customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("salesman_id", seller.id).order("visited_at", {ascending:false}).limit(100),
+    client.from("salesman_area_assignments").select("area_name,effective_from,effective_to,instructions").eq("salesman_id", seller.id).order("effective_from", {ascending:false}).limit(100),
   ]);
   const sectionError = (r) => r.error ? `<p class="notice danger">Could not load this section: ${esc(r.error.message)}</p>` : "";
   const photoResult = await resolveSalesmanPhoto(seller);
@@ -1400,11 +1739,24 @@ async function openAdminSalesmanProfile(salesmanId) {
     const r = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
     return [esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, r.data?.signedUrl ? `<a href="${esc(r.data.signedUrl)}" target="_blank" rel="noopener">Open file</a>` : esc(r.error?.message || "Unavailable")];
   }));
-  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status","Check-in location"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), r.check_in_latitude == null || r.check_in_longitude == null ? "Location not recorded" : `<a href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}" target="_blank" rel="noopener">View check-in map</a><small>${num(r.check_in_latitude).toFixed(5)}, ${num(r.check_in_longitude).toFixed(5)}${r.check_in_location_accuracy_m ? ` · ±${Math.round(num(r.check_in_location_accuracy_m))} m` : ""}</small>`]), "No attendance submitted yet.");
+  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status","Remarks","Check-in location"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), esc(r.remarks || "—"), r.check_in_latitude == null || r.check_in_longitude == null ? "Location not recorded" : `<a href="https://www.google.com/maps?q=${encodeURIComponent(r.check_in_latitude)},${encodeURIComponent(r.check_in_longitude)}" target="_blank" rel="noopener">View check-in map</a><small>${num(r.check_in_latitude).toFixed(5)}, ${num(r.check_in_longitude).toFixed(5)}${r.check_in_location_accuracy_m ? ` · ±${Math.round(num(r.check_in_location_accuracy_m))} m` : ""}</small>`]), "No attendance submitted yet.");
   const documentsHtml = sectionError(documents) || table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded yet.");
   const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted yet.");
-  const role = S().user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
-  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+  const state = S(), target = targetRows().find(t => String(t.id) === String(seller.id));
+  const targetDays = state.salesman_daily_targets.filter(d => String(d.salesman_id) === String(seller.id) && d.date >= monthStart(today()) && d.date <= today()).sort((a,b)=>a.date.localeCompare(b.date));
+  const targetHtml = table(["Date","Target (ct)","Achieved (ct)","Boxes","Remaining (ct)"], targetDays.map(d=>[esc(d.date),num(d.effective_target).toFixed(2),num(d.achieved_cartons).toFixed(2),num(d.achieved_boxes),Math.max(0,num(d.effective_target)-num(d.achieved_cartons)).toFixed(2)]),"No daily target records for this month.");
+  const eligibleOrders = state.orders.filter(o=>String(o.salesman_id)===String(seller.id)&&o.status==="confirmed"&&!o.deleted_at&&o.date>=monthStart(today())&&o.date<=today());
+  const dailySales = new Map(); const productSales = new Map();
+  for (const order of eligibleOrders) for (const line of (state.order_items||[]).filter(i=>i.order_id===order.id)) {
+    const day=dailySales.get(order.date)||{boxes:0,cartons:0,orders:0}; day.boxes+=num(line.boxes); day.cartons+=num(line.cartons); day.orders+=1; dailySales.set(order.date,day);
+    const product=productSales.get(line.product_id)||{boxes:0,cartons:0}; product.boxes+=num(line.boxes); product.cartons+=num(line.cartons); productSales.set(line.product_id,product);
+  }
+  const salesHtml = `<h4>Daily sales quantities</h4>${table(["Date","Orders / lines","Cartons","Boxes"],[...dailySales.entries()].sort((a,b)=>b[0].localeCompare(a[0])).map(([date,v])=>[esc(date),v.orders,num(v.cartons).toFixed(2),num(v.boxes).toFixed(2)]),"No confirmed sales quantities this month.")}<h4>Product-wise quantities</h4>${table(["Product","Cartons","Boxes"],[...productSales.entries()].map(([pid,v])=>[esc(state.products.find(p=>p.id===pid)?.name||pid),num(v.cartons).toFixed(2),num(v.boxes).toFixed(2)]),"No product sales recorded this month.")}`;
+  const stockRows = (state.salesman_stock_movements||[]).filter(m=>String(m.salesman_id)===String(seller.id)).sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,200).map(m=>[esc(m.date),esc(state.products.find(p=>p.id===m.product_id)?.name||m.product_id),esc(m.kind==="issue"?"Issued":String(m.kind).replace(/^return_/,"Returned · ")),Math.abs(num(m.boxes)).toFixed(2),esc(m.reference||"—"),esc(m.note||"—")]);
+  const stockBalanceHtml = table(["Product","Current balance (boxes)"],visible(state.products).map(p=>[esc(p.name),heldStock(p.id,seller.id)]).filter(r=>num(r[1])!==0),"No stock is currently held by this salesman.");
+  const stockMovementHtml = table(["Date","Product","Movement","Boxes","Reference","Notes"],stockRows,"No stock issue/return movements recorded.");
+  const role = state.user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
+  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Date of birth:</b> ${esc(seller.date_of_birth || "Not recorded")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Monthly target progress</h3><div class="cards">${card("Monthly target",`${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved",`${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining",`${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement",`${num(target?.percent).toFixed(1)}%`)}</div>${targetHtml}</section><section class="panel"><h3>Sales quantity breakdown</h3>${salesHtml}</section><section class="panel"><h3>Stock accountability</h3>${stockBalanceHtml}${stockMovementHtml}</section><section class="panel"><h3>Attendance history</h3>${admin() || manager() ? btn("Record / correct attendance", "mark-attendance", seller.id) : ""}${attendanceHtml}</section><section class="panel"><h3>Area assignment history</h3>${sectionError(assignments)||table(["Area","Effective from","Effective until","Instructions"],(assignments.data||[]).map(a=>[esc(a.area_name),esc(a.effective_from),esc(a.effective_to||"Current"),esc(a.instructions||"—")]),"No area assignments yet.")}</section><section class="panel"><h3>Upload employee documents</h3>${seller.user_id ? `<div class="grid">${select("Document type","employee-document-type",[["identity","NIC / identity document"],["education","Educational certificate"],["appointment","Appointment letter"],["contract","Employment contract"],["employment","Other employment document"],["salary_bank","Salary / bank document"],["other","Other important document" ]],"identity")}<div class="field"><label for="employee-document-file">PDF or photo (max 10 MB)</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-manager-document-upload" data-id="${esc(seller.id)}">Upload private document</button><p class="muted">Documents are private and accessible only to authorized management and the linked employee.</p>` : `<p class="notice">Link this employee to a login in Admin → Users & Access before uploading private documents.</p>`}<p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Profile photograph</h3>${seller.user_id ? `<div class="field"><label for="employee-profile-photo">JPG, PNG or WebP up to 5 MB</label><input id="employee-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="employee-manager-photo-upload" data-id="${esc(seller.id)}">Upload / replace profile photo</button>` : `<p class="notice">Link this employee to a login before uploading a private profile photograph.</p>`}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
 }
 
 function filters(category = false) {
@@ -1710,39 +2062,47 @@ function managersPanel() {
         ),
         ownCartons = own.reduce((a, o) => a + cartonsOf(o), 0),
         ownValue = own.reduce((a, o) => a + num(o.total_paisa), 0),
-        total = team + ownCartons,
-        pct = (total / target) * 100;
+        // Manager's own sales are additional activity and must not close the team target.
+        teamTargetMet = team,
+        teamRemaining = Math.max(0, target - teamTargetMet),
+        pct = (teamTargetMet / target) * 100;
       return [
         esc(m.display_name),
         `${target.toFixed(2)} cartons`,
         `${team.toFixed(2)} cartons`,
         `+${ownCartons.toFixed(2)} cartons<br><small>${own.length} orders · ${money(ownValue)}</small>`,
-        `<b>${total.toFixed(2)}</b> cartons${total >= target ? " " + badge("Target closed", "green") : `<br><small>${(target - total).toFixed(2)} remaining</small>`}`,
+        teamTargetMet >= target ? badge("Target achieved", "green") : `<b>${teamRemaining.toFixed(2)}</b> cartons remaining`,
         `${pct.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div>`,
       ];
     });
-  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div>${table(["Manager", "Monthly target", "Team (salesmen) achieved", "Own sales (additional)", "Total target met", "Achievement"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
+  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
 }
 function renderUsers() {
   const s = S();
   return (
     head(
       "Users & access",
-      "Admin permissions are enforced by the database, including direct API requests.",
+      "Manage user roles, access and employee profiles. Only Admin can reset another user's password; database and server checks enforce these restrictions.",
       btn("+ Create login", "create-user", "", "", "gold"),
     ) +
     managersPanel() +
-    `<section class="panel">${table(
-      ["Name", "Role", "Linked salesman", "Status", "Actions"],
-      s.profiles.map((p) => [
-        esc(p.display_name),
-        esc(s.user_roles.find((r) => r.user_id === p.id)?.role || "user"),
-        esc(s.salesmen.find((x) => x.user_id === p.id)?.name || "Not linked"),
-        badge(p.active ? "Active" : "Inactive"),
-        p.id === user.id
-          ? "Current user"
-          : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${(S().user_roles.find((r) => r.user_id === p.id)?.role === "salesman") ? (S().salesmen.find((x) => x.user_id === p.id) ? btn("Profile", "salesman-profile", S().salesmen.find((x) => x.user_id === p.id).id) : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
-      ]),
+    `<section class="panel"><p class="muted">Login email addresses are not displayed here. To help a user sign in, share their login details through your approved secure process. Password resets remain available to Admin.</p>${table(
+      ["Name", "Role", "Linked salesman", "Assigned manager", "Status", "Actions"],
+      s.profiles.map((p) => {
+        const role = s.user_roles.find((r) => r.user_id === p.id)?.role || "user";
+        const linked = s.salesmen.find((x) => x.user_id === p.id);
+        const managerProfile = linked?.manager_user_id ? s.profiles.find((x) => x.id === linked.manager_user_id) : null;
+        return [
+          esc(p.display_name),
+          esc(role),
+          esc(linked?.name || "Not linked"),
+          esc(managerProfile?.display_name || (linked ? "Unassigned" : "—")),
+          badge(p.active ? "Active" : "Inactive"),
+          p.id === user.id
+            ? "Current user (use Account to change your own password)"
+            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${btn("Delete user", "delete-user", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) + btn("Delete salesman + data", "delete-salesman", linked.id, "", "danger") : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+        ];
+      }),
     )}</section>`
   );
 }
@@ -1798,7 +2158,7 @@ function openEditor(quote, id) {
     salesman_id:
       old
         ? old.salesman_id || ""
-        : admin()
+        : mgmt()
           ? ""
           : own()?.id || visible(s.salesmen).find((x) => x.active)?.id || "",
     date: old?.date || today(),
@@ -1833,7 +2193,9 @@ function openEditor(quote, id) {
       "salesman_id",
       [
         ...(mgmt() ? [["", "Manager / direct sale"]] : []),
-        ...(manager() ? [] : visible(s.salesmen))
+        ...(manager()
+          ? visible(s.salesmen).filter((x) => managerTeamIds(s, user.id).map(String).includes(String(x.id)))
+          : visible(s.salesmen))
           .filter((x) => x.active)
           .map((x) => [x.id, x.name]),
       ],
@@ -1845,7 +2207,7 @@ function openEditor(quote, id) {
       .map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`)
       .join(
         "",
-      )}</datalist><div id="editor-lines"></div><button type="button" class="secondary add-line-bottom" data-act="add-line" style="margin:4px 0 16px">+ Add product</button><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div>${!quote && !old ? `<section class="panel" aria-labelledby="payment-section-title"><h2 id="payment-section-title">Payment</h2><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank Account", "JazzCash", "Easypaisa", "Cheque"])}${cashbookPaymentAccountField()}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section>` : ""}<div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
+      )}</datalist><div id="editor-lines"></div><button type="button" class="secondary add-line-bottom" data-act="add-line" style="margin:4px 0 16px">+ Add product</button><div class="grid">${field("Discount (Rs.)", "discount", draft.discount_paisa / 100, "number", 'min="0" step="0.01"')}${area("Notes", "notes", draft.notes)}${area("Terms", "terms", draft.terms)}</div><div id="editor-total" class="total-box"></div>${!quote && !old ? `<section class="panel" aria-labelledby="payment-section-title"><h2 id="payment-section-title">Payment</h2><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Payment method", "payment_method", [["Cash","Cash"],["MCB Bank","MCB Bank"],["Al Habib Bank","Al Habib Bank"],["JazzCash","JazzCash"],["Easypaisa","EasyPaisa"],["Cheque — MCB Bank","Cheque — MCB Bank"],["Cheque — Al Habib Bank","Cheque — Al Habib Bank"]])}${cashbookPaymentAccountField()}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section>` : ""}<div id="editor-error" role="alert"></div><button class="gold" type="submit">${quote ? "Save quotation" : "Confirm sale"}</button></form>`,
   );
   renderLines();
   calcEditor();
@@ -1973,6 +2335,7 @@ async function saveEditor(form) {
     const status = f.payment_status || "unpaid";
     const amount = status === "paid" ? null : status === "unpaid" ? 0 : paisa(f.payment_amount);
     if (status === "partial" && (!Number.isFinite(amount) || amount <= 0)) throw Error("Part payment must be greater than zero");
+    if (amount !== 0) validateCashbookMethodAccount(f.payment_method || "Cash", f.cashbook_account_key);
     payload.payment = { status, amount_paisa: amount, transaction_id: "PAY-ORDER-" + draft.id, date: f.payment_date || today(), method: f.payment_method || "Cash", cashbook_account_key: f.cashbook_account_key || "", reference: f.payment_reference || "", received_by: f.payment_received_by || user.name || user.email || "Owner", due_date: f.payment_due_date || addDays(today(),7) };
   }
   delete payload.quote;
@@ -2008,24 +2371,26 @@ function masterForm(kind, id) {
       r.active === false ? "false" : "true",
     )}</div><hr><div class="checkbox"><input id="product-override" name="product_override" type="checkbox" ${s.price_tiers.some((t) => t.product_id === id && !t.deleted_at) ? "checked" : ""}><label for="product-override">Use product-specific wholesale tier overrides (Rani products)</label></div><div class="grid" style="margin-top:16px">${(() => { const saved = s.price_tiers.filter(pt => pt.product_id === id && !pt.deleted_at).sort((a,b) => num(a.min_cartons)-num(b.min_cartons)); const rows = saved.length ? saved : s.settings.tiers; return rows.map((t, i) => field("Tier " + (i + 1) + " minimum cartons", "pt_min_" + i, t.min_cartons ?? t.min, "number", 'min="0" step="0.01" required') + field("Tier " + (i + 1) + " label", "pt_label_" + i, t.label, "text", "required") + field("Tier " + (i + 1) + " rate (Rs.)", "tier_" + i, (t.rate_paisa ?? 0) / 100, "number", 'min="0" step="0.01" required')).join(""); })()}</div><p class="muted">Tier minimums can be edited directly. Use unique minimums, including a first tier at 0 cartons.</p>`;
   }
-  if (kind === "staff")
-    html = `<div class="grid">${field("Name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Joining date", "joining_date", r.joining_date || today(), "date", 'min="2000-01-01" required')}${field("Base salary (Rs.)", "base_salary", num(r.base_salary_paisa ?? s.settings.base_salary_paisa) / 100, "number", 'min="0" step="0.01" required')}${field("Monthly target (cartons)", "monthly_target", r.monthly_target || s.settings.monthly_target, "number", 'min="1" step="0.01" required')}${select(
-      "Status",
-      "active",
-      [
-        ["true", "Active"],
-        ["false", "Inactive"],
-      ],
-      r.active === false ? "false" : "true",
-    )}${select("Link existing login (optional)", "user_id", [["", "No login"], ...s.profiles.map((p) => [p.id, p.display_name])], r.user_id || "")}${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", (r.off_days || []).join("\n"))}</div>`;
+  if (kind === "staff") {
+    const managers = s.profiles.filter(p => s.user_roles.some(role => role.user_id === p.id && role.role === "manager") && p.active !== false);
+    const assignedManager = manager() ? user.id : (r.manager_user_id || "");
+    html = `<div class="grid">${field("Employee ID", "id", r.id || "", "text", existing ? "readonly" : "required")}${field("Full name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Date of birth", "date_of_birth", r.date_of_birth || "", "date")}${field("Joining date", "joining_date", r.joining_date || today(), "date", 'min="2000-01-01" required')}<p class="notice">Area assignments are managed through the effective-dated Assign area workflow so historical assignments are preserved.</p>${admin() ? field("Base salary (Rs.)", "base_salary", num(r.base_salary_paisa ?? s.settings.base_salary_paisa) / 100, "number", 'min="0" step="0.01" required') : ""}${field("Monthly target (cartons)", "monthly_target", r.monthly_target || s.settings.monthly_target, "number", 'min="1" step="0.01" required')}${select("Status", "active", [["true", "Active"],["false", "Inactive"]], r.active === false ? "false" : "true")}${admin() ? select("Link login account", "user_id", [["", "No login linked"], ...s.profiles.filter(p => !s.salesmen.some(sm => sm.user_id===p.id && sm.id!==r.id)).map(p => [p.id, `${p.display_name || p.email} (${s.user_roles.find(role=>role.user_id===p.id)?.role || "user"})`])], r.user_id || "") : ""}${manager() ? `<input type="hidden" name="manager_user_id" value="${esc(user.id)}"><p class="notice">This salesman will be assigned to your manager account.</p>` : select("Assigned manager", "manager_user_id", [["", "Unassigned"], ...managers.map(p => [p.id, p.display_name || p.email])], assignedManager)}${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", (r.off_days || []).join("\n"))}</div><p class="muted">Managers create the employee record and assign it to their team. Admin links the login from Users & Access. Private photo, NIC and education uploads are part of the employee record workflow.</p>`;
+  }
   if (kind === "customer")
     html = `<div class="grid">${field("Customer name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Email", "email", r.email || "", "email")}${field("Address", "address", r.address || "")}${select("Assigned salesman", "salesman_id", [["", "Unassigned"], ...visible(s.salesmen).map((x) => [x.id, x.name])], r.salesman_id || own()?.id || "")}</div>`;
   if (kind === "expense") {
-    const activeAccounts = (s.cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable");
-    const defaultAccount = r.cashbook_account_key || (r.method && /bank|cheque/i.test(r.method) ? "pk80mucb1156654281004446" : r.method && /jazzcash/i.test(r.method) ? "jazzcash" : r.method && /easypaisa/i.test(r.method) ? "easypaisa" : "cash_hand");
-    const accountOptions = [["cash_hand", "Cash in Hand"], ["bank_default", "Bank Account — Default (not MCB)"], ["easypaisa", "EasyPaisa"], ["jazzcash", "JazzCash"], ...activeAccounts.filter(a => !["cash_hand","bank_default","easypaisa","jazzcash"].includes(a.account_key)).map(a => [a.account_key, a.label])];
-    if (!accountOptions.some(x => x[0] === "pk80mucb1156654281004446")) accountOptions.push(["pk80mucb1156654281004446", "MCB (verify account setup)"]);
-    html = `<div class="grid">${field("Date", "date", r.date || today(), "date", "required")}${field("Category", "category", r.category || "Misc", "text", 'list="expense-categories" required')}<datalist id="expense-categories">${["Rent", "Salaries", "Transport", "Utilities", "Packaging", "Marketing", "Misc"].map((x) => "<option>" + x + "</option>").join("")}</datalist>${field("Amount (Rs.)", "amount", num(r.amount_paisa) / 100, "number", 'min="0.01" step="0.01" required')}${select("Payment method", "method", ["Cash", "Bank Account", "JazzCash", "Easypaisa", "Cheque"], r.method || "Cash")}${select("Pay from account", "cashbook_account_key", accountOptions, defaultAccount)}<p class="muted">Choose the exact cash/bank/wallet account used. This account will be reduced by the expense.</p>${select("Salesman (optional)", "salesman_id", [["", "Not linked"], ...visible(s.salesmen).filter((x) => !manager() || managerTeamIds(s, user.id).includes(x.id)).map((x) => [x.id, x.name])], r.salesman_id || "")}${area("Description", "description", r.description || "")}<div class="field"><label for="receipt-file">Receipt image (optional, up to 5 MB)</label><input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp"></div></div>`;
+    const accountSource=[...(s.cashbook_accounts||[])];
+    if (user?.practice) for (const a of CASHBOOK_DEFAULT_ACCOUNTS) if (!accountSource.some(x=>x.account_key===a.account_key)) accountSource.push(a);
+    const activeAccounts = accountSource.filter(a => a.active && (["cash","bank","wallet"].includes(a.account_type) || (user?.role==="salesman" && a.account_type==="salesman" && a.salesman_id===own()?.id)));
+    const hasMcb = activeAccounts.some(a => a.account_type==="bank" && (a.account_key==="mcb_bank" || /mcb/i.test(a.label||"")));
+    const hasAlHabib = activeAccounts.some(a => a.account_type==="bank" && (a.account_key==="al_habib_bank" || /al habib/i.test(a.label||"")));
+    const selectableAccounts = activeAccounts.filter(a => !(hasMcb && hasAlHabib && a.account_key==="bank_default"));
+    const savedAccount = activeAccounts.find(a => a.account_key===r.cashbook_account_key);
+    const defaultAccount = r.cashbook_account_key || (r.method && /mcb/i.test(r.method) ? (activeAccounts.find(a => /mcb/i.test(a.label))?.account_key || "") : r.method && /al habib/i.test(r.method) ? (activeAccounts.find(a => /al habib/i.test(a.label))?.account_key || "") : r.method && /jazzcash/i.test(r.method) ? "jazzcash" : r.method && /easypaisa/i.test(r.method) ? "easypaisa" : r.method && /bank|cheque/i.test(r.method) ? "" : "cash_hand");
+    const legacyBankMethod = r.method && /^(bank|bank account|cheque)$/i.test(r.method);
+    const expenseMethod = legacyBankMethod ? (/mcb/i.test(savedAccount?.label||"") ? (r.method.toLowerCase()==="cheque" ? "Cheque — MCB Bank" : "MCB Bank") : /al habib/i.test(savedAccount?.label||"") ? (r.method.toLowerCase()==="cheque" ? "Cheque — Al Habib Bank" : "Al Habib Bank") : "") : (r.method || "Cash");
+    const accountOptions = selectableAccounts.map(a => [a.account_key, a.label]);
+    html = `<div class="grid">${field("Date", "date", r.date || today(), "date", "required")}${field("Category", "category", r.category || "Misc", "text", 'list="expense-categories" required')}<datalist id="expense-categories">${["Rent", "Salaries", "Transport", "Utilities", "Packaging", "Marketing", "Misc"].map((x) => "<option>" + x + "</option>").join("")}</datalist>${field("Amount (Rs.)", "amount", num(r.amount_paisa) / 100, "number", 'min="0.01" step="0.01" required')}${select("Payment method", "method", [["","Choose payment method"],["Cash","Cash"],["MCB Bank","MCB Bank"],["Al Habib Bank","Al Habib Bank"],["JazzCash","JazzCash"],["Easypaisa","EasyPaisa"],["Cheque — MCB Bank","Cheque — MCB Bank"],["Cheque — Al Habib Bank","Cheque — Al Habib Bank"]], expenseMethod)}${select("Pay from account", "cashbook_account_key", [["","Choose exact account"],...accountOptions], defaultAccount)}<p class="muted">Select the exact account used. MCB Bank and Al Habib Bank are separate destinations; the database will reject a mismatch.</p>${select("Salesman (optional)", "salesman_id", [["", "Not linked"], ...visible(s.salesmen).filter((x) => !manager() || managerTeamIds(s, user.id).includes(x.id)).map((x) => [x.id, x.name])], r.salesman_id || "")}${area("Description", "description", r.description || "")}<div class="field"><label for="receipt-file">Receipt image (optional, up to 5 MB)</label><input id="receipt-file" type="file" accept="image/jpeg,image/png,image/webp"></div></div>`;
   }
   modal(
     (existing ? "Edit " : "New ") + kind,
@@ -2086,15 +2451,25 @@ async function saveMaster(form) {
     });
   if (kind === "staff")
     Object.assign(r, {
+      id: String(f.id || old?.id || r.id).trim(),
       name: f.name.trim(),
       phone: f.phone,
+      date_of_birth: f.date_of_birth || null,
       joining_date: f.joining_date,
-      base_salary_paisa: paisa(f.base_salary),
+      ...(admin() ? { base_salary_paisa: paisa(f.base_salary) } : {}),
       monthly_target: num(f.monthly_target),
       active: f.active === "true",
-      user_id: f.user_id || null,
+      ...(admin() ? { user_id: f.user_id || null } : {}),
+      manager_user_id: manager() ? user.id : (f.manager_user_id || null),
       off_days: dates(f.off_days),
     });
+  if (kind === "staff") {
+    if (!r.id || !/^[A-Za-z0-9._:-]{1,180}$/.test(r.id)) throw Error("Employee ID is required and may contain letters, numbers, dot, underscore, colon or hyphen.");
+    if (S().salesmen.some(seller => String(seller.id).toLowerCase() === String(r.id).toLowerCase() && String(seller.id) !== String(old?.id || ""))) throw Error("This employee ID is already in use.");
+    if (!Number.isFinite(r.monthly_target) || r.monthly_target <= 0) throw Error("Monthly target must be greater than zero.");
+    if (!r.name) throw Error("Employee name is required.");
+    if (manager() && r.manager_user_id !== user.id) throw Error("Managers may assign employees only to their own account.");
+  }
   if (kind === "customer")
     Object.assign(r, {
       name: f.name.trim(),
@@ -2104,7 +2479,7 @@ async function saveMaster(form) {
       salesman_id: f.salesman_id || null,
     });
   if (kind === "expense") {
-    if (!String(f.cashbook_account_key || "").trim()) throw Error("Choose the exact account used to pay this expense.");
+    validateCashbookMethodAccount(f.method, f.cashbook_account_key);
     Object.assign(r, {
       date: f.date,
       category: f.category.trim(),
@@ -2185,15 +2560,20 @@ function showDocument(id, quote = false) {
 }
 function cashbookPaymentAccountField() {
   if (!S().cashbook_loaded && !user?.practice) return "";
-  const accounts=S().cashbook_accounts.filter(a=>a.active && a.account_type!=="receivable");
-  return select("Specific receiving account (optional)","cashbook_account_key",[["","Automatic from method / salesman"],...accounts.map(a=>[a.account_key,a.label])],"");
+  const accountSource=[...(S().cashbook_accounts||[])];
+  if (user?.practice) for (const a of CASHBOOK_DEFAULT_ACCOUNTS) if (!accountSource.some(x=>x.account_key===a.account_key)) accountSource.push(a);
+  const allAccounts=accountSource.filter(a=>a.active && a.account_type!=="receivable" && (a.account_type!=="salesman" || (user?.role==="salesman" && a.salesman_id===own()?.id)));
+  const hasMcb=allAccounts.some(a=>a.account_type==="bank" && (a.account_key==="mcb_bank" || /mcb/i.test(a.label||"")));
+  const hasAlHabib=allAccounts.some(a=>a.account_type==="bank" && (a.account_key==="al_habib_bank" || /al habib/i.test(a.label||"")));
+  const accounts=allAccounts.filter(a=>!(hasMcb && hasAlHabib && a.account_key==="bank_default"));
+  return select("Deposit into account (required)","cashbook_account_key",[["","Choose the exact destination account"],...accounts.map(a=>[a.account_key,a.label])],"");
 }
 function paymentModal(id) {
   const i = S().invoices.find((x) => x.id === id),
     p = invoiceState(i, S().payments);
   modal(
     "Receive payment · " + i.number,
-    `<div class="notice"><b>Invoice:</b> ${esc(i.number)} · <b>Customer:</b> ${esc(customerName(S().orders.find(o=>o.id===i.order_id)?.customer_id))}<br><b>Total:</b> ${money(i.total_paisa)} · <b>Already paid:</b> ${money(p.paid)} · <b>Balance due:</b> ${money(p.balance)} · ${badge(p.status)}</div><form id="payment-form" data-id="${id}"><div class="grid">${field("Date", "date", today(), "date", "required")}${field("Amount received now (Rs.)", "amount", p.balance / 100, "number", 'min="0.01" step="0.01" required')}<button type="button" class="secondary" data-act="pay-full-balance" data-id="${id}">Pay full balance</button>${select("Method", "method", ["Cash", "Bank Account", "JazzCash", "Easypaisa", "Cheque"])}${cashbookPaymentAccountField()}${field("Reference", "reference")}${field("Received by", "received_by", user.name || user.email || "Owner", "text", "required")}</div><button class="gold" style="margin-top:20px">Record payment</button></form>`,
+    `<div class="notice"><b>Invoice:</b> ${esc(i.number)} · <b>Customer:</b> ${esc(customerName(S().orders.find(o=>o.id===i.order_id)?.customer_id))}<br><b>Total:</b> ${money(i.total_paisa)} · <b>Already paid:</b> ${money(p.paid)} · <b>Balance due:</b> ${money(p.balance)} · ${badge(p.status)}</div><form id="payment-form" data-id="${id}"><div class="grid">${field("Date", "date", today(), "date", "required")}${field("Amount received now (Rs.)", "amount", p.balance / 100, "number", 'min="0.01" step="0.01" required')}<button type="button" class="secondary" data-act="pay-full-balance" data-id="${id}">Pay full balance</button>${select("Payment method", "method", [["Cash","Cash"],["MCB Bank","MCB Bank"],["Al Habib Bank","Al Habib Bank"],["JazzCash","JazzCash"],["Easypaisa","EasyPaisa"],["Cheque — MCB Bank","Cheque — MCB Bank"],["Cheque — Al Habib Bank","Cheque — Al Habib Bank"]])}${cashbookPaymentAccountField()}${field("Reference", "reference")}${field("Received by", "received_by", user.name || user.email || "Owner", "text", "required")}</div><button class="gold" style="margin-top:20px">Record payment</button></form>`,
   );
 }
 function refreshStockMovementPreview(form) {
@@ -2269,13 +2649,13 @@ function stockIssueModal() {
   stockIssueLineCount = 1;
   modal(
     "Issue stock to salesman",
-    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active).map((row) => [row.id, row.name]))}${field("Issue date", "date", today(), "date", "required")}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products to issue</h3>${btn("+ Add product", "stock-add-line", "issue", 'type="button"')}</div><div id="stock-issue-lines"></div>${area("Notes", "note")}<p class="muted">All lines are validated and saved together. Cartons use each product's own pack size.</p><div id="stock-operation-error" class="notice danger" role="alert" style="display:none"></div><button type="submit" class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
+    `<form id="stock-issue-form"><div class="grid">${select("Salesman", "salesman_id", visible(S().salesmen).filter((row) => row.active && (!manager() || managerTeamIds(S(), user.id).includes(row.id))).map((row) => [row.id, row.name]))}${field("Issue date", "date", today(), "date", "required")}${field("Voucher reference", "reference", "STI-" + uid(), "text", "required")}</div><div class="panel-heading"><h3>Products to issue</h3>${btn("+ Add product", "stock-add-line", "issue", 'type="button"')}</div><div id="stock-issue-lines"></div>${area("Notes", "note")}<p class="muted">All lines are validated and saved together. Cartons use each product's own pack size.</p><div id="stock-operation-error" class="notice danger" role="alert" style="display:none"></div><button type="submit" class="gold" style="margin-top:20px">Confirm stock issue</button></form>`,
   );
   renderStockOperationLines("issue");
 }
 function stockReturnModal() {
   stockReturnLineCount = 1;
-  const sellers = visible(S().salesmen).filter((row) => row.active);
+  const sellers = visible(S().salesmen).filter((row) => row.active && (!manager() || managerTeamIds(S(), user.id).includes(row.id)));
   const chosen = own()?.id || sellers[0]?.id || "";
   modal(
     "Receive stock return",
@@ -2320,7 +2700,7 @@ function closingBalanceTotal(closing) {
   );
 }
 function closingModal() {
-  const sellers = visible(S().salesmen).filter((row) => row.active);
+  const sellers = visible(S().salesmen).filter((row) => row.active && (!manager() || managerTeamIds(S(), user.id).includes(row.id)));
   const salesmanId = own()?.id || (mgmt() ? sellers[0]?.id : "") || "";
   const date = today();
   const opening = openingCashFor(salesmanId, date);
@@ -2367,6 +2747,31 @@ function targetsModal(id) {
     )}`,
   );
 }
+async function advanceSalaryModal(preselectedSalesmanId = "") {
+  if (!admin()) throw Error("Only Admin can release salary advances.");
+  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable");
+  if (!accounts.length) throw Error("No active cash or bank accounts are available. Configure Cash & Bank Book accounts first.");
+  const employees = [];
+  for (const seller of (S().salesmen || []).filter(x => x.active !== false && !x.deleted_at)) {
+    employees.push({ value: `salesman:${seller.id}`, label: `Salesman — ${seller.name}` });
+  }
+  const roleResult = await client.from("user_roles").select("user_id").eq("role", "manager");
+  if (roleResult.error) throw roleResult.error;
+  const managerIds = [...new Set((roleResult.data || []).map(x => x.user_id).filter(Boolean))];
+  if (managerIds.length) {
+    const profileResult = await client.from("profiles").select("id,display_name").in("id", managerIds);
+    if (profileResult.error) throw profileResult.error;
+    for (const profile of (profileResult.data || [])) employees.push({ value: `manager:${profile.id}`, label: `Manager — ${profile.display_name || profile.id}` });
+    for (const managerId of managerIds.filter(id => !(profileResult.data || []).some(p => p.id === id))) employees.push({ value: `manager:${managerId}`, label: `Manager — ${managerId}` });
+  }
+  if (!employees.length) throw Error("No active salesmen or manager accounts were found.");
+  const preferred = preselectedSalesmanId ? `salesman:${preselectedSalesmanId}` : employees[0].value;
+  const defaultAccount = accounts.find(a => /cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
+  const history = await client.from("employee_salary_advances").select("id,employee_name,employee_type,advance_date,amount_paisa,reason,status,account_key,reference,created_at").order("advance_date", { ascending: false }).limit(100);
+  const rows = history.error ? [] : (history.data || []).map(a => [esc(a.employee_name), esc(a.employee_type), esc(a.advance_date), money(a.amount_paisa), esc(a.reason), esc((accounts.find(x => x.account_key === a.account_key) || {}).label || a.account_key), badge(a.status || "posted"), esc(a.reference || "—")]);
+  modal("Release advance salary", `<form id="salary-advance-form"><section class="panel"><p class="muted">Record an employee advance with a mandatory reason. The selected cash/bank/wallet account will be debited automatically.</p>${select("Employee", "employee", employees.map(e => [e.value,e.label]), preferred, "required")}${field("Advance amount (PKR)", "amount", "", "number", 'min="0.01" step="0.01" required')}${field("Payment date", "advance_date", today(), "date", "required")}${select("Pay from account", "account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}<div class="field"><label for="f-reason">Reason for advance salary <span class="required">*</span></label><textarea id="f-reason" name="reason" required minlength="3" maxlength="1000" placeholder="Explain why this advance is being issued"></textarea></div>${field("Reference / notes (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm advance payment</button></form><section class="panel"><h2>Recent advance salary records</h2>${history.error ? `<p class="notice danger">History could not load: ${esc(history.error.message)}. Apply the advance-salary SQL migration first.</p>` : table(["Employee","Type","Date","Amount","Reason","Paid from","Status","Reference"], rows, "No advance salary records yet.")}</section>`);
+}
+
 async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const s = S().salesmen.find((x) => x.id === id);
   const achieved = S()
@@ -2382,29 +2787,32 @@ async function postSalary(id, month = today().slice(0, 7), automatic = false) {
     if (automatic) return;
     throw Error("Salary already posted for " + month);
   }
-  if (
-    !automatic &&
-    !confirm(
-      `Post ${money(pay.total)} salary for ${s.name} (${month})? Base plus earned incentive; advances and deductions are not included.`,
-    )
-  )
+  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable" && (!manager() || !a.salesman_id || a.salesman_id === own()?.id));
+  if (!accounts.length) throw Error("No active payment accounts are available. Ask Admin to configure Cash & Bank Book accounts.");
+  const defaultAccount = accounts.find(a => /cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
+  if (!automatic) {
+    modal("Release salary · " + s.name, `<form id="salary-post-form" data-salesman="${esc(id)}" data-month="${esc(month)}"><section class="panel"><p><b>Salary period:</b> ${esc(month)}</p><p><b>Salary amount:</b> ${money(pay.total)}</p><p class="muted">Base plus earned incentive. Advances and deductions are not included.</p>${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm salary payment</button></form>`);
     return;
+  }
+  // Automatic monthly posting uses the configured cash-in-hand account unless an existing employee salary preference is present.
+  const accountKey = s.salary_account_key || defaultAccount;
+  const account = accounts.find(a => a.account_key === accountKey) || accounts[0];
   await store.run("master.save", {
     table: "expenses",
     record: {
       id: old?.id || "SAL-" + id + "-" + month,
       date: monthEnd(month + "-01"),
       category: "Salaries",
-      description:
-        s.name + " — base + incentive (" + achieved.toFixed(2) + " cartons)",
+      description: `Salary released to ${s.name} — ${month}; base + incentive (${achieved.toFixed(2)} cartons)${automatic ? " (automatic posting)" : ""}`,
       amount_paisa: pay.total,
-      method: "Bank",
+      method: /jazzcash/i.test(account.label) ? "JazzCash" : /easypaisa/i.test(account.label) ? "Easypaisa" : /cash/i.test(account.label) ? "Cash" : /mcb/i.test(account.label) ? "MCB Bank" : /al habib/i.test(account.label) ? "Al Habib Bank" : "Bank Account",
+      cashbook_account_key: account.account_key,
       salesman_id: id,
       salary_period: month,
     },
     expected_version: old?.version,
   });
-  if (!automatic) toast("Salary expense posted");
+  if (!automatic) toast("Salary payment and linked expense posted.");
 }
 async function saveSettings(form) {
   const f = new FormData(form),
@@ -2482,12 +2890,12 @@ function userModal(id) {
         "Link salesman (optional)",
         "salesman_id",
         [
-          ["", "No link"],
+          ["", "Create a new salesman profile"],
           ...S()
             .salesmen.filter((x) => !x.user_id)
             .map((s) => [s.id, s.name]),
         ],
-      )}</div><p class="muted">The login is created without sending an email. Share the password securely. Non-admin users must contact Admin if they need a password change.</p><button class="gold">Create login</button></form>`,
+      )}${select("Assign salesman to manager (optional)", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], "")}</div><p class="muted">The login is created without sending an email. Share the password securely. If a manager is selected, the salesman appears in that manager's team overview. Deleting a login later preserves linked business history.</p><button class="gold">Create login</button></form>`,
     );
     return;
   }
@@ -2508,8 +2916,28 @@ function userModal(id) {
         ["false", "Inactive"],
       ],
       String(p.active),
-    )}${select("Link salesman profile", "salesman_id", sellerChoices, linkedSeller?.id || "__create__")}</div><p class="muted">For a salesman login, select an existing unlinked salesman or create a linked profile. This makes the account available in Salesmen & Targets, stock assignment and sales dropdowns.</p><p>Optional payment collection permission:</p><div class="checkbox"><input id="can-collect" name="can_collect" type="checkbox" ${S().user_permissions.some((x) => x.user_id === id && x.section === "invoices" && x.can_create) ? "checked" : ""}><label for="can-collect">Allow collecting invoice payments</label></div><button class="gold" style="margin-top:20px">Save access</button></form>`,
+    )}${select("Link salesman profile", "salesman_id", sellerChoices, linkedSeller?.id || "__create__")}${select("Assigned manager", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(rr => rr.user_id === profile.id && rr.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], linkedSeller?.manager_user_id || "")}</div><p class="muted">For a salesman login, link an existing salesman profile or create one. Assigning a manager places that salesman in the manager's team overview, while the Admin can still see and manage the assignment here.</p><p>Optional payment collection permission:</p><div class="checkbox"><input id="can-collect" name="can_collect" type="checkbox" ${S().user_permissions.some((x) => x.user_id === id && x.section === "invoices" && x.can_create) ? "checked" : ""}><label for="can-collect">Allow collecting invoice payments</label></div><button class="gold" style="margin-top:20px">Save access</button></form>`,
   );
+}
+const normName = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+function unlinkedSalesmanByName(name) {
+  const n = normName(name);
+  if (!n) return [];
+  return S().salesmen.filter((x) => !x.user_id && !x.deleted_at && x.active && normName(x.name) === n);
+}
+async function edgeFunctionError(error, fnName) {
+  // Turn the generic supabase-js wrapper messages into something an Admin can act on.
+  try {
+    const body = await error.context?.json?.();
+    if (body?.error) return body.error;
+  } catch {}
+  const status = error?.context?.status;
+  if (status === 404) return `Edge Function "${fnName}" is not deployed in Supabase. Deploy it (see DEPLOY_V55_8.md) and try again.`;
+  if (status === 401) return "Your session has expired. Sign out, sign in again as Admin, and retry.";
+  if (/Failed to send a request|FunctionsFetchError|NetworkError|Failed to fetch/i.test(error?.message || "")) {
+    return `Could not reach Edge Function "${fnName}". Either it is not deployed, or its ALLOWED_ORIGIN secret does not exactly match ${location.origin}. See DEPLOY_V55_8.md.`;
+  }
+  return error?.message || String(error);
 }
 async function previewImport(file) {
   if (!file) return;
@@ -2613,9 +3041,9 @@ async function action(act, id, element) {
       const path = `${user.id}/admin-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
       const bucket = client.storage.from("employee-private");
       const uploaded = await bucket.upload(path, file, {contentType:file.type, upsert:false});
-      if (uploaded.error) throw uploaded.error;
+      if (uploaded.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+uploaded.error.message);
       const saved = await client.from("profiles").update({avatar_path:path, updated_at:new Date().toISOString()}).eq("id", user.id);
-      if (saved.error) { await bucket.remove([path]); throw saved.error; }
+      if (saved.error) { await bucket.remove([path]); throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message); }
       const signed = await bucket.createSignedUrl(path, 3600);
       if (signed.error) throw signed.error;
       const avatar = $("admin-profile-avatar");
@@ -2630,15 +3058,15 @@ async function action(act, id, element) {
       const file=$("manager-profile-photo")?.files?.[0]; if(!file) throw Error("Choose a photo first.");
       if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size>5*1024*1024) throw Error("Use JPG, PNG or WebP up to 5 MB.");
       const path=`${user.id}/manager-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private");
-      const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
-      const saved=await client.from("profiles").update({avatar_path:path,updated_at:new Date().toISOString()}).eq("id",user.id); if(saved.error){await bucket.remove([path]);throw saved.error;}
+      const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
+      const saved=await client.from("profiles").update({avatar_path:path,updated_at:new Date().toISOString()}).eq("id",user.id); if(saved.error){await bucket.remove([path]);throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message);}
       const signed=await bucket.createSignedUrl(path,3600); if(signed.error) throw signed.error; const avatar=$("manager-profile-avatar"); if(avatar) avatar.innerHTML=`<img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo">`; toast("Manager profile photo updated."); break;
     }
     case "manager-document-upload": {
       if(!manager()) throw Error("Manager account required."); const file=$("manager-document-file")?.files?.[0]; if(!file) throw Error("Choose a document first.");
       if(!(file.type==="application/pdf"||/^image\/(jpeg|png|webp)$/.test(file.type))||file.size>10*1024*1024) throw Error("Use PDF, JPG, PNG or WebP up to 10 MB.");
-      const path=`${user.id}/manager-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private"); const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw up.error;
-      const saved=await client.from("manager_employee_documents").insert({manager_user_id:user.id,document_type:$("manager-document-type")?.value||"other",file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size}); if(saved.error){await bucket.remove([path]);throw saved.error;} $("manager-document-file").value=""; toast("Document uploaded securely."); await hydrateManagerFieldwork(); break;
+      const path=`${user.id}/manager-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`; const bucket=client.storage.from("employee-private"); const up=await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
+      const saved=await client.from("manager_employee_documents").insert({manager_user_id:user.id,document_type:$("manager-document-type")?.value||"other",file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size}); if(saved.error){await bucket.remove([path]);throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message);} $("manager-document-file").value=""; toast("Document uploaded securely."); await hydrateManagerFieldwork(); break;
     }
     case "manager-attendance-check-in":
     case "manager-attendance-check-out": {
@@ -2652,51 +3080,11 @@ async function action(act, id, element) {
       if(!manager())throw Error("Manager account required."); const save=async(coords=null)=>{const customer=$("f-manager-visit-customer")?.value.trim()||"",areaName=$("f-manager-visit-area")?.value.trim()||"";if(!customer&&!areaName)throw Error("Enter a customer or area.");const {error}=await client.from("manager_customer_visits").insert({manager_user_id:user.id,customer_label:customer,area:areaName,purpose:$("f-manager-visit-purpose")?.value||"Sales visit",notes:$("f-manager-visit-notes")?.value||"",latitude:coords?.latitude??null,longitude:coords?.longitude??null,visited_at:new Date().toISOString()});if(error)throw error;$("f-manager-visit-notes").value="";toast("Fieldwork visit saved.");};
       if(act==="manager-visit-save-location"){if(!navigator.geolocation)throw Error("GPS unavailable. Save without GPS instead.");await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(async p=>{try{await save(p.coords);resolve();}catch(e){reject(e);}},()=>reject(Error("GPS permission denied. You can save without GPS.")),{enableHighAccuracy:true,timeout:12000,maximumAge:60000}));}else await save();await hydrateManagerFieldwork();break;
     }
-    case "profile-photo-upload": {
-      const seller = own(), file = $("profile-photo")?.files?.[0];
-      if (!seller) throw Error("Your login is not linked to a salesman profile.");
-      if (!file) throw Error("Choose a photo first.");
-      if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 5*1024*1024) throw Error("Use a JPG, PNG or WebP image up to 5 MB.");
-      const path = `${user.id}/profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      const up = await client.storage.from("employee-private").upload(path,file,{contentType:file.type,upsert:false});
-      if (up.error) throw up.error;
-      const { data: signed, error: signErr } = await client.storage.from("employee-private").createSignedUrl(path,3600);
-      if (signErr) throw signErr;
-      const { error } = await client.from("salesmen").update({photo_path:path}).eq("id",seller.id);
-      if (error) throw error;
-      seller.photo_url = signed.signedUrl; seller.photo_path = path; render(); toast("Profile photo uploaded."); break;
-    }
-    case "employee-document-upload": {
-      const seller = own(), file = $("employee-document-file")?.files?.[0], type = $("employee-document-type")?.value || "other";
-      if (!seller) throw Error("Your login is not linked to a salesman profile.");
-      if (!file) throw Error("Choose a document first.");
-      if (!(file.type === "application/pdf" || /^image\/(jpeg|png|webp)$/.test(file.type)) || file.size > 10*1024*1024) throw Error("Use PDF, JPG, PNG or WebP up to 10 MB.");
-      const path = `${user.id}/documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
-      const up = await client.storage.from("employee-private").upload(path,file,{contentType:file.type,upsert:false});
-      if (up.error) throw up.error;
-      const { error } = await client.from("employee_documents").insert({salesman_id:seller.id,document_type:type,file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size});
-      if (error) { await client.storage.from("employee-private").remove([path]); throw error; }
-      toast("Document uploaded securely."); $("employee-document-file").value=""; break;
-    }
+    case "profile-photo-upload":
+    case "employee-document-upload":
     case "attendance-check-in":
-    case "attendance-check-out": {
-      const seller = own(); if (!seller || seller.id !== id) throw Error("You can only record your own attendance.");
-      const { data: existing, error: readErr } = await client.from("attendance_records").select("*").eq("salesman_id",seller.id).eq("attendance_date",today()).maybeSingle();
-      if (readErr) throw readErr;
-      if (act === "attendance-check-in") {
-        if (existing?.check_in_at) throw Error("You have already checked in today.");
-        let checkInCoords = null;
-        if (navigator.geolocation) {
-          try { checkInCoords = await new Promise((resolve) => navigator.geolocation.getCurrentPosition(pos => resolve({latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy}), () => resolve(null), {enableHighAccuracy:true,timeout:10000,maximumAge:60000})); } catch (_) { checkInCoords = null; }
-        }
-        const { error } = await client.from("attendance_records").insert({salesman_id:seller.id,attendance_date:today(),check_in_at:new Date().toISOString(),status:"present",check_in_latitude:checkInCoords?.latitude ?? null,check_in_longitude:checkInCoords?.longitude ?? null,check_in_location_accuracy_m:checkInCoords?.accuracy ?? null}); if(error) throw error;
-        toast(checkInCoords ? "Check-in recorded with location." : "Check-in recorded. Location was not available or permission was declined.");
-      } else {
-        if (!existing?.check_in_at) throw Error("Check in before checking out."); if(existing.check_out_at) throw Error("You have already checked out today.");
-        const { error } = await client.from("attendance_records").update({check_out_at:new Date().toISOString()}).eq("id",existing.id); if(error) throw error; toast("Check-out recorded.");
-      }
-      break;
-    }
+    case "attendance-check-out":
+      throw Error("This action is managed by your authorized manager. Contact your manager for profile/document changes or attendance corrections.");
     case "visit-save":
     case "visit-save-location": {
       const seller = own(); if (!seller || seller.id !== id) throw Error("You can only record your own visits.");
@@ -2713,6 +3101,17 @@ async function action(act, id, element) {
       render();
       toast("Daily closing approved. Any variance was posted as an audited adjustment.");
       break;
+    case "cashbook-add-money":
+      if (!admin()) throw Error("Only Admin can add external funds");
+      {
+        const accounts = cashbookData().accounts.filter(a=>a.active && ["cash","bank","wallet"].includes(a.account_type));
+        modal("Add Money · External funds", `<p class="notice">Use this only for new money introduced into the business. For money moved from another tracked account, use Transfer between accounts. Opening-balance corrections must use the audited adjustment workflow.</p><form id="cashbook-form" data-kind="deposit">${field("Date","date",cashbookDate,"date","required")}${select("Destination account","account_key",accounts.map(a=>[a.account_key,a.label]),"cash_hand")}${field("Amount (PKR)","amount","","number",'min="0.01" step="0.01" required')}${field("Reference number (optional)","reference")}${area("Source / reason (required)","description","")}<div class="actions"><button class="gold" type="submit">Confirm Add Money</button></div></form>`);
+      }
+      break;
+    case "cashbook-account-ledger":
+      cashbookAccountFilter = id || ""; render(); requestAnimationFrame(() => document.getElementById("cashbook-transactions")?.scrollIntoView({ behavior: "smooth", block: "start" })); break;
+    case "cashbook-account-ledger-clear":
+      cashbookAccountFilter = ""; render(); requestAnimationFrame(() => document.getElementById("cashbook-transactions")?.scrollIntoView({ behavior: "smooth", block: "start" })); break;
     case "cashbook-transfer":
       if (!mgmt()) throw Error("Management access required");
       {
@@ -2774,7 +3173,8 @@ async function action(act, id, element) {
       openEditor(true, id);
       break;
     case "view-order":
-      showDocument(id);
+      if (user.role === "salesman" || (manager() && !can("invoices"))) showOperationalOrder(id);
+      else showDocument(id);
       break;
     case "view-quote":
       showDocument(id, true);
@@ -2977,6 +3377,9 @@ async function action(act, id, element) {
       await postSalary(id);
       render();
       break;
+    case "advance-salary":
+      await advanceSalaryModal(id);
+      break;
     case "delete-expense": {
       const e = S().expenses.find((x) => x.id === id);
       if (confirm("Delete this expense? Profit and loss will be updated.")) {
@@ -3020,7 +3423,7 @@ async function action(act, id, element) {
       const q = S().quotations.find((x) => x.id === id);
       modal(
         "Convert " + q.number,
-        `<p>Stock will be checked and deducted once. The original quotation will link to the new order.</p><div class="notice">${S().quotation_items.filter(l=>l.quotation_id===id).map(l=>{const available=balance(l.product_id);return `${esc(l.product_name)}: ${available} available / ${l.boxes} required ${available>=l.boxes?"✓":"⚠ Insufficient"}`;}).join("<br>")}</div><form id="convert-form" data-id="${id}"><p>Quotation total: <b>${money(q.total_paisa)}</b></p><div class="checkbox"><input id="reprice" name="reprice" type="checkbox"><label for="reprice">Re-price at today's rates</label></div><section class="panel"><h3>Payment</h3><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Method", "payment_method", ["Cash", "Bank Account", "JazzCash", "Easypaisa", "Cheque"])}${cashbookPaymentAccountField()}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="convert-payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section><button class="gold" style="margin-top:20px">Convert to order</button></form>`,
+        `<p>Stock will be checked and deducted once. The original quotation will link to the new order.</p><div class="notice">${S().quotation_items.filter(l=>l.quotation_id===id).map(l=>{const available=balance(l.product_id);return `${esc(l.product_name)}: ${available} available / ${l.boxes} required ${available>=l.boxes?"✓":"⚠ Insufficient"}`;}).join("<br>")}</div><form id="convert-form" data-id="${id}"><p>Quotation total: <b>${money(q.total_paisa)}</b></p><div class="checkbox"><input id="reprice" name="reprice" type="checkbox"><label for="reprice">Re-price at today's rates</label></div><section class="panel"><h3>Payment</h3><div class="grid three">${select("Payment status", "payment_status", [["unpaid","Unpaid"],["partial","Part paid"],["paid","Paid in full"]], "unpaid")}${field("Amount received now (Rs.)", "payment_amount", "0.00", "number", 'min="0" step="0.01"')}${field("Payment date", "payment_date", today(), "date")}${select("Payment method", "payment_method", [["Cash","Cash"],["MCB Bank","MCB Bank"],["Al Habib Bank","Al Habib Bank"],["JazzCash","JazzCash"],["Easypaisa","EasyPaisa"],["Cheque — MCB Bank","Cheque — MCB Bank"],["Cheque — Al Habib Bank","Cheque — Al Habib Bank"]])}${cashbookPaymentAccountField()}${field("Reference", "payment_reference")}${field("Received by", "payment_received_by", user.name || user.email || "Owner")}${field("Due date", "payment_due_date", addDays(today(),7), "date")}</div><div id="convert-payment-summary" class="total-box" aria-live="polite">Total · Paid now · Balance</div></section><button class="gold" style="margin-top:20px">Convert to order</button></form>`,
       );
       break;
     }
@@ -3141,22 +3544,116 @@ async function action(act, id, element) {
       if (!client) throw Error("Password resets require a configured Supabase connection.");
       const target = S().profiles.find((p) => String(p.id) === String(id));
       if (!target || target.id === user.id) throw Error("Choose another valid user account.");
-      const temporaryPassword = window.prompt(`Set the password for ${target.display_name || target.email || target.id}. They will keep using this password until Admin changes it. Use at least 12 characters:`);
-      if (temporaryPassword === null) break;
-      if (temporaryPassword.length < 12 || temporaryPassword.length > 128) throw Error("Password must be 12–128 characters.");
-      const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: temporaryPassword } });
-      if (error) {
-        let message = error.message;
-        try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {}
-        throw Error(message);
-      }
+      const targetRole = S().user_roles.find(r => r.user_id === target.id)?.role || "user";
+      modal(
+        "Reset password · " + esc(target.display_name || "user"),
+        `<form id="reset-password-form" data-id="${esc(target.id)}"><p class="muted">Set a new password for this ${esc(targetRole)} account (12–128 characters). Share it with them securely; their old password stops working immediately.</p><div class="grid">${field("New password", "new_password", "", "password", 'minlength="12" maxlength="128" required autocomplete="new-password"')}${field("Confirm new password", "confirm_password", "", "password", 'minlength="12" maxlength="128" required autocomplete="new-password"')}</div><div id="master-form-error" role="alert" style="display:none"></div><button class="gold" type="submit" style="margin-top:15px">Reset password</button></form>`,
+      );
+      break;
+    }
+    case "delete-user": {
+      if (!admin()) throw Error("Only Admin can delete user accounts.");
+      if (!client) throw Error("Deleting user accounts requires Supabase.");
+      const target = S().profiles.find((profile) => String(profile.id) === String(id));
+      if (!target || target.id === user.id) throw Error("You cannot delete your own signed-in account.");
+      const targetRole = S().user_roles.find((r) => r.user_id === target.id)?.role || "user";
+      const linkedSeller = S().salesmen.find((seller) => seller.user_id === target.id);
+      const promptText = `Permanently delete login for ${target.display_name || "this user"} (${targetRole})?\n\nThe login and access roles will be removed. Sales and other historical business records will be preserved; a linked salesman profile will be unlinked from this login. Deleting a manager may also remove that manager's attendance, documents and visit records according to database rules.\n\nType DELETE to confirm.`;
+      if (window.prompt(promptText) !== "DELETE") break;
+      const { data, error } = await client.functions.invoke("admin-delete-user", { body: { user_id: target.id } });
+      if (error) { let message = error.message; try { const body = await error.context.json(); if (body?.error) message = body.error; } catch {} throw Error(message); }
       if (data?.error) throw Error(data.error);
-      toast(`Password set for ${target.display_name || target.email || "user"}. The user can sign in with this password and cannot change it from the app. Share it securely.`);
+      await store.refresh();
+      render();
+      toast(`Login deleted for ${target.display_name || "user"}; business history preserved.`);
+      break;
+    }
+    case "delete-salesman": {
+      if (!admin()) throw Error("Only Admin can delete a salesman.");
+      if (!client) throw Error("Deleting a salesman requires Supabase.");
+      const seller = S().salesmen.find((x) => String(x.id) === String(id));
+      if (!seller) throw Error("Salesman not found. Refresh and try again.");
+      const { data: preview, error: previewError } = await client.rpc("admin_delete_salesman", { p_salesman_id: seller.id, p_dry_run: true });
+      if (previewError) {
+        const m = previewError.message || String(previewError);
+        if (/admin_delete_salesman|schema cache|does not exist/i.test(m)) throw Error("Run supabase/admin_delete_salesman_v55_9.sql in the Supabase SQL Editor first. " + m);
+        throw Error("The delete preview failed, so nothing was deleted: " + m);
+      }
+      const counts = Object.entries(preview?.counts || {}).sort((a, b) => a[0].localeCompare(b[0]));
+      const total = counts.reduce((n, [, v]) => n + Number(v), 0);
+      modal(
+        "Permanently delete " + esc(seller.name),
+        `<form id="delete-salesman-form" data-id="${esc(seller.id)}"><p class="notice"><b>This cannot be undone.</b> The salesman and every connected record below will be deleted. Customers are kept but unassigned. Stock and cash/bank balances will change. Download a JSON backup first.</p>${table(["Records", "Count"], counts.map(([k, v]) => [esc(k.replace(/^public\./, "")), esc(String(v))]), "Nothing else is linked to this salesman.")}<p>${preview?.user_id ? "Their login will also be deleted." : "This salesman has no login."}</p><div class="grid">${field('Type DELETE to confirm (' + total + ' records)', "confirm", "", "text", 'required autocomplete="off"')}</div><div id="master-form-error" role="alert" style="display:none"></div><button class="danger" type="submit" style="margin-top:15px">Delete salesman and data</button></form>`,
+      );
       break;
     }
     case "salesman-profile":
       await openAdminSalesmanProfile(id);
       break;
+    case "my-target-details": salesmanTargetDetails(id); break;
+    case "my-salary-details": {
+      if (user?.role !== "salesman" || own()?.id !== id) throw Error("You can only view your own salary details.");
+      const result = await client.rpc("own_salary_snapshot"); if (result.error) throw result.error;
+      const pay = result.data || {};
+      modal("My salary breakdown · " + esc(pay.salary_period || today().slice(0,7)), `<section class="panel"><p><b>Status:</b> ${esc(pay.status === "posted" ? "Posted" : "Estimate — pending Admin approval")}</p>${table(["Component","Amount"], [["Base salary",money(pay.base_salary_paisa||0)],["Target incentive",money(pay.incentive_paisa||0)],["Total",money(pay.total_paisa||0)],["Monthly target",`${num(pay.monthly_target).toFixed(2)} cartons`],["Eligible quantity achieved",`${num(pay.achieved_cartons).toFixed(2)} cartons`],["Achievement",`${num(pay.achievement_percent).toFixed(1)}%`]], "Salary calculation unavailable.")}<p class="muted">This is an estimate unless marked Posted. Advances and deductions are not included unless separately configured.</p></section>`); break;
+    }
+    case "notify-salesman": notificationModal(id); break;
+    case "notify-team": notificationModal(""); break;
+    case "mark-attendance": attendanceModal(id); break;
+    case "assign-area": await areaAssignmentModal(id); break;
+    case "manage-areas": await manageAreasModal(); break;
+    case "toggle-area": {
+      if (!admin() || !client) throw Error("Only Admin can activate or deactivate areas.");
+      const current = await client.from("sales_areas").select("id,active").eq("id", id).single(); if (current.error) throw current.error;
+      const changed = await client.from("sales_areas").update({active:!current.data.active,updated_at:new Date().toISOString()}).eq("id",id); if (changed.error) throw changed.error;
+      toast(current.data.active ? "Area deactivated; history retained." : "Area activated."); await manageAreasModal(); break;
+    }
+    case "read-manager-notification": {
+      if (!manager() || !client) throw Error("Manager account required.");
+      const { error } = await client.from("employee_notifications").update({ read_at: new Date().toISOString() }).eq("id", id).eq("recipient_user_id", user.id);
+      if (error) throw error; await hydrateManagerNotifications(); toast("Message marked as read."); break;
+    }
+    case "ack-manager-notification": {
+      if (!manager() || !client) throw Error("Manager account required.");
+      const stamp = new Date().toISOString();
+      const { error } = await client.from("employee_notifications").update({ read_at: stamp, acknowledged_at: stamp }).eq("id", id).eq("recipient_user_id", user.id);
+      if (error) throw error; await hydrateManagerNotifications(); toast("Acknowledgement saved."); break;
+    }
+    case "read-notification": {
+      const seller = own(); if (!seller || !client) throw Error("Salesman account required.");
+      const { error } = await client.from("employee_notifications").update({ read_at: new Date().toISOString() }).eq("id", id).eq("recipient_salesman_id", seller.id);
+      if (error) throw error; await hydrateSalesmanNotifications(); toast("Message marked as read."); break;
+    }
+    case "employee-manager-photo-upload": {
+      if (!(admin() || manager()) || (manager() && !managerTeamIds(S(), user.id).includes(id))) throw Error("Authorized management access required.");
+      const seller = S().salesmen.find(x => x.id === id); const file = $("employee-profile-photo")?.files?.[0];
+      if (!seller?.user_id) throw Error("Link this employee to a login before uploading a private profile photo.");
+      if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type) || file.size > 5*1024*1024) throw Error("Choose a JPG, PNG or WebP image up to 5 MB.");
+      const path = `${seller.user_id}/salesman-profile-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
+      const saved = await client.rpc("set_salesman_photo", { p_salesman_id: id, p_photo_path: path });
+      if(saved.error) { await bucket.remove([path]); throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message); }
+      toast("Salesman profile photo saved privately."); await openAdminSalesmanProfile(id); break;
+    }
+    case "employee-manager-document-upload": {
+      if (!(admin() || manager()) || (manager() && !managerTeamIds(S(), user.id).includes(id))) throw Error("Authorized management access required.");
+      const seller = S().salesmen.find(x => x.id === id); const file = $("employee-document-file")?.files?.[0];
+      if (!seller?.user_id) throw Error("Link this employee to a login before uploading private documents.");
+      if (!file || !(file.type === "application/pdf" || /^image\/(jpeg|png|webp)$/.test(file.type)) || file.size > 10*1024*1024) throw Error("Choose a PDF, JPG, PNG or WebP file up to 10 MB.");
+      const path = `${seller.user_id}/salesman-documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const bucket = client.storage.from("employee-private"); const up = await bucket.upload(path,file,{contentType:file.type,upsert:false}); if(up.error) throw Error("Step 1 of 2 (file upload to private storage) was refused: "+up.error.message+" [as "+(admin()?"admin":manager()?"manager":user?.role)+", folder "+String(path).split("/")[0]+"]");
+      const docType = $("employee-document-type")?.value || "identity";
+      const saved = await client.from("employee_documents").insert({salesman_id:id,document_type:docType,file_path:path,file_name:file.name,mime_type:file.type,size_bytes:file.size});
+      if(saved.error) { await bucket.remove([path]); throw Error("Step 2 of 2 (saving the record) was refused: "+saved.error.message); }
+      toast("Employee document uploaded privately."); await openAdminSalesmanProfile(id); break;
+    }
+    case "ack-notification": {
+      const seller = own();
+      if (!seller || !client) throw Error("Salesman account required.");
+      const { error } = await client.from("employee_notifications").update({ read_at: new Date().toISOString(), acknowledged_at: new Date().toISOString() }).eq("id", id).eq("recipient_salesman_id", seller.id);
+      if (error) throw error;
+      await hydrateSalesmanNotifications(); toast("Acknowledgement saved."); break;
+    }
     case "audit-detail": {
       const a = S().audit_log.find((a) => String(a.id) === id);
       modal(
@@ -3635,12 +4132,133 @@ document.addEventListener("submit", async (e) => {
       case "master-form":
         await saveMaster(form);
         break;
+      case "salary-advance-form": {
+        if (!admin()) throw Error("Only Admin can release salary advances.");
+        const [employeeType, employeeId] = String(f.employee || "").split(":", 2);
+        if (!['salesman','manager'].includes(employeeType) || !employeeId) throw Error("Select a valid employee.");
+        const amount = Math.round(Number(f.amount) * 100);
+        if (!Number.isSafeInteger(amount) || amount <= 0) throw Error("Advance amount must be greater than zero.");
+        const reason = String(f.reason || "").trim();
+        if (reason.length < 3) throw Error("Enter a clear reason for the salary advance.");
+        const account = (S().cashbook_accounts || []).find(a => a.account_key === f.account_key && a.active && a.account_type !== "receivable");
+        if (!account) throw Error("Choose an active cash, bank, or wallet account.");
+        const employeeName = employeeType === "salesman"
+          ? (S().salesmen || []).find(x => String(x.id) === employeeId)?.name
+          : (await client.from("profiles").select("display_name").eq("id", employeeId).maybeSingle()).data?.display_name;
+        if (!employeeName) throw Error("Could not verify the selected employee. Refresh and try again.");
+        if (!confirm(`Release ${money(amount)} as an advance to ${employeeName} from ${account.label}?\nReason: ${reason}\nThis will debit the selected account.`)) break;
+        const payload = { employee_type: employeeType, employee_name: employeeName, advance_date: f.advance_date || today(), amount_paisa: amount, reason, account_key: account.account_key, reference: String(f.reference || "").trim() || null, created_by: user.id };
+        if (employeeType === "salesman") payload.salesman_id = employeeId;
+        else payload.manager_user_id = employeeId;
+        const result = await client.from("employee_salary_advances").insert(payload).select("id").single();
+        if (result.error) throw result.error;
+        await store.refresh();
+        toast("Advance salary recorded and payment account debited.");
+        close(); render(); break;
+      }
+      case "salary-post-form": {
+        if (!admin()) throw Error("Only Admin can release salary.");
+        const salesmanId = form.dataset.salesman, month = form.dataset.month;
+        const seller = S().salesmen.find(x => x.id === salesmanId);
+        if (!seller) throw Error("Salesman not found.");
+        const amount = salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total;
+        if (!f.cashbook_account_key) throw Error("Choose the account used to pay this salary.");
+        const account = (S().cashbook_accounts||[]).find(a=>a.account_key===f.cashbook_account_key && a.active && a.account_type!=="receivable");
+        if (!account) throw Error("Select an active cash or bank account.");
+        if (!confirm(`Release ${money(amount)} to ${seller.name} for ${month} from ${account.label}? This will create the linked Salary expense and debit the selected account.`)) break;
+        const achieved = S().salesman_daily_targets.filter(d=>d.salesman_id===salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0);
+        const prior = S().expenses.find(e=>e.salesman_id===salesmanId && e.salary_period===month && !e.deleted_at);
+        if (prior) throw Error("Salary already posted for " + month);
+        await store.run("master.save", {table:"expenses", record:{id:"SAL-"+salesmanId+"-"+month,date:f.date||today(),category:"Salaries",description:`Salary released to ${seller.name} — ${month}; base + incentive (${achieved.toFixed(2)} cartons)${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:amount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,salesman_id:salesmanId,salary_period:month}});
+        // Make the newly posted salary immediately visible in Expenses. The shared
+        // expense filters may otherwise hide it (for example, a previously selected
+        // category such as Transport or a date range that excludes the payment date).
+        await store.refresh();
+        const postedSalaryExpense = S().expenses.find(e => e.id === "SAL-" + salesmanId + "-" + month && !e.deleted_at);
+        if (!postedSalaryExpense) throw Error("Salary payment was submitted, but its linked expense could not be found after refresh. Check Supabase expenses permissions and the saved salary record before retrying.");
+        filter.from = monthStart(f.date || today());
+        filter.to = f.date || today();
+        filter.category = "All categories";
+        page = "expenses";
+        toast("Salary released; the linked Salary expense is now shown in Expenses.");
+        close(); render(); break;
+      }
+      case "notification-form": {
+        if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
+        const message = String(f.message || "").trim();
+        if (!message) throw Error("Message body is required.");
+        const expires = f.expires_at ? new Date(f.expires_at + "T23:59:59").toISOString() : null;
+        const common = { title: String(f.title || "").trim(), message, priority: f.priority || "normal", requires_acknowledgement: f.requires_acknowledgement === "true", expires_at: expires, created_by: user.id };
+        const rows = [];
+        const addManager = id => { if (id && !rows.some(r => r.recipient_user_id === id)) rows.push({ ...common, recipient_user_id: id, recipient_salesman_id: null }); };
+        const addSalesman = seller => { if (seller && !rows.some(r => r.recipient_salesman_id === seller.id)) rows.push({ ...common, recipient_salesman_id: seller.id, recipient_user_id: null }); };
+        if (admin()) {
+          const scope = f.recipient_scope || (form.dataset.salesman ? `salesman:${form.dataset.salesman}` : "__all_managers__");
+          const managerIds = [...new Set((S().user_roles || []).filter(r => String(r.role || "").toLowerCase() === "manager").map(r => String(r.user_id)))];
+          const allSellers = visible(S().salesmen);
+          const addManagerAndTeam = id => { addManager(id); allSellers.filter(x => String(x.manager_user_id || "") === String(id)).forEach(addSalesman); };
+          if (scope === "__all_managers__") managerIds.forEach(addManagerAndTeam);
+          else if (scope === "__all_salesmen__") allSellers.forEach(x => { addSalesman(x); if (x.manager_user_id) addManager(String(x.manager_user_id)); });
+          else if (scope.startsWith("manager:")) {
+            const id = scope.slice("manager:".length);
+            if (!managerIds.includes(id)) throw Error("Choose a valid Manager account.");
+            addManagerAndTeam(id);
+          } else if (scope.startsWith("salesman:")) {
+            const id = scope.slice("salesman:".length), seller = allSellers.find(x => String(x.id) === id);
+            if (!seller) throw Error("Choose a valid salesman.");
+            addSalesman(seller); if (seller.manager_user_id) addManager(String(seller.manager_user_id));
+          } else throw Error("Choose a valid recipient group.");
+        } else {
+          const selected = f.recipient_salesman_id || form.dataset.salesman;
+          const recipients = selected === "__team__" ? visible(S().salesmen).filter(x => managerTeamIds(S(), user.id).includes(x.id)) : [visible(S().salesmen).find(x => String(x.id) === String(selected))];
+          if (!recipients.length || recipients.some(x => !x) || recipients.some(x => !managerTeamIds(S(), user.id).includes(x.id))) throw Error("Choose at least one valid salesman in your assigned team.");
+          recipients.forEach(addSalesman);
+        }
+        if (!rows.length) throw Error("No valid recipients were found. Check Manager assignments and try again.");
+        const { error } = await client.from("employee_notifications").insert(rows);
+        if (error) throw error;
+        close(); render(); toast(`Message sent to ${rows.length} recipient record${rows.length===1?"":"s"}.`); break;
+      }
+      case "sales-area-form": {
+        if (!(admin() || manager()) || !client) throw Error("Only Admin or Manager can create areas.");
+        const name = String(f.name || "").trim(); if (!name) throw Error("Area name is required.");
+        const { error } = await client.from("sales_areas").insert({name,description:String(f.description||"").trim(),created_by:user.id});
+        if (error) throw error;
+        close(); await manageAreasModal(); toast("Area added to the active catalogue."); break;
+      }
+      case "area-assignment-form": {
+        if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
+        const salesmanId = form.dataset.salesman;
+        if (manager() && !managerTeamIds(S(), user.id).includes(salesmanId)) throw Error("This salesman is outside your assigned team.");
+        const areaName = String(f.area_name || "").trim();
+        if (!areaName) throw Error("Area name is required.");
+        if (f.effective_to && f.effective_to < f.effective_from) throw Error("Effective-until date cannot be before the start date.");
+        const { error } = await client.rpc("assign_salesman_area", { p_salesman_id: salesmanId, p_area_name: areaName, p_effective_from: f.effective_from, p_effective_to: f.effective_to || null, p_instructions: String(f.instructions || "").trim() });
+        if (error) throw error;
+        close(); await store.refresh?.(); render(); toast("Area assignment saved with historical dates."); break;
+      }
+      case "attendance-manager-form": {
+        if (!(admin() || manager()) || !client) throw Error("Admin or Manager account required.");
+        const salesmanId = form.dataset.salesman;
+        if (manager() && !managerTeamIds(S(), user.id).includes(salesmanId)) throw Error("This salesman is outside your assigned team.");
+        const payload = { salesman_id: salesmanId, attendance_date: f.attendance_date, status: f.status, remarks: String(f.remarks || "").trim(), updated_at: new Date().toISOString() };
+        const existing = await client.from("attendance_records").select("id").eq("salesman_id", salesmanId).eq("attendance_date", f.attendance_date).maybeSingle();
+        if (existing.error) throw existing.error;
+        const saved = existing.data ? await client.from("attendance_records").update(payload).eq("id", existing.data.id) : await client.from("attendance_records").insert(payload);
+        if (saved.error) throw saved.error;
+        close(); await store.refresh?.(); render(); toast("Attendance saved."); break;
+      }
       case "settings-form":
         await saveSettings(form);
         break;
       case "cashbook-form": {
         const kind = form.dataset.kind;
-        if (kind === "transfer") {
+        if (kind === "deposit") {
+          if (!String(f.description||"").trim()) throw Error("Enter the source or reason for the new funds.");
+          if (num(f.amount)<=0) throw Error("Amount must be greater than zero.");
+          await store.run("cashbook.deposit", { account_key:f.account_key, amount_paisa:paisa(f.amount), date:f.date, reference:f.reference||"", description:f.description });
+          toast("External funds recorded in the selected account.");
+        } else if (kind === "transfer") {
           const source = f.source_account, destination = f.destination_account;
           if (source === destination) throw Error("Choose two different accounts");
           await store.run("cashbook.transfer", { source_account:source, destination_account:destination, amount_paisa:paisa(f.amount), date:f.date, reference:f.reference||"", description:f.description||"" });
@@ -3665,6 +4283,7 @@ document.addEventListener("submit", async (e) => {
         close(); render(); break;
       }
       case "payment-form":
+        validateCashbookMethodAccount(f.method, f.cashbook_account_key);
         await store.run("payment.add", {
           invoice_id: form.dataset.id,
           transaction_id: "PAY-" + uid(),
@@ -3788,6 +4407,8 @@ document.addEventListener("submit", async (e) => {
       }
       case "convert-form": {
         const q = S().quotations.find((q) => q.id === form.dataset.id);
+        const conversionPaid = f.payment_status === "paid" ? Number(q.total_paisa) : f.payment_status === "partial" ? paisa(f.payment_amount) : 0;
+        if (conversionPaid > 0) validateCashbookMethodAccount(f.payment_method || "Cash", f.cashbook_account_key);
         await store.run("quote.convert", {
           id: q.id,
           version: q.version,
@@ -3822,20 +4443,52 @@ document.addEventListener("submit", async (e) => {
         render();
         break;
       }
+      case "reset-password-form": {
+        if (!admin()) throw Error("Only an administrator can reset another user's password.");
+        if (!client) throw Error("Password resets require a configured Supabase connection.");
+        const targetId = form.dataset.id;
+        const target = S().profiles.find((p) => String(p.id) === String(targetId));
+        if (!target || target.id === user.id) throw Error("Choose another valid user account.");
+        const pw = String(f.new_password || "");
+        if (pw.length < 12 || pw.length > 128) throw Error("Password must be 12–128 characters.");
+        if (pw !== String(f.confirm_password || "")) throw Error("The two passwords do not match.");
+        const { data, error } = await client.functions.invoke("admin-reset-user-password", { body: { user_id: target.id, password: pw } });
+        if (error) throw Error(await edgeFunctionError(error, "admin-reset-user-password"));
+        if (data?.error) throw Error(data.error);
+        if (!data?.ok) throw Error("The password reset was not confirmed by the server. Nothing was reported as changed; try again.");
+        close();
+        toast("Password reset for " + (target.display_name || "user") + ". Share the new password securely.");
+        break;
+      }
+      case "delete-salesman-form": {
+        if (!admin()) throw Error("Only Admin can delete a salesman.");
+        if (String(f.confirm || "").trim() !== "DELETE") throw Error("Type DELETE exactly to confirm.");
+        const { data: res, error: delError } = await client.rpc("admin_delete_salesman", { p_salesman_id: form.dataset.id, p_dry_run: false });
+        if (delError) throw Error("Nothing was deleted: " + (delError.message || String(delError)));
+        let loginNote = "";
+        if (res?.user_id && res.login_role !== "admin" && res.user_id !== user.id) {
+          const { error: loginError } = await client.functions.invoke("admin-delete-user", { body: { user_id: res.user_id } });
+          loginNote = loginError ? " The records were deleted, but the login could not be removed (" + (await edgeFunctionError(loginError, "admin-delete-user")) + "). Delete it from Users & access." : " Their login was deleted too.";
+        }
+        await store.refresh();
+        close();
+        render();
+        toast("Salesman " + (res?.name || "") + " and connected records deleted." + loginNote);
+        break;
+      }
       case "create-user-form": {
         if (!client) throw Error("Configure Supabase to create logins");
+        if (f.role === "salesman" && !f.salesman_id) {
+          // Reuse an existing unlinked profile with the same name instead of creating a duplicate.
+          const match = unlinkedSalesmanByName(f.display_name);
+          if (match.length === 1) f.salesman_id = match[0].id;
+          else if (match.length > 1) throw Error("More than one unlinked salesman profile is named \"" + f.display_name + "\". Choose the correct one in 'Link salesman'.");
+        }
         const { data, error } = await client.functions.invoke(
           "admin-create-user",
           { body: { ...f, request_id: uid() } },
         );
-        if (error) {
-          let message = error.message;
-          try {
-            const body = await error.context.json();
-            if (body?.error) message = body.error;
-          } catch {}
-          throw Error(message);
-        }
+        if (error) throw Error(await edgeFunctionError(error, "admin-create-user"));
         if (data.error) throw Error(data.error);
         await store.refresh();
         if (f.role === "salesman" && !f.salesman_id) {
@@ -3846,6 +4499,7 @@ document.addEventListener("submit", async (e) => {
               name: String(f.display_name || "").trim(),
               phone: "",
               user_id: data.user_id,
+              manager_user_id: f.manager_user_id || null,
               active: true,
               joining_date: today(),
               base_salary_paisa: num(S().settings.base_salary_paisa) || 4500000,
@@ -3855,10 +4509,16 @@ document.addEventListener("submit", async (e) => {
             expected_version: undefined,
           });
         }
+        if (f.role === "salesman" && f.salesman_id) {
+          const linked = S().salesmen.find((seller) => seller.id === f.salesman_id || seller.user_id === data.user_id);
+          if (linked && linked.manager_user_id !== (f.manager_user_id || null)) {
+            await store.run("master.save", { table: "salesmen", record: { ...linked, user_id: data.user_id, manager_user_id: f.manager_user_id || null }, expected_version: linked.version });
+          }
+        }
         await store.refresh();
         close();
         render();
-        toast("Login created and salesman profile linked");
+        toast("Login created and salesman linked to the selected manager");
         break;
       }
       case "user-form": {
@@ -3892,8 +4552,15 @@ document.addEventListener("submit", async (e) => {
             }
             await store.run("master.save", {
               table: "salesmen",
-              record: { ...chosen, user_id: targetUserId, name: chosen.name || targetProfile?.display_name || "Salesman" },
+              record: { ...chosen, user_id: targetUserId, manager_user_id: f.manager_user_id || null, name: chosen.name || targetProfile?.display_name || "Salesman" },
               expected_version: chosen.version,
+            });
+          } else if (!oldLinkedSeller && unlinkedSalesmanByName(targetProfile?.display_name).length === 1) {
+            const reuse = unlinkedSalesmanByName(targetProfile?.display_name)[0];
+            await store.run("master.save", {
+              table: "salesmen",
+              record: { ...reuse, user_id: targetUserId, manager_user_id: f.manager_user_id || null, active: f.active === "true" },
+              expected_version: reuse.version,
             });
           } else if (!oldLinkedSeller) {
             await store.run("master.save", {
@@ -3914,10 +4581,14 @@ document.addEventListener("submit", async (e) => {
             });
           }
         }
+        const finalLinkedSeller = S().salesmen.find((seller) => seller.user_id === targetUserId);
+        if (f.role === "salesman" && finalLinkedSeller && finalLinkedSeller.manager_user_id !== (f.manager_user_id || null)) {
+          await store.run("master.save", { table: "salesmen", record: { ...finalLinkedSeller, manager_user_id: f.manager_user_id || null }, expected_version: finalLinkedSeller.version });
+        }
         await store.refresh();
         close();
         render();
-        toast("Access and salesman link saved");
+        toast("Access, salesman link and manager assignment saved");
         break;
       }
       case "password-form": {

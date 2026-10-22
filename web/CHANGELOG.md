@@ -1,3 +1,59 @@
+# v55.26 — Admin Salary Advances
+
+- Admin can issue a salary advance to a salesman or manager with a required reason, date, amount, and payment account.
+- Advances are recorded in a dedicated table and automatically debit the selected Cash & Bank Book account.
+- Added recent advance history and an additive Supabase migration.
+- Payroll recovery/deduction is not automatically changed by this release.
+
+# Changelog
+
+## v55.22 — Market Credit transaction history isolation (2026-10-22)
+- Fixed Market Credit — Receivables → View transactions so its history is built only from confirmed invoice receivables and their non-voided payments through the selected date.
+- Prevented unrelated cash/bank ledger rows from appearing in Market Credit history, even when older ledger entries are incorrectly keyed or missing receivable-side postings.
+- Kept Market Credit as a receivable ledger, separate from liquid cash balances; payment recoveries reduce receivables and do not appear as bank transactions in this view.
+- Synchronized root and deployed app.js copies. JavaScript syntax checks pass; full project checks require the missing TypeScript dependency.
+
+
+## v55.4 — Admin warehouse overview and email-view removal
+
+- Removed registered login email display and Copy email action from Users & Access; the page no longer invokes `admin-user-directory`, eliminating the browser CORS failure from that workflow. Admin password reset remains available and no longer displays an email in its prompt or success message.
+- Added Admin-only warehouse totals for cartons, boxes, and loose boxes, plus estimated retail market value and potential gross profit based on saved retail and cost prices.
+- Warehouse valuation flags products with stock but missing retail/cost pricing; market value only includes boxes with a saved retail price, and potential stock profit only includes boxes with both retail and cost prices.
+- Added explicit selected-period net profit and net loss cards, while retaining operating expenses for the selected date range. These are accounting results from confirmed sales, saved item costs and recorded expenses, not a cash balance.
+- Updated account-access regression checks and kept root `js/` and deployed `web/js/` copies synchronized.
+
+## v55.2 — Hide salesman collection account cards (2026-10-20)
+- Removed the separate “Salesman Collection — …” cards from the Cash & Bank Book overview, including Cash, Bank Account, EasyPaisa and JazzCash variants.
+- Kept salesman collection ledger entries and included balances in the overall liquid-funds calculation; this is a display-only change and does not delete or alter transaction history.
+- Updated “Accounts tracked” to count only the cards shown in the overview.
+
+## v54 — Connected Admin → Manager → Salesman workflow (2026-10-20)
+
+- Added manager-scoped salesman creation/editing with explicit assignment to a manager; restricted manager editing so salary and login linkage remain administrator-controlled.
+- Added an operational-only manager dashboard with assigned-team target, quantity, attendance and stock movement summaries; no default financial totals are shown.
+- Added manager/admin attendance recording and correction workflow with one authoritative record per salesman/date.
+- Added persistent management-to-salesman notifications with priority, optional expiry, read state and acknowledgement.
+- Added an Admin-maintained area catalogue with case-insensitive uniqueness, seeded from existing territory labels without changing employee history.
+- Added effective-dated area assignment through an atomic database RPC, preserving previous assignments and keeping current area fields aligned.
+- Added a server-calculated own-salary estimate/posted breakdown for the salesman; it does not expose other employees' salary records.
+- Added safe, label-aware MCB Bank and Al Habib Bank defaults without replacing existing account keys, balances or ledger history.
+- Scoped the shared business snapshot to assigned Manager teams and redacted monetary fields from operational order/target views; invoice/payment access remains Admin-only or explicitly permitted and record-scoped.
+- Added assigned-team checks to direct order/quotation, payment and stock issue/return RPC paths, not just the browser UI.
+- Removed broad Manager-role access to cashbook tables and restricted account adjustment/transfer operations to Admin or explicit permissions.
+- Added manager/admin private employee document and profile-photo uploads after the employee login is linked; profile photo path is updated through a role-checked RPC.
+- Removed hard-coded Manager account selection from the administrator fieldwork view.
+- Preserved existing Product Pricing and Stock Update screens and data; no business-data reset is included.
+- Added database audit triggers for attendance, employee documents, visits, area assignments and notifications.
+
+**Validation limitation:** JavaScript syntax checks are run locally. Automated Vitest and the repository check script could not run in this environment because the dependencies in `node_modules` are incomplete; live Supabase policies, storage uploads and ledger/inventory transactions still require staging verification.
+
+## v53 — 2026-10-19
+- Reworked the salesman overview to emphasize profile identity, quantities, targets, and stock accountability instead of financial amount cards.
+- Made salesman profile identity, photo, employee documents, and attendance read-only in the salesman interface.
+- Added DOB, effective-dated area assignments, employee notifications, and manager/admin-focused RLS/storage policy migration in `supabase/revamp_v53.sql`.
+- Preserved existing Product Pricing and Stock Update source workflows and business data.
+- See `CHANGELOG_V53.md`, `DEPLOY_V53.md`, and `TEST_REPORT_V53.md` for scope and verification status.
+
 ## v52 — Expense account save confirmation
 
 - Fixed expense persistence at the store/RPC layer: online `master.save` calls for `expenses` now wait for Supabase confirmation before the editor closes.
@@ -20,13 +76,12 @@
 - Migration: `supabase/manager_closing_expenses_v40.sql`. Deployment steps: `DEPLOY_V40_MANAGER_CLOSING.md`.
 - Validation: see `TEST_OUTPUT.txt`. The SQL migration and the PGlite suite (`tests/manager-closing-db.test.js`) were written but could not be executed in the build environment.
 
-## Manager can submit daily closing (18 October 2026) - v39
+## Stock-in confirmation and duplicate-reference fix (17 October 2026)
 
-- **Root cause:** `closing.submit` allowed a manager only for salesmen whose `manager_user_id` equalled that manager. Salesmen with no manager assigned (or assigned to someone else) were rejected with "Only the assigned salesman, their manager, or Admin may submit this closing", even though the closing screen listed them.
-- **Fix (app):** `web/js/store.js` now lets a manager submit a closing for any active salesman, matching the company-wide Manager role.
-- **Fix (database):** new `supabase/manager_closing_fix_v39.sql` patches `apply_operational_command` the same way (idempotent) and re-applies the manager read policy on `daily_closings`. **Run it once in the Supabase SQL editor, then redeploy `web/`.**
-- Approve / reject / reopen remain Admin-only.
-- Validation: JavaScript syntax check passed; SQL not executed against a live Supabase project in this environment.
+- Root cause addressed: the stock-entry RPC previously returned an existing stock movement for any reused transaction reference, even when the new quantity/product/date differed. The UI could therefore report success while the ledger remained unchanged.
+- Fix: exact retries remain idempotent; reused references with different movement details now return a visible error and do not alter existing stock. Online stock-in now waits for Supabase confirmation and surfaces database errors. Offline entries are explicitly labelled pending sync instead of “Stock updated.”
+- Added `supabase/fix_stock_entry_idempotency.sql` for already-deployed projects and a regression test. No existing stock or sales rows are changed by the migration.
+- Validation: source syntax and release-copy checks to be run; live Supabase behavior still requires applying the migration and testing one stock-in/order in the target project.
 
 ## Cash & Bank Book ledger (17 October 2026)
 
@@ -320,6 +375,36 @@ This release is a deployable source package, not a live deployment. Production c
 - Added `supabase/salesman_self_service_permissions_fix.sql` for existing deployments; run it after the other migrations.
 - Updated setup instructions. No live Supabase database was modified by this package change.
 
+## Stock warning and overview clarification
+- When `block_negative_stock` is disabled, the Sales Order line now shows the exact box shortage as an informational warning and clarifies that negative stock is allowed; it no longer labels the quantity as a blocking insufficiency.
+- The dashboard already includes a “Stock by candy” overview grouped by candy family, showing cartons, loose boxes, total boxes, and each flavour's individual balance and boxes per carton. The release step synced the updated source into `web/`.
+- Validation note: automated tests could not be run in this environment because dependencies are not installed (`vitest: not found`).
+
+## v20 — Warehouse movement carton entry
+- Replaced the single ambiguous warehouse movement quantity field with separate Cartons and Loose boxes inputs.
+- The form displays a live total in boxes and the selected product's boxes-per-carton pack size.
+- On save, cartons are converted using the selected product's own `boxes_per_carton`; stock ledger storage remains integer boxes to preserve compatibility with sales, stock overview, and Supabase.
+- Stock out and damaged movements apply a negative sign to the combined quantity; stock received/opening/adjustment movements add the combined quantity.
+- Synced the root and `web/js/app.js` copies.
+- Validation: JavaScript syntax checks passed for both app copies. Full test suite not run because dependencies are not installed in this workspace.
+
+## v22 — Corrected live Warehouse Movement form
+- Fixed the actual application entry point (`js/app.js`), which the previous build had left with the old single “Boxes” input even though a separate source copy contained carton fields.
+- Warehouse Movement now accepts Cartons and Loose boxes, calculates total boxes using the selected product's `boxes_per_carton`, validates whole nonnegative inputs, and records the combined movement in the existing box-based stock ledger.
+- Rebuilt `web/` using `scripts/release.mjs` so deployment JS matches the root app.
+- Validation: JavaScript syntax checks passed. Full automated suite not run.
+
+## v23 — Warehouse carton conversion live update
+- Fixed warehouse movement preview so selecting a product immediately displays its configured boxes-per-carton value.
+- Carton and loose-box input changes now refresh the total movement preview; the modal initializes the preview on open.
+- Kept the database movement quantity in boxes and retained existing save validation.
+- Validation: `node --check app.js` and `node --check js/app.js` pass. Full checks could not run because the TypeScript dependency is not installed in this environment.
+
+## v24 — Preserve selected module on refresh
+- Persist the selected module in browser local storage whenever a page renders.
+- Restore the saved module when the application shell loads after refresh/sign-in.
+- Existing role/permission checks remain authoritative; inaccessible modules fall back to Overview.
+
 
 ## v25 — Cash & Bank Book receivables reconciliation
 
@@ -341,3 +426,144 @@ This release is a deployable source package, not a live deployment. Production c
 - Added an Edit action for bank and wallet accounts in Cash & Bank Book, visible only to administrators.
 - Edit form keeps account keys fixed and permits administrators to update display names. Existing store-level admin validation remains in place; ledger-history protections continue to prevent unsafe opening-balance or account-mapping changes.
 - Non-admin users do not receive account edit controls.
+
+## Manager access follow-up (candidate build)
+- Enabled Manager UI access to add/edit/toggle products and initiate warehouse stock movements, alongside existing Admin access.
+- Added a Clone action to daily closing rows. It opens a new closing form with copied values and today's date; it does not copy a closing ID or approval state.
+- Added a reminder to verify manager role/RLS permissions in the deployed Supabase project before production use.
+- Validation note: `scripts/check.mjs` could not run in this environment because the `typescript` npm dependency is not installed. JavaScript syntax checks were run separately; full integration and Supabase RLS tests remain outstanding.
+
+## Manager product, pricing, stock and expiry access
+- Added `supabase/manager_product_stock_access.sql` to grant the designated Manager product/price-tier editing and stock movement permissions while keeping delete disabled.
+- Updated `schema.sql` save-master and stock-entry authorization to honor the explicit product-edit and stock-create/edit permissions.
+- Product expiry dates are part of the product record and can be edited through the existing Product Edit form.
+- Apply the migration in Supabase SQL Editor for an already-deployed database; changing local files alone does not change live Supabase permissions.
+
+## Manager profile & fieldwork build
+- Added Manager-specific My profile & fieldwork page with profile photo upload, optional-GPS attendance check-in/out, private document/photo uploads, customer visit notes and history.
+- Added linked-salesman attendance panel scoped to salesmen assigned through `salesmen.manager_user_id`.
+- Added Admin visibility for the Manager's profile photo, attendance, uploaded documents and fieldwork visits.
+- Added additive Supabase migration `supabase/manager_profile_fieldwork.sql`; apply it after the existing Manager role and salesman self-service migrations.
+- This build's database behavior still requires validation against the target Supabase project; tests could not run because `vitest` is not installed in this environment.
+
+## v34 — Admin self-service password change
+- Updated the Account modal so Admin users can change their own password.
+- Manager, Salesman, and other non-admin users see a message to contact Admin instead of a self-service password form.
+- This is UI-level enforcement only; Supabase Auth may still permit direct password updates outside the app unless separately constrained.
+- Validation: `node --check js/app.js` and `node --check web/js/app.js` passed.
+
+## v35 — Admin reset-password action visibility
+- Added a visible **Reset password** action to each other account in Admin → Users & access. The current Admin account is excluded from this action; Admin self-service password changes remain under Account.
+- The action invokes the existing `admin-reset-user-password` Edge Function, validates passwords (12–128 characters), handles function errors, and reminds Admin to share the password securely.
+- Synced root, `js/`, and `web/js/` app copies to keep deployment variants consistent.
+- Validation: `node --check` passed for all three updated app.js copies; ZIP integrity checked after packaging. Live Supabase function deployment/permissions are not verified here.
+
+## v37 candidate — Manager daily closing permission
+- Fixed the daily-closing submit guard so a Manager can submit a closing for an active salesman assigned to that Manager (`salesmen.manager_user_id = auth.uid()`).
+- Updated the closing form so Manager, like Admin, can select an active visible salesman instead of defaulting to the empty `own()` salesman identity.
+- Updated the Supabase `closing.submit` RPC authorization in both `supabase/operational_modules.sql` and its `web/` copy. The server-side check permits Admin, the assigned salesman, or the Manager explicitly assigned to that salesman; it does not permit a Manager to submit closings for unrelated salesmen.
+- Requires applying the updated `supabase/operational_modules.sql` to the Supabase project before live Manager submissions will work.
+- Validation performed: `node --check` passed for JavaScript files under `js/`, `web/js/`, and `tests/`; live Supabase RPC/RLS behavior not tested.
+
+
+## v42 migration compatibility note
+The v40 migration now recognizes an existing `private.save_master` implementation that already grants manager expense access. It no longer aborts solely because the manager permission condition was patched previously. Run `supabase/manager_closing_expenses_v40.sql` once in Supabase SQL Editor; do not run the standalone v41 wrapper first. This package has not been applied to or verified against the live Supabase project.
+
+## v43 — Manager closing RPC ambiguity fix
+- Removed the alternate `(jsonb, text, uuid)` wrapper because both RPC overloads exposed the same argument names in different order, causing PostgREST to report an ambiguous candidate.
+- Added `supabase/manager_closing_rpc_ambiguity_fix_v43.sql` to drop only the wrapper and reload the PostgREST schema cache.
+- Existing implementation `(uuid, text, jsonb)` is retained. Live Supabase changes are not applied by this package.
+
+## v45 — Manager closing schema repair
+
+- Added idempotent SQL repair for all columns expected by the manager closing command, including `sales_count`.
+- Preserves existing closing rows and requests a PostgREST schema-cache reload.
+- Apply `supabase/manager_closing_schema_patch_v45.sql` before retrying team closing.
+
+## v46 — Manager direct-sale attribution fix
+- Manager dashboard direct-sales list now recognizes invoices attributed through `sold_by_user_id`, even when `created_by` is an admin/import user.
+- Monthly target performance enriches linked orders with invoice seller attribution and classifies the manager's own direct sales separately from salesman achievement.
+- Salesman targets remain based on salesman-attributed orders; manager-direct cartons are excluded from the salesman subtotal.
+- Validation note: automated Vitest suite could not run in this environment because dependencies (`vitest`) are not installed. Run `npm ci`, `npm test`, and `npm run check` before production handover.
+
+## v47 — Manager direct-sale cash closing attribution
+- Fixed manager daily closing figures so direct manager sales are included when the linked invoice's `sold_by_user_id` is the manager, even if another account created the order.
+- This keeps cash collections for manager-owned direct sales in the manager's expected cash calculation and avoids a false negative expected closing caused by missing sale attribution.
+- Salesman-target attribution remains separate; this change is limited to manager closing scope.
+
+## Cash & Bank recovery/transfer clarity (18 October 2026)
+- Clarified Cash & Bank Book labels and guidance to distinguish receivable recoveries from liquid-account outflows.
+- Documented the invariant that account transfers must be equal-and-opposite and must not change total liquid funds. Historical ledger inconsistencies require audited correction rather than silent rewriting.
+
+## v49 — Expense-specific cash/bank account selection
+- Added a “Pay from account” selector to the Expense form, including active cash/bank/wallet accounts and the supplied account key `pk80mucb1156654281004446` as a fallback option.
+- Expense records now carry `cashbook_account_key`; local cashbook projections and Supabase posting trigger use the explicitly selected account, falling back to legacy payment-method mapping only when no account is selected.
+- Added `supabase/expense_specific_cashbook_account.sql` migration to add the FK column, extend `private.save_master`'s expense allow-list, and update expense ledger posting.
+- Validation: JavaScript syntax checks passed for root and mirrored app/store files. `scripts/check.mjs` could not run because the environment lacks the `typescript` package. No live Supabase database was accessed or changed.
+
+
+## v51 — Expense account selection persistence and verification
+- Expense form now requires an explicit “Pay from account” choice and defaults bank/cheque expenses to the configured MCB account key `pk80mucb1156654281004446` when editing legacy records or creating new expenses.
+- Expense list now displays the selected account and flags legacy rows where `cashbook_account_key` has not been saved; this makes it clear that a historical row must be edited and saved before its account selection is persisted.
+- Clarified the generic `bank_default` option so it cannot be mistaken for MCB.
+- Synchronized root, `js/`, and `web/` application copies and bumped the service-worker cache name to force clients to fetch the new build.
+- Validation: `node --check` passed for app/store JS copies; ZIP integrity verified. Full project tests require the project dependencies to be installed. No live database was accessed or changed.
+
+
+## v55 — Cash & Bank Book account-card and Add Money update
+
+- Reworked the Cash & Bank Book overview into responsive account cards for MCB Bank, Al Habib Bank, JazzCash, EasyPaisa, Cash in Hand and Market Credit / receivables. Existing additional and salesman collection accounts remain visible where applicable.
+- Added account-ledger drill-down with chronological transactions, running balance, source record, related customer/party and creator where available.
+- Added an Admin-only Add Money flow for external funds. It creates one idempotent receipt posting; transfers remain paired movements and opening-balance corrections remain in the audited adjustment workflow.
+- Added `supabase/cashbook_banking_update_v55.sql`, an additive account reconciliation and Add Money RPC migration. It does not truncate data or overwrite existing account balances/history.
+- Product pricing and stock update workflows were not changed.
+
+## v55.1 — Explicit bank destination validation
+
+- Replaced generic bank payment choices with distinct MCB Bank and Al Habib Bank options, including bank-specific cheque choices, for sales orders, invoice collections, quotation conversion, and expenses.
+- Added client-side account/method matching and a database trigger guard that rejects missing, inactive, or mismatched destination accounts before posting.
+- Bank-specific methods are mapped as bank receipts in the cashbook posting trigger; destination account keys remain authoritative.
+- Removed the stale hardcoded MCB expense account fallback and limited expense account choices to active company cash/bank/wallet accounts.
+- No business records, account balances, or historical ledger entries are deleted or rewritten by the patch.
+
+## v55.3 — Admin account recovery and employee document access (2026-10-20)
+- Added an Admin-only Supabase Edge Function to retrieve registered Auth email addresses; the browser never receives a service-role key or queries `auth.users` directly.
+- Added registered login email to Users & Access with a Copy email action. Admin can reset a Manager or Salesman password through the existing server-side function; self-reset remains in Account and all resets require an active Admin.
+- Fixed the Salesman profile's document list to create expiring private links so the employee can view/download documents uploaded by management.
+- Expanded manager upload categories for NIC/identity, education, appointment letter, employment contract, salary/bank and other important documents.
+- Added additive SQL to reapply employee-document/storage access policies: Salesmen can read their own document metadata/files; Admins and assigned Managers can upload/manage employee files. No business data is deleted.
+- Verification: JavaScript syntax checks and release-copy sync passed. Full Vitest suite and live Supabase/RLS/Edge Function checks were not run in this environment.
+
+
+## v55.6 — Salesman-to-manager assignment persistence
+- Fixed the `private.save_master()` allowed-column list so `salesmen.manager_user_id` is not discarded when Admin assigns a salesman to a Manager.
+- Added an idempotent Supabase SQL patch to update the live function and ensure assigned Managers can read their own team roster.
+- No business data reset or deletion is performed.
+
+
+## v55.7 — Repair salesman-to-manager visibility (2026-10-20)
+- Admin's Salesmen & Targets view now retains assigned salesman profiles even if a linked login's role metadata is inconsistent; Admin visibility no longer depends on the linked role being exactly `salesman`.
+- Online salesman profile saves now commit through Supabase and verify the returned `manager_user_id` before the UI reports success. Server-side assignment failures are surfaced instead of leaving a misleading optimistic assignment.
+- Added an additive SQL migration to ensure `private.save_master()` accepts `manager_user_id` and the `salesman_read` policy lets Admin retain visibility while allowing a Manager to read assigned team members.
+- Bumped the service-worker cache key so GitHub Pages clients fetch the updated scripts. No business data is reset or deleted.
+- Validation: JavaScript syntax and root/`web/` mirror checks passed; ZIP integrity passed. Full Vitest and live Supabase/RLS tests were not run, and no live database was changed.
+
+## v55.13 — Payment method sync constraint fix
+
+- Expanded the `payments_method_check` allow-list to include the bank-specific method labels already offered by the order/payment forms (MCB Bank, Al Habib Bank, and bank-specific cheque methods), plus legacy aliases.
+- Added `supabase/fix_payment_method_constraint_v55_13.sql` as an additive migration for existing Supabase projects. It preserves existing payment rows and keeps a finite check constraint.
+- Updated the base schema for new installations and bumped the service-worker cache so browsers load the current release.
+- After applying the migration, existing Pending Sync transactions can be retried; do not clear the queue or recreate the order.
+
+## v55.21 — Cashbook transaction history usability fixes
+- Removed Reference and Source document columns from the Cash & Bank Book transaction history table.
+- Show a readable creator name rather than a raw user ID when profile data is incomplete.
+- Salary expense transaction descriptions identify the salary recipient where the linked expense contains employee details.
+- Market Credit account ledger now reconstructs receivable movements from confirmed invoices and non-voided payments when receivable-side cashbook postings are absent, avoiding duplicate source entries.
+- View transactions / ledger controls now scroll directly to the transaction history section.
+- Validation: `node --check` passed for the application JavaScript. Full project check could not run because project dependencies (including TypeScript) are not installed in the supplied environment.
+
+## v55.23.0 — Salary expense visibility
+- After salary release, refresh the connected business snapshot and verify the linked salary expense exists.
+- Reset stale expense category/date filters and open the Expenses module with the newly released salary expense in view.
+- If the expense cannot be found after refresh, show an explicit error instead of silently reporting success.
