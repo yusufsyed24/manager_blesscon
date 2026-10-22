@@ -567,3 +567,8 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - After salary release, refresh the connected business snapshot and verify the linked salary expense exists.
 - Reset stale expense category/date filters and open the Expenses module with the newly released salary expense in view.
 - If the expense cannot be found after refresh, show an explicit error instead of silently reporting success.
+
+## v55.36 — Existing salesman login linking fix
+- Show active existing salesman profiles in Admin Create Login even when `user_id` references a stale `profiles` row.
+- Fetch selected salesman profile directly if it is absent from cached snapshot before saving the user link.
+- No database migration applied; live linking must be verified in Supabase.

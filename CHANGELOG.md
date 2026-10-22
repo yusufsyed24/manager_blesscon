@@ -601,3 +601,9 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 
 ## v55.35
 - Create Login now directly loads salesman profiles for Admin from Supabase so existing profiles can be selected; surfaces permission/load errors rather than silently showing only the create-new option.
+# v55.36 — Existing salesman login linking fix
+
+- Admin Create Login now lists all active, non-deleted existing salesman profiles, including records with a stale `user_id` reference. Already-linked records are labeled so Admin can verify before relinking.
+- The link workflow fetches the selected salesman row directly when it is absent from the cached business snapshot, then persists the new authentication user ID.
+- No database migration is included and no live Supabase data was changed.
+- Validation: JavaScript syntax check and ZIP integrity check. Live Supabase permissions and account linking remain to be tested in the deployment.

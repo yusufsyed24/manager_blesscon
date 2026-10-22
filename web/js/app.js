@@ -2979,15 +2979,12 @@ async function userModal(id) {
         [
           ["", "Create a new salesman profile"],
           ...linkableSalesmen
-            .filter((seller) => {
-              if (seller.deleted_at) return false;
-              // Include unlinked profiles and profiles whose old user_id no longer
-              // exists in the loaded user directory (orphaned link). A profile
-              // linked to a real login is not offered to a second login.
-              if (!seller.user_id) return true;
-              return !S().profiles.some((profile) => String(profile.id) === String(seller.user_id));
-            })
-            .map((seller) => [seller.id, `${seller.name}${seller.user_id ? " (repair old login link)" : ""}`]),
+            .filter((seller) => !seller.deleted_at && seller.active !== false)
+            // Show every active existing profile to Admin. A stale profiles row can
+            // exist even when its Auth user was never created, so checking profiles
+            // alone incorrectly hid the employee from this linking dropdown.
+            // Explicitly label already-linked records so Admin can verify before repair.
+            .map((seller) => [seller.id, `${seller.name}${seller.user_id ? " (currently linked; selecting will relink)" : " (unlinked)"}`]),
         ],
       )}${select("Assign salesman to manager (optional)", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], "")}</div><p class="muted">The login is created without sending an email. Share the password securely. If a manager is selected, the salesman appears in that manager's team overview. Deleting a login later preserves linked business history.</p><button class="gold">Create login</button></form>`,
     );
@@ -4683,11 +4680,16 @@ document.addEventListener("submit", async (e) => {
           });
         }
         if (f.role === "salesman" && f.salesman_id) {
-          const linked = S().salesmen.find((seller) => seller.id === f.salesman_id || seller.user_id === data.user_id);
-          if (linked && (String(linked.user_id || "") !== String(data.user_id) || String(linked.manager_user_id || "") !== String(f.manager_user_id || ""))) {
-            // Always persist the new auth user link, even when manager assignment
-            // already matches. Previously this condition could leave the profile
-            // unlinked if only user_id needed updating.
+          let linked = S().salesmen.find((seller) => String(seller.id) === String(f.salesman_id) || String(seller.user_id || "") === String(data.user_id));
+          // The dropdown uses a direct Admin query, so its selected row may not be
+          // present in the cached business snapshot. Fetch the exact row before saving.
+          if (!linked) {
+            const { data: selectedSeller, error: selectedSellerError } = await client.from("salesmen").select("*").eq("id", f.salesman_id).maybeSingle();
+            if (selectedSellerError) throw Error("Login created, but could not load Arsalan's selected salesman profile for linking: " + selectedSellerError.message + ". Retry linking from Users & Access.");
+            linked = selectedSeller || null;
+          }
+          if (!linked) throw Error("Login created, but the selected salesman profile was not found. Refresh Users & Access and link the existing profile.");
+          if (String(linked.user_id || "") !== String(data.user_id) || String(linked.manager_user_id || "") !== String(f.manager_user_id || "")) {
             await store.run("master.save", { table: "salesmen", record: { ...linked, user_id: data.user_id, manager_user_id: f.manager_user_id || null }, expected_version: linked.version });
           }
         }
