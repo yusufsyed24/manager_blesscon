@@ -607,3 +607,8 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - The link workflow fetches the selected salesman row directly when it is absent from the cached business snapshot, then persists the new authentication user ID.
 - No database migration is included and no live Supabase data was changed.
 - Validation: JavaScript syntax check and ZIP integrity check. Live Supabase permissions and account linking remain to be tested in the deployment.
+
+## v55.37 — Configurable carton-based payroll
+- Added Admin Settings for salesman and manager monthly allowance and incentive per confirmed carton, plus manager base salary.
+- Added `supabase/payroll_carton_incentive_v55_37.sql` with employee-specific salary snapshot RPCs.
+- Rates default to zero until configured. Manager's own sales count toward their personal incentive, not the team target.

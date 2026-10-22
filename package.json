@@ -1,7 +1,7 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "55.32.0",
-  "description": "Expense access scope, loss chart color, and salary advance visibility",
+  "version": "55.37.0",
+  "description": "Configurable carton-based payroll for salesmen and managers",
   "directories": {
     "doc": "docs",
     "test": "tests"
