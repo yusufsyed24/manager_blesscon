@@ -2073,9 +2073,10 @@ function managersPanel() {
         `+${ownCartons.toFixed(2)} cartons<br><small>${own.length} orders · ${money(ownValue)}</small>`,
         teamTargetMet >= target ? badge("Target achieved", "green") : `<b>${teamRemaining.toFixed(2)}</b> cartons remaining`,
         `${pct.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, pct)}%"></span></div>`,
+        btn("Release salary", "post-manager-salary", m.id, "", "gold"),
       ];
     });
-  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
+  return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation. Manager salary is entered for each pay period; outstanding advances are deducted before net payment.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement", "Payroll"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
 }
 function renderUsers() {
   const s = S();
@@ -2780,6 +2781,34 @@ async function editSalaryAdvance(id) {
   modal("Edit advance salary", `<form id="salary-advance-edit-form" data-id="${esc(advance.id)}"><section class="panel"><p><b>Employee:</b> ${esc(advance.employee_name)}</p><p class="muted">Changing the amount will post an adjustment to the same Cash & Bank Book account and keep an audit record.</p>${field("Advance amount (PKR)", "amount", (Number(advance.amount_paisa)/100).toFixed(2), "number", 'min="0.01" step="0.01" required')}<div class="field"><label for="f-reason">Reason for advance salary *</label><textarea id="f-reason" name="reason" required minlength="3" maxlength="1000">${esc(advance.reason)}</textarea></div></section><button class="gold" type="submit">Save advance changes</button></form>`);
 }
 
+async function postManagerSalary(managerId, month = today().slice(0, 7)) {
+  if (!admin()) throw Error("Only Admin can release manager salary.");
+  const managerProfile = (S().profiles || []).find(p => String(p.id) === String(managerId));
+  if (!managerProfile || (S().user_roles || []).find(r => String(r.user_id) === String(managerId))?.role !== "manager") throw Error("Manager account not found.");
+  const managerName = managerProfile.display_name || managerProfile.email || managerProfile.id;
+  const prior = await client.from("expenses").select("id,amount_paisa,description").eq("manager_user_id", managerId).eq("salary_period", month).is("deleted_at", null).maybeSingle();
+  if (prior.error) throw Error("Could not check manager payroll history. Apply the manager salary migration first. " + prior.error.message);
+  if (prior.data) throw Error("Manager salary is already posted for " + month + ". Existing record: " + prior.data.id);
+  const advanceResult = await client.from("employee_salary_advances").select("id,employee_name,amount_paisa,recovered_paisa,reason,advance_date").eq("manager_user_id", managerId).eq("status", "posted").order("advance_date", {ascending:true});
+  if (advanceResult.error) throw Error("Could not load manager salary advances. Apply the v55.27 salary deduction migration first. " + advanceResult.error.message);
+  const advances = (advanceResult.data || []).map(a => ({...a, outstanding:Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0))})).filter(a=>a.outstanding>0);
+  const outstandingAdvance = advances.reduce((sum,a)=>sum+a.outstanding,0);
+  const accounts = (S().cashbook_accounts || []).filter(a=>a.active && a.account_type !== "receivable");
+  if (!accounts.length) throw Error("No active payment accounts are available. Ask Admin to configure Cash & Bank Book accounts.");
+  const defaultAccount = accounts.find(a=>/cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
+  const reasons = advances.map(a=>`${a.reason} (${money(a.outstanding)} outstanding)`).join("; ");
+  modal("Release manager salary · " + managerName, `<form id="manager-salary-post-form" data-manager="${esc(managerId)}" data-month="${esc(month)}"><section class="panel"><p><b>Manager:</b> ${esc(managerName)}</p><p><b>Salary period:</b> ${esc(month)}</p><p class="muted">Enter the manager's gross monthly salary. Outstanding advances will be deducted oldest first, and only the remaining net salary will be paid and recorded.</p>${field("Gross salary (PKR)", "gross_amount", "", "number", 'min="0.01" step="0.01" required')}${table(["Salary calculation","Amount"], [["Outstanding advances",money(outstandingAdvance)],["Advance deduction this salary",`<span id="manager-salary-deduction-preview">Calculated after entering salary</span>`],["Net salary to release",`<b id="manager-salary-net-preview">Calculated after entering salary</b>`]], "No outstanding salary advances.")}${advances.length ? `<p><b>Advance reasons:</b> ${esc(reasons)}</p>` : `<p class="muted">No outstanding salary advances for this manager.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
+  const form = document.getElementById("manager-salary-post-form");
+  form?.querySelector('[name="gross_amount"]')?.addEventListener("input", e => {
+    const gross = Math.max(0, Math.round(Number(e.target.value || 0) * 100));
+    const deduction = Math.min(gross, outstandingAdvance);
+    const deductionNode = document.getElementById("manager-salary-deduction-preview");
+    const netNode = document.getElementById("manager-salary-net-preview");
+    if (deductionNode) deductionNode.textContent = money(deduction);
+    if (netNode) netNode.textContent = money(Math.max(0, gross - deduction));
+  });
+}
+
 async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const s = S().salesmen.find((x) => x.id === id);
   if (!s) throw Error("Salesman not found.");
@@ -3393,6 +3422,9 @@ async function action(act, id, element) {
     case "post-salary":
       await postSalary(id);
       render();
+      break;
+    case "post-manager-salary":
+      await postManagerSalary(id);
       break;
     case "advance-salary":
       await advanceSalaryModal(id);
@@ -4193,6 +4225,43 @@ document.addEventListener("submit", async (e) => {
         toast("Advance amount updated; cashbook adjustment and audit record posted.");
         await advanceSalaryModal();
         break;
+      }
+      case "manager-salary-post-form": {
+        if (!admin()) throw Error("Only Admin can release manager salary.");
+        const managerId = form.dataset.manager, month = form.dataset.month;
+        const profile = (S().profiles || []).find(p => String(p.id) === String(managerId));
+        if (!profile || (S().user_roles || []).find(r => String(r.user_id) === String(managerId))?.role !== "manager") throw Error("Manager account not found.");
+        const managerName = profile.display_name || profile.email || profile.id;
+        const grossAmount = Math.round(Number(f.gross_amount) * 100);
+        if (!Number.isSafeInteger(grossAmount) || grossAmount <= 0) throw Error("Gross salary must be greater than zero.");
+        const prior = await client.from("expenses").select("id").eq("manager_user_id", managerId).eq("salary_period", month).is("deleted_at", null).maybeSingle();
+        if (prior.error) throw prior.error;
+        if (prior.data) throw Error("Manager salary is already posted for " + month + ".");
+        const advanceResult = await client.from("employee_salary_advances").select("id,amount_paisa,recovered_paisa,reason,advance_date").eq("manager_user_id", managerId).eq("status", "posted").order("advance_date", {ascending:true});
+        if (advanceResult.error) throw advanceResult.error;
+        const advances = (advanceResult.data || []).map(a=>({...a,outstanding:Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0))})).filter(a=>a.outstanding>0);
+        const outstandingAdvance = advances.reduce((sum,a)=>sum+a.outstanding,0);
+        const deduction = Math.min(grossAmount,outstandingAdvance), netAmount = grossAmount-deduction;
+        const account = (S().cashbook_accounts||[]).find(a=>a.account_key===f.cashbook_account_key && a.active && a.account_type!=="receivable");
+        if (!account) throw Error("Select an active cash, bank, or wallet account.");
+        if (netAmount <= 0) throw Error("The outstanding advance equals or exceeds this salary. No positive amount remains to release. Review the salary and advances before proceeding.");
+        const reasons = advances.map(a=>a.reason).join("; ");
+        if (!confirm(`Release manager salary to ${managerName} for ${month}?\nGross salary: ${money(grossAmount)}\nAdvance deduction: ${money(deduction)}\nNet amount to pay: ${money(netAmount)}\nAccount: ${account.label}\n${reasons ? "Advance reasons: " + reasons + "\n" : ""}The selected account will be debited only for the net amount.`)) break;
+        const salaryId = "MGR-SAL-" + managerId + "-" + month;
+        await store.run("master.save", {table:"expenses", record:{id:salaryId,date:f.date||today(),category:"Salaries",description:`Salary released to manager ${managerName} — ${month}; gross ${money(grossAmount)}; advance deduction ${money(deduction)}${reasons ? "; advance reasons: "+reasons : "; no outstanding advance"}${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:netAmount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,manager_user_id:managerId,salary_period:month}});
+        if (deduction > 0) {
+          let remaining = deduction;
+          for (const advance of advances) {
+            if (remaining <= 0) break;
+            const applied = Math.min(remaining, advance.outstanding);
+            const updated = await client.from("employee_salary_advances").update({recovered_paisa:Number(advance.recovered_paisa||0)+applied,last_deducted_salary_period:month}).eq("id",advance.id).eq("recovered_paisa",Number(advance.recovered_paisa||0)).select("id");
+            if (updated.error || !updated.data?.length) throw Error("Manager salary was posted, but an advance recovery record could not be updated. Do not repost this salary; contact Admin to reconcile advance recovery.");
+            remaining -= applied;
+          }
+        }
+        await store.refresh();
+        toast("Manager salary released. Advance deduction and net payment recorded.");
+        close(); render(); break;
       }
       case "salary-post-form": {
         if (!admin()) throw Error("Only Admin can release salary.");
