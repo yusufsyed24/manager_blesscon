@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-61-payroll-slips-commission-20261023";
+const CACHE = "blesscon-static-v55-62-monthly-advance-slips-20261024";
 const ASSETS = [
   "./",
   "./index.html",

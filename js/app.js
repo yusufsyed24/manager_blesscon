@@ -455,7 +455,17 @@ async function hydrateOwnSalarySlips(employeeType, employeeId) {
   let q=client.from("employee_salary_slips").select("id,salary_period,salary_basis,gross_paisa,arrears_paisa,advance_deduction_paisa,net_paid_paisa,payment_date").order("salary_period",{ascending:false}).limit(60);
   q=employeeType==="manager"?q.eq("manager_user_id",employeeId):q.eq("salesman_id",employeeId);
   const {data,error}=await q;
-  root.innerHTML=error?`<p class="notice">Salary slip history unavailable: ${esc(error.message)}. Apply the v55.61 payroll migration.</p>`:`<h3>My salary slips · month-wise</h3>${table(["Month","Basis","Gross","Arrears","Advance deduction","Net paid","Slip"],(data||[]).map(x=>[esc(x.salary_period),esc(x.salary_basis),money(x.gross_paisa),money(x.arrears_paisa||0),money(x.advance_deduction_paisa||0),money(x.net_paid_paisa),btn("Open / print","salary-slip",x.id)]),"No salary slips released yet.")}`;
+  const advResult=employeeType==="manager"?await client.from("employee_salary_advances").select("id,advance_date,amount_paisa,recovered_paisa,reason,status").eq("manager_user_id",employeeId).order("advance_date",{ascending:false}).limit(100):await client.from("employee_salary_advances").select("id,advance_date,amount_paisa,recovered_paisa,reason,status").eq("salesman_id",employeeId).order("advance_date",{ascending:false}).limit(100);
+  if(error){root.innerHTML=`<p class="notice">Salary slip history unavailable: ${esc(error.message)}. Apply the v55.61 payroll migration.</p>`;return;}
+  const slips=data||[], advances=(advResult.data||[]).filter(a=>String(a.status||"posted").toLowerCase()==="posted");
+  const months=[...new Set([...slips.map(x=>x.salary_period),...advances.map(a=>String(a.advance_date||"").slice(0,7)).filter(Boolean)])].sort().reverse();
+  if(!months.length){root.innerHTML="<h3>Salary slips · month-wise</h3><p class=\"muted\">No released salary or advance slips found.</p>";return;}
+  root.__salaryHistory={slips,advances,months};
+  const selected=months.includes(root.dataset.salaryMonth)?root.dataset.salaryMonth:months[0]; root.dataset.salaryMonth=selected;
+  const opts=months.map(m=>`<option value="${m}" ${m===selected?"selected":""}>${esc(m)}</option>`).join("");
+  const monthSlips=slips.filter(x=>x.salary_period===selected).map(x=>[esc(x.salary_period),esc(x.salary_basis),money(x.gross_paisa),money(x.arrears_paisa||0),money(x.advance_deduction_paisa||0),money(x.net_paid_paisa),btn("Open / print","salary-slip",x.id)]);
+  const monthAdvances=advances.filter(a=>String(a.advance_date||"").slice(0,7)===selected).map(a=>[esc(a.advance_date),money(a.amount_paisa),money(a.recovered_paisa||0),money(Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa))),esc(a.reason||"—"),btn("View advance slip","advance-salary-slip",a.id)]);
+  root.innerHTML=`<h3>Salary & advance slips · month-wise</h3><div class="field"><label for="salary-month-${esc(employeeType)}">Select month</label><select id="salary-month-${esc(employeeType)}" data-salary-history-month="${esc(root.id)}">${opts}</select></div><h4>Salary slip</h4>${table(["Month","Basis","Gross","Arrears","Advance deduction","Net paid","Slip"],monthSlips,"No salary slip released for this month.")}<h4>Released advance salary slips</h4>${table(["Date","Advance paid","Recovered","Outstanding","Reason","Slip"],monthAdvances,"No released salary advance for this month.")}`;
 }
 
 async function hydrateSalesmanSalary(seller) {
@@ -1899,7 +1909,7 @@ async function openAdminSalesmanProfile(salesmanId) {
     ]);
     const slipsResult=await client.from("employee_salary_slips").select("id,salary_period,employee_name,gross_paisa,arrears_paisa,advance_deduction_paisa,net_paid_paisa,payment_date,salary_basis").eq("salesman_id",seller.id).order("salary_period",{ascending:false}).limit(60);
     const slipsHtml=slipsResult.error?`<p class="notice">Salary slips unavailable: ${esc(slipsResult.error.message)}. Apply supabase/salary_slips_notifications_v55_61.sql.</p>`:`<h4>Salary slips by month</h4>${table(["Month","Basis","Gross","Arrears","Advance deduction","Net paid","Slip"],(slipsResult.data||[]).map(x=>[esc(x.salary_period),esc(x.salary_basis),money(x.gross_paisa),money(x.arrears_paisa||0),money(x.advance_deduction_paisa||0),money(x.net_paid_paisa),btn("Open / print","salary-slip",x.id)]),"No salary slips released yet.")}`;
-    salaryHistoryRoot.innerHTML = slipsHtml + (salaryResult.error ? `<p class="notice">Salary history unavailable: ${esc(salaryResult.error.message)}</p>` : `<h4>Salary payments</h4>${table(["Date","Period","Details","Net paid"],(salaryResult.data||[]).filter(x=>/salary/i.test(x.description||"") || x.salary_period).map(x=>[esc(x.date),esc(x.salary_period||"—"),esc(x.description||"Salary"),money(x.amount_paisa)]),"No salary payments recorded.")}`) + (advanceResult.error ? `<p class="notice">Advance history unavailable: ${esc(advanceResult.error.message)}</p>` : `<h4>Salary advances</h4>${table(["Date","Advance taken","Recovered","Outstanding","Reason","Status"],(advanceResult.data||[]).map(a=>[esc(a.advance_date),money(a.amount_paisa),money(a.recovered_paisa||0),money(Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa))),esc(a.reason||"—"),esc(a.status||"posted")]),"No salary advances recorded.")}`);
+    salaryHistoryRoot.innerHTML = slipsHtml + (salaryResult.error ? `<p class="notice">Salary history unavailable: ${esc(salaryResult.error.message)}</p>` : `<h4>Salary payments</h4>${table(["Date","Period","Details","Net paid"],(salaryResult.data||[]).filter(x=>/salary/i.test(x.description||"") || x.salary_period).map(x=>[esc(x.date),esc(x.salary_period||"—"),esc(x.description||"Salary"),money(x.amount_paisa)]),"No salary payments recorded.")}`) + (advanceResult.error ? `<p class="notice">Advance history unavailable: ${esc(advanceResult.error.message)}</p>` : `<h4>Salary advances</h4>${table(["Date","Advance taken","Recovered","Outstanding","Reason","Status"],(advanceResult.data||[]).map(a=>[esc(a.advance_date),money(a.amount_paisa),money(a.recovered_paisa||0),money(Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa))),esc(a.reason||"—"),esc(a.status||"posted"),btn("View advance slip","advance-salary-slip",a.id)]),"No salary advances recorded.")}`);
   }
 
 }
@@ -3031,6 +3041,17 @@ async function printSalarySlip(slipId) {
   const w=window.open("","_blank"); if(!w) throw Error("Allow pop-ups to print the salary slip.");
   w.document.write(`<!doctype html><html><head><title>Blesscon Candy Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border:1px solid #ddd;text-align:left}th{background:#f5f0e6}button{margin-top:20px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(data)}</body></html>`); w.document.close();
 }
+async function printAdvanceSalarySlip(advanceId) {
+  if (!client) throw Error("Advance slips require a connected session.");
+  const {data:a,error}=await client.from("employee_salary_advances").select("*").eq("id",advanceId).single();
+  if(error) throw error;
+  if(String(a.status||"posted").toLowerCase()!=="posted") throw Error("Only released/posted salary advances have a printable slip.");
+  const month=String(a.advance_date||a.created_at||today()).slice(0,7);
+  const slip={salary_period:month,employee_name:a.employee_name||"Employee",employee_type:a.employee_type||"employee",salary_basis:"advance",gross_paisa:Number(a.amount_paisa||0),arrears_paisa:0,advance_deduction_paisa:0,net_paid_paisa:Number(a.amount_paisa||0),payment_date:a.advance_date||String(a.created_at||today()).slice(0,10),payment_account_key:a.account_key||"—",payment_reference:a.reference||"",breakdown:{lines:[["Document type","Released salary advance"],["Reason",a.reason||"—"],["Amount recovered to date",money(a.recovered_paisa||0)],["Outstanding advance balance",money(Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0)))] ]}};
+  const w=window.open("","_blank"); if(!w) throw Error("Allow pop-ups to view the advance salary slip.");
+  w.document.write(`<!doctype html><html><head><title>Blesscon Candy Advance Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border:1px solid #ddd;text-align:left}th{background:#f5f0e6}button{margin-top:20px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(slip).replace("SALARY SLIP","ADVANCE SALARY SLIP")}</body></html>`); w.document.close();
+}
+
 async function saveSalarySlipAndNotify({id,employeeUserId,salesmanId,managerUserId,employeeName,employeeType,month,basis="fixed",gross,arrears=0,deduction,net,date,account,reference="",lines=[]}) {
   const slipId=`SLIP-${employeeType}-${salesmanId || managerUserId}-${month}`;
   const payload={id:slipId,employee_user_id:employeeUserId||null,salesman_id:salesmanId||null,manager_user_id:managerUserId||null,employee_name:employeeName,employee_type:employeeType,salary_period:month,salary_basis:basis,gross_paisa:gross,arrears_paisa:arrears,advance_deduction_paisa:deduction,net_paid_paisa:net,payment_date:date||today(),payment_account_key:account||null,payment_reference:reference||"",breakdown:{lines}};
@@ -3780,6 +3801,7 @@ async function action(act, id, element) {
     }
     case "payroll-refresh": await store.refresh(); page="payroll"; render(); break;
     case "salary-slip": await printSalarySlip(id); break;
+    case "advance-salary-slip": await printAdvanceSalarySlip(id); break;
     case "payroll-details": {
       if (!admin()) throw Error("Only Admin can view payroll details.");
       const month = document.querySelector(`[data-act="payroll-details"][data-id="${CSS.escape(id)}"]`)?.dataset.month || window.__payrollMonth || today().slice(0,7);
@@ -4432,6 +4454,8 @@ document.addEventListener("input", (e) => {
   if (mcForm && input.matches("[data-mc-cash]")) refreshManagerClosing(mcForm);
 });
 document.addEventListener("change", async (e) => {
+  const historySelect=e.target.closest?.("[data-salary-history-month]");
+  if(historySelect){const root=$(historySelect.dataset.salaryHistoryMonth);if(root&&root.__salaryHistory){root.dataset.salaryMonth=historySelect.value;const cache=root.__salaryHistory;const slips=cache.slips.filter(x=>x.salary_period===historySelect.value);const advances=cache.advances.filter(a=>String(a.advance_date||"").slice(0,7)===historySelect.value);const opts=cache.months.map(m=>`<option value="${m}" ${m===historySelect.value?"selected":""}>${esc(m)}</option>`).join("");root.innerHTML=`<h3>Salary & advance slips · month-wise</h3><div class="field"><label>Select month</label><select data-salary-history-month="${esc(root.id)}">${opts}</select></div><h4>Salary slip</h4>${table(["Month","Basis","Gross","Arrears","Advance deduction","Net paid","Slip"],slips.map(x=>[esc(x.salary_period),esc(x.salary_basis),money(x.gross_paisa),money(x.arrears_paisa||0),money(x.advance_deduction_paisa||0),money(x.net_paid_paisa),btn("Open / print","salary-slip",x.id)]),"No salary slip released for this month.")}<h4>Released advance salary slips</h4>${table(["Date","Advance paid","Recovered","Outstanding","Reason","Slip"],advances.map(a=>[esc(a.advance_date),money(a.amount_paisa),money(a.recovered_paisa||0),money(Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa))),esc(a.reason||"—"),btn("View advance slip","advance-salary-slip",a.id)]),"No released salary advance for this month.")}`;}return;}
   const stockForm = e.target.closest?.("#stock-form");
   if (stockForm && ["product_id", "cartons", "loose_boxes"].includes(e.target.name)) refreshStockMovementPreview(stockForm);
   if (e.target.matches?.("[data-cashbook-date]")) { cashbookDate = e.target.value || today(); render(); return; }

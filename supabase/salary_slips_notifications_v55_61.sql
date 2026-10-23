@@ -8,7 +8,7 @@ create table if not exists public.employee_salary_slips (
   manager_user_id uuid references auth.users(id) on delete set null,
   employee_name text not null,
   employee_type text not null check (employee_type in ('salesman','manager')),
-  salary_period text not null check (salary_period ~ '^\d{4}-\d{2}$'),
+  salary_period text not null check (salary_period ~ '^\\d{4}-\\d{2}$'),
   salary_basis text not null default 'fixed' check (salary_basis in ('fixed','commission')),
   gross_paisa bigint not null default 0,
   arrears_paisa bigint not null default 0,
