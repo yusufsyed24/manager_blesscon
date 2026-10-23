@@ -1828,9 +1828,10 @@ async function openAdminManagerProfile(managerUserId) {
   }));
   const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status","GPS"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), r.latitude == null || r.longitude == null ? "Not shared" : `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]), "No attendance records.");
   const docsHtml = sectionError(documents) || table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded.");
+  const managerUploadHtml = `<section class="panel"><h3>Upload manager documents (Admin)</h3><p>Upload any document or file type for this manager. Maximum file size: 25 MB. Files remain in private storage.</p><div class="grid">${select("Document category","manager-admin-document-type",[["identity","Identity / NIC"],["education","Education / certificates"],["appointment","Appointment letter"],["contract","Employment contract"],["employment","Employment record"],["salary_bank","Salary / bank document"],["tax","Tax / compliance document"],["training","Training certificate"],["performance","Performance review"],["policy","Policy acknowledgement"],["medical","Medical / leave document"],["other","Other document"]],"other")}<div class="field"><label for="manager-admin-document-file">Choose document or file (any format, up to 25 MB)</label><input id="manager-admin-document-file" type="file"></div></div><button class="gold" data-act="manager-admin-document-upload" data-id="${esc(managerUserId)}">Upload document to manager profile</button><p class="muted">The file is associated with this manager and visible to authorized Admin and the manager.</p></section>`;
   const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null || r.longitude == null ? "Not shared" : `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]), "No fieldwork visits.");
   const salary = payroll.error ? `<p class="muted">Manager salary settings unavailable: ${esc(payroll.error.message)}</p>` : payroll.data ? table(["Salary setting","Value"], [["Base monthly salary", money(payroll.data.base_salary_paisa)], ["Monthly allowance", money(payroll.data.allowance_paisa)], ["Incentive per carton", money(payroll.data.incentive_per_carton_paisa)], ["Individual monthly target", `${num(payroll.data.monthly_target).toFixed(2)} cartons`], ["Working days per month", esc(payroll.data.working_days)], ["Payroll status", "Configured"]]) : `<p class="muted">No manager salary settings saved yet.</p>`;
-  modal(`${p.display_name || "Manager"} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(p.display_name || "Manager")}</h3><p><b>Role:</b> Manager</p><p><b>Account ID:</b> ${esc(p.id)}</p><p><b>Status:</b> ${p.active === false ? "Inactive" : "Active"}</p><p><b>Created:</b> ${esc(p.created_at ? new Date(p.created_at).toLocaleDateString() : "—")}</p></div></div></section><section class="panel"><h3>Salary & target settings</h3>${salary}</section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private document links expire after one hour.</p>${docsHtml}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+  modal(`${p.display_name || "Manager"} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(p.display_name || "Manager")}</h3><p><b>Role:</b> Manager</p><p><b>Account ID:</b> ${esc(p.id)}</p><p><b>Status:</b> ${p.active === false ? "Inactive" : "Active"}</p><p><b>Created:</b> ${esc(p.created_at ? new Date(p.created_at).toLocaleDateString() : "—")}</p></div></div></section><section class="panel"><h3>Salary & target settings</h3>${salary}</section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private document links expire after one hour.</p>${docsHtml}</section>${managerUploadHtml}<section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
 }
 
 async function openAdminSalesmanProfile(salesmanId) {
@@ -3977,6 +3978,27 @@ async function action(act, id, element) {
     case "manager-profile":
       await openAdminManagerProfile(id);
       break;
+    case "manager-admin-document-upload": {
+      if (!admin() || !client) throw Error("Only Admin can upload documents to a manager profile.");
+      const managerUserId = String(id || "");
+      const role = (S().user_roles || []).find(r => String(r.user_id) === managerUserId)?.role;
+      if (!managerUserId || role !== "manager") throw Error("Manager account not found. Refresh Users & Access and try again.");
+      const file = $("manager-admin-document-file")?.files?.[0];
+      if (!file) throw Error("Choose a document or file first.");
+      if (file.size <= 0 || file.size > 25 * 1024 * 1024) throw Error("Choose a non-empty file up to 25 MB.");
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-180) || "document";
+      const path = `${managerUserId}/manager-documents/${Date.now()}-${safeName}`;
+      const bucket = client.storage.from("employee-private");
+      const contentType = file.type || "application/octet-stream";
+      const uploaded = await bucket.upload(path, file, {contentType, upsert:false});
+      if (uploaded.error) throw Error("File upload failed: " + uploaded.error.message + ". Apply the manager document upload migration if this is a permission or size-limit error.");
+      const documentType = $("manager-admin-document-type")?.value || "other";
+      const saved = await client.from("manager_employee_documents").insert({manager_user_id:managerUserId,document_type:documentType,file_path:path,file_name:file.name,mime_type:contentType,size_bytes:file.size});
+      if (saved.error) { await bucket.remove([path]); throw Error("File was uploaded but its document record was rejected: " + saved.error.message + ". Apply supabase/manager_admin_document_upload_v55_60.sql and try again."); }
+      toast("Manager document uploaded privately.");
+      await openAdminManagerProfile(managerUserId);
+      break;
+    }
     case "my-target-details": salesmanTargetDetails(id); break;
     case "my-salary-details": {
       if (user?.role !== "salesman" || own()?.id !== id) throw Error("You can only view your own salary details.");
