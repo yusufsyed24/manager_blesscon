@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-57-user-profile-creation-20261023";
+const CACHE = "blesscon-static-v55-58-manager-profile-button-20261023";
 const ASSETS = [
   "./",
   "./index.html",

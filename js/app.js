@@ -1801,6 +1801,38 @@ async function hydrateAdminFieldwork() {
     managerRoot.innerHTML = sections.join("") || `<p class="muted">No Manager accounts are configured. Create a Manager login in Users & Access.</p>`;
   }
 }
+async function openAdminManagerProfile(managerUserId) {
+  if (!admin()) throw Error("Only Admin can view manager profiles from Users & Access.");
+  if (!client) throw Error("Manager profiles require a connected Supabase session.");
+  const profile = (S().profiles || []).find(p => String(p.id) === String(managerUserId));
+  const role = (S().user_roles || []).find(r => String(r.user_id) === String(managerUserId))?.role;
+  if (!profile || role !== "manager") throw Error("Manager account not found. Refresh Users & Access and try again.");
+  modal(`${profile.display_name || "Manager"} · Profile`, '<p class="muted">Loading manager profile details…</p>');
+  const [profileResult, attendance, documents, visits, payroll] = await Promise.all([
+    client.from("profiles").select("id,display_name,avatar_path,active,created_at").eq("id", managerUserId).maybeSingle(),
+    client.from("manager_attendance_records").select("attendance_date,check_in_at,check_out_at,status,latitude,longitude").eq("manager_user_id", managerUserId).order("attendance_date", {ascending:false}).limit(100),
+    client.from("manager_employee_documents").select("document_type,file_path,file_name,mime_type,size_bytes,created_at").eq("manager_user_id", managerUserId).order("created_at", {ascending:false}).limit(100),
+    client.from("manager_customer_visits").select("customer_label,area,purpose,notes,visited_at,latitude,longitude").eq("manager_user_id", managerUserId).order("visited_at", {ascending:false}).limit(100),
+    client.from("manager_payroll_settings").select("base_salary_paisa,allowance_paisa,incentive_per_carton_paisa,monthly_target,working_days").eq("manager_user_id", managerUserId).maybeSingle()
+  ]);
+  const p = profileResult.data || profile;
+  let photo = "No profile photo uploaded.";
+  if (p.avatar_path) {
+    const signed = await client.storage.from("employee-private").createSignedUrl(p.avatar_path, 3600);
+    photo = signed.data?.signedUrl ? `<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener"><img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo" style="width:120px;height:120px;object-fit:cover;border-radius:50%"></a>` : esc(signed.error?.message || "Profile photo unavailable.");
+  }
+  const sectionError = r => r.error ? `<p class="notice danger">Could not load this section: ${esc(r.error.message)}</p>` : "";
+  const docRows = documents.error ? [] : await Promise.all((documents.data || []).map(async d => {
+    const signed = await client.storage.from("employee-private").createSignedUrl(d.file_path, 3600);
+    return [esc(d.file_name), esc(d.document_type), esc(new Date(d.created_at).toLocaleString()), `${Math.ceil(num(d.size_bytes)/1024)} KB`, signed.data?.signedUrl ? `<a href="${esc(signed.data.signedUrl)}" target="_blank" rel="noopener">Open file</a>` : esc(signed.error?.message || "Unavailable")];
+  }));
+  const attendanceHtml = sectionError(attendance) || table(["Date","Check-in","Check-out","Status","GPS"], (attendance.data || []).map(r => [esc(r.attendance_date), esc(r.check_in_at ? new Date(r.check_in_at).toLocaleString() : "—"), esc(r.check_out_at ? new Date(r.check_out_at).toLocaleString() : "—"), esc(r.status), r.latitude == null || r.longitude == null ? "Not shared" : `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]), "No attendance records.");
+  const docsHtml = sectionError(documents) || table(["Document","Type","Uploaded","Size","File"], docRows, "No documents uploaded.");
+  const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null || r.longitude == null ? "Not shared" : `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]), "No fieldwork visits.");
+  const salary = payroll.error ? `<p class="muted">Manager salary settings unavailable: ${esc(payroll.error.message)}</p>` : payroll.data ? table(["Salary setting","Value"], [["Base monthly salary", money(payroll.data.base_salary_paisa)], ["Monthly allowance", money(payroll.data.allowance_paisa)], ["Incentive per carton", money(payroll.data.incentive_per_carton_paisa)], ["Individual monthly target", `${num(payroll.data.monthly_target).toFixed(2)} cartons`], ["Working days per month", esc(payroll.data.working_days)], ["Payroll status", "Configured"]]) : `<p class="muted">No manager salary settings saved yet.</p>`;
+  modal(`${p.display_name || "Manager"} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(p.display_name || "Manager")}</h3><p><b>Role:</b> Manager</p><p><b>Account ID:</b> ${esc(p.id)}</p><p><b>Status:</b> ${p.active === false ? "Inactive" : "Active"}</p><p><b>Created:</b> ${esc(p.created_at ? new Date(p.created_at).toLocaleDateString() : "—")}</p></div></div></section><section class="panel"><h3>Salary & target settings</h3>${salary}</section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private document links expire after one hour.</p>${docsHtml}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+}
+
 async function openAdminSalesmanProfile(salesmanId) {
   if (!(admin() || manager())) throw Error("Authorized management access is required to view employee profiles.");
   if (manager() && !managerTeamIds(S(), user.id).includes(salesmanId)) throw Error("This salesman is outside your assigned team.");
@@ -2317,7 +2349,7 @@ function renderUsers() {
           badge(p.active ? "Active" : "Inactive"),
           p.id === user.id
             ? "Current user (use Account to change your own password)"
-            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${btn("Delete user", "delete-user", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) + btn("Delete salesman + data", "delete-salesman", linked.id, "", "danger") : `<span class="muted">Profile not linked</span>`) : ""}</div>`,
+            : `<div class="actions">${btn("Edit access", "edit-user", p.id)}${btn("Reset password", "reset-user-password", p.id, "", "danger")}${btn("Delete user", "delete-user", p.id, "", "danger")}${role === "salesman" ? (linked ? btn("Profile", "salesman-profile", linked.id) + btn("Delete salesman + data", "delete-salesman", linked.id, "", "danger") : `<span class="muted">Profile not linked</span>`) : role === "manager" ? btn("Profile", "manager-profile", p.id) : ""}</div>`,
         ];
       }),
     )}</section>`
@@ -3941,6 +3973,9 @@ async function action(act, id, element) {
     }
     case "salesman-profile":
       await openAdminSalesmanProfile(id);
+      break;
+    case "manager-profile":
+      await openAdminManagerProfile(id);
       break;
     case "my-target-details": salesmanTargetDetails(id); break;
     case "my-salary-details": {
