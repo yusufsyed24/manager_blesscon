@@ -1,86 +1,84 @@
--- Blesscon Candy Business Manager v55.8
--- Repairs the specific duplicate pair reported on 2026-10-20.
--- Canonical salesman: 8707e09d-1d6d-428c-bffe-d0de2eb2909a (linked to actual salesman login f68c26e7-a6d9-400a-bdfc-2aaa51f5e59f)
--- Duplicate profile:  d3b232c5-05eb-432f-9914-efbcf86c8c49 (incorrectly linked to Manager login d2cf42d4-3806-44f1-9deb-369920e2f152)
--- This is intentionally specific and guarded. It merges FK references to the canonical row, then soft-deletes the duplicate.
--- Any mismatch or unique-key conflict aborts the transaction; it does not delete business history.
+-- v55.37 configurable carton-based payroll for salesmen and managers.
+-- Admin sets role defaults in Settings. Existing base salary remains the salesman base.
+-- New allowance/incentive settings default to zero; no rates are invented.
 
-begin;
-
-do $repair$
+create or replace function public.own_salary_snapshot() returns jsonb
+language plpgsql security definer set search_path='' as $$
 declare
-  canonical_id uuid := '8707e09d-1d6d-428c-bffe-d0de2eb2909a';
-  duplicate_id uuid := 'd3b232c5-05eb-432f-9914-efbcf86c8c49';
-  actual_salesman_user uuid := 'f68c26e7-a6d9-400a-bdfc-2aaa51f5e59f';
-  manager_user uuid := 'd2cf42d4-3806-44f1-9deb-369920e2f152';
-  canonical public.salesmen%rowtype;
-  duplicate public.salesmen%rowtype;
-  fk record;
-  ref_count bigint;
+  seller public.salesmen;
+  cfg jsonb;
+  period_start date;
+  achieved numeric := 0;
+  achieved_boxes bigint := 0;
+  posted bigint;
+  base_pay bigint := 0;
+  allowance bigint := 0;
+  per_carton bigint := 0;
+  incentive bigint := 0;
+  gross bigint := 0;
+  result jsonb;
 begin
-  select * into canonical from public.salesmen where id = canonical_id for update;
-  select * into duplicate from public.salesmen where id = duplicate_id for update;
+  if auth.uid() is null then raise exception 'Authentication required'; end if;
+  select * into seller from public.salesmen where user_id=auth.uid() and active and deleted_at is null limit 1;
+  if not found then raise exception 'No active salesman profile is linked to this login'; end if;
+  period_start := date_trunc('month', private.business_today())::date;
+  select value into cfg from public.settings where id='business';
+  select coalesce(sum(i.boxes::numeric/nullif(i.boxes_per_carton,0)),0), coalesce(sum(i.boxes),0)::bigint
+    into achieved, achieved_boxes
+  from public.orders o join public.order_items i on i.order_id=o.id
+  where o.salesman_id=seller.id and o.date between period_start and private.business_today()
+    and o.status='confirmed' and o.deleted_at is null;
+  base_pay := coalesce(seller.base_salary_paisa, coalesce((cfg->>'base_salary_paisa')::bigint,0));
+  allowance := greatest(0,coalesce((cfg->>'salesman_allowance_paisa')::bigint,0));
+  per_carton := greatest(0,coalesce((cfg->>'salesman_incentive_per_carton_paisa')::bigint,0));
+  incentive := greatest(0,round(achieved*per_carton)::bigint);
+  gross := base_pay + allowance + incentive;
+  select amount_paisa into posted from public.expenses where salesman_id=seller.id and salary_period=to_char(period_start,'YYYY-MM') and deleted_at is null limit 1;
+  result := jsonb_build_object('salary_period',to_char(period_start,'YYYY-MM'),'status',case when posted is null then 'estimate' else 'posted' end,
+    'base_salary_paisa',base_pay,'allowance_paisa',allowance,'incentive_per_carton_paisa',per_carton,
+    'incentive_paisa',incentive,'gross_paisa',gross,'total_paisa',coalesce(posted,gross),
+    'monthly_target',seller.monthly_target,'achieved_cartons',achieved,'achieved_boxes',achieved_boxes,
+    'achievement_percent',case when coalesce(seller.monthly_target,0)>0 then achieved/seller.monthly_target*100 else 0 end);
+  return result;
+end $$;
 
-  if canonical.id is null or duplicate.id is null then
-    raise exception 'Expected canonical and duplicate salesman rows were not both found. No changes applied.';
-  end if;
-  if canonical.user_id is distinct from actual_salesman_user
-     or canonical.manager_user_id is distinct from manager_user then
-    raise exception 'Canonical salesman row no longer matches the supplied IDs/Manager. No changes applied.';
-  end if;
-  if duplicate.user_id is distinct from manager_user
-     or duplicate.manager_user_id is distinct from manager_user
-     or lower(trim(duplicate.name)) <> lower(trim(canonical.name)) then
-    raise exception 'Duplicate row does not match the reported Manager-linked duplicate. No changes applied.';
-  end if;
-  if not exists (
-    select 1 from public.user_roles ur
-    where ur.user_id = manager_user and ur.role::text = 'manager'
-  ) then
-    raise exception 'The duplicate row user is not currently recorded as a Manager. Stop and inspect Users & Access before cleanup.';
-  end if;
+create or replace function public.own_manager_salary_snapshot() returns jsonb
+language plpgsql security definer set search_path='' as $$
+declare
+  cfg jsonb;
+  period_start date;
+  achieved numeric := 0;
+  achieved_boxes bigint := 0;
+  base_pay bigint := 0;
+  allowance bigint := 0;
+  per_carton bigint := 0;
+  incentive bigint := 0;
+  gross bigint := 0;
+  posted bigint;
+begin
+  if auth.uid() is null then raise exception 'Authentication required'; end if;
+  if not exists(select 1 from public.user_roles r where r.user_id=auth.uid() and r.role='manager') then raise exception 'Manager account required'; end if;
+  period_start := date_trunc('month', private.business_today())::date;
+  select value into cfg from public.settings where id='business';
+  -- Manager's own confirmed orders only; these do not enter the team target.
+  select coalesce(sum(i.boxes::numeric/nullif(i.boxes_per_carton,0)),0),coalesce(sum(i.boxes),0)::bigint
+    into achieved, achieved_boxes
+  from public.orders o join public.order_items i on i.order_id=o.id
+  where o.created_by=auth.uid() and o.salesman_id is null and o.date between period_start and private.business_today()
+    and o.status='confirmed' and o.deleted_at is null;
+  base_pay := greatest(0,coalesce((cfg->>'manager_base_salary_paisa')::bigint,(cfg->>'base_salary_paisa')::bigint,0));
+  allowance := greatest(0,coalesce((cfg->>'manager_allowance_paisa')::bigint,0));
+  per_carton := greatest(0,coalesce((cfg->>'manager_incentive_per_carton_paisa')::bigint,0));
+  incentive := greatest(0,round(achieved*per_carton)::bigint);
+  gross := base_pay+allowance+incentive;
+  select amount_paisa into posted from public.expenses where manager_user_id=auth.uid() and salary_period=to_char(period_start,'YYYY-MM') and deleted_at is null limit 1;
+  return jsonb_build_object('salary_period',to_char(period_start,'YYYY-MM'),'status',case when posted is null then 'estimate' else 'estimate' end,
+    'base_salary_paisa',base_pay,'allowance_paisa',allowance,'incentive_per_carton_paisa',per_carton,'incentive_paisa',incentive,
+    'gross_paisa',gross,'total_paisa',coalesce(posted,gross),'achieved_cartons',achieved,'achieved_boxes',achieved_boxes);
+end $$;
 
-  -- Refuse composite foreign keys because they require a hand-reviewed merge.
-  if exists (
-    select 1 from pg_constraint c
-    where c.contype = 'f'
-      and c.confrelid = 'public.salesmen'::regclass
-      and c.conrelid <> 'public.salesmen'::regclass
-      and array_length(c.conkey, 1) <> 1
-  ) then
-    raise exception 'A composite foreign key references salesmen; no changes applied. Review the schema before merging.';
-  end if;
-
-  -- Repoint all simple FK references, preserving order/expense/customer/document history.
-  for fk in
-    select c.conrelid::regclass as table_name,
-           a.attname as column_name
-    from pg_constraint c
-    join pg_attribute a
-      on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
-    where c.contype = 'f'
-      and c.confrelid = 'public.salesmen'::regclass
-      and c.conrelid <> 'public.salesmen'::regclass
-      and array_length(c.conkey, 1) = 1
-    order by c.conrelid::regclass::text, a.attname
-  loop
-    execute format('update %s set %I = $1 where %I = $2', fk.table_name, fk.column_name, fk.column_name)
-      using canonical_id, duplicate_id;
-  end loop;
-
-  -- Keep the row for auditability but remove it from active employee views.
-  update public.salesmen
-     set user_id = null,
-         active = false,
-         deleted_at = coalesce(deleted_at, now()),
-         version = coalesce(version, 0) + 1,
-         updated_at = now()
-   where id = duplicate_id;
-
-  raise notice 'Merged duplicate salesman references into % and soft-deleted duplicate %.', canonical_id, duplicate_id;
-end
-$repair$;
-
-commit;
-
+revoke all on function public.own_salary_snapshot() from public, anon;
+revoke all on function public.own_manager_salary_snapshot() from public, anon;
+grant execute on function public.own_salary_snapshot() to authenticated;
+grant execute on function public.own_manager_salary_snapshot() to authenticated;
 notify pgrst, 'reload schema';

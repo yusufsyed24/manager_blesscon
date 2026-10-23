@@ -1,59 +1,51 @@
--- Blesscon Candy v45: complete manager_daily_closings schema repair.
--- Repairs older tables created before all manager-closing columns existed.
--- Safe to rerun; preserves existing records. Run in Supabase SQL Editor.
-begin;
+-- Repair salesman profile & fieldwork table permissions.
+-- Run this AFTER schema.sql, operational_modules.sql, manager_role.sql (if used),
+-- and salesman_self_service.sql. Safe to rerun; no business data is deleted.
 
-create table if not exists public.manager_daily_closings (
-  id uuid primary key default gen_random_uuid(),
-  manager_user_id uuid references auth.users(id),
-  business_date date
-);
+grant select on public.salesmen to authenticated;
+grant select, insert, update on public.attendance_records to authenticated;
+grant select, insert on public.employee_documents, public.customer_visits to authenticated;
 
-alter table public.manager_daily_closings
-  add column if not exists manager_user_id uuid references auth.users(id),
-  add column if not exists business_date date,
-  add column if not exists team_salesman_ids text[] not null default '{}'::text[],
-  add column if not exists sales_count integer not null default 0,
-  add column if not exists sales_total_paisa bigint not null default 0,
-  add column if not exists collections_by_method jsonb not null default '{}'::jsonb,
-  add column if not exists collections_total_paisa bigint not null default 0,
-  add column if not exists cash_received_paisa bigint not null default 0,
-  add column if not exists expenses_total_paisa bigint not null default 0,
-  add column if not exists cash_expenses_paisa bigint not null default 0,
-  add column if not exists stock_movements jsonb not null default '{}'::jsonb,
-  add column if not exists opening_cash_paisa bigint not null default 0,
-  add column if not exists cash_handed_over_paisa bigint not null default 0,
-  add column if not exists expected_cash_paisa bigint not null default 0,
-  add column if not exists actual_cash_paisa bigint not null default 0,
-  add column if not exists cash_variance_paisa bigint not null default 0,
-  add column if not exists cash_in_bank_paisa bigint not null default 0,
-  add column if not exists cash_in_hand_paisa bigint not null default 0,
-  add column if not exists cash_in_easypaisa_paisa bigint not null default 0,
-  add column if not exists cash_in_jazzcash_paisa bigint not null default 0,
-  add column if not exists market_credit_paisa bigint not null default 0,
-  add column if not exists expected_stock jsonb not null default '{}'::jsonb,
-  add column if not exists actual_stock jsonb not null default '{}'::jsonb,
-  add column if not exists stock_variances jsonb not null default '{}'::jsonb,
-  add column if not exists reason text not null default '',
-  add column if not exists notes text not null default '',
-  add column if not exists status text not null default 'submitted',
-  add column if not exists version integer not null default 1,
-  add column if not exists submitted_by uuid,
-  add column if not exists submitted_at timestamptz not null default now(),
-  add column if not exists approved_by uuid,
-  add column if not exists approved_at timestamptz,
-  add column if not exists decision_by uuid,
-  add column if not exists decision_at timestamptz,
-  add column if not exists decision_reason text not null default '',
-  add column if not exists created_at timestamptz not null default now();
+alter table public.salesmen enable row level security;
+alter table public.attendance_records enable row level security;
+alter table public.employee_documents enable row level security;
+alter table public.customer_visits enable row level security;
 
-create unique index if not exists manager_daily_closings_manager_date_uidx
-  on public.manager_daily_closings(manager_user_id, business_date);
-create index if not exists manager_daily_closings_date_status
-  on public.manager_daily_closings(business_date, status);
-comment on column public.manager_daily_closings.team_salesman_ids is
-  'Salesman IDs included in this manager consolidated daily closing.';
-comment on column public.manager_daily_closings.sales_count is
-  'Count of sales/orders included in this manager consolidated daily closing.';
-commit;
+drop policy if exists salesman_read on public.salesmen;
+create policy salesman_read on public.salesmen
+  for select to authenticated
+  using (public.is_admin() or public.owns_salesman(id));
+
+drop policy if exists attendance_self_select on public.attendance_records;
+create policy attendance_self_select on public.attendance_records
+  for select to authenticated
+  using (public.is_admin() or public.owns_salesman(salesman_id));
+drop policy if exists attendance_self_insert on public.attendance_records;
+create policy attendance_self_insert on public.attendance_records
+  for insert to authenticated
+  with check (public.is_admin() or (public.owns_salesman(salesman_id) and check_in_at is not null and status in ('present','late','pending')));
+drop policy if exists attendance_self_update on public.attendance_records;
+create policy attendance_self_update on public.attendance_records
+  for update to authenticated
+  using (public.is_admin() or public.owns_salesman(salesman_id))
+  with check (public.is_admin() or public.owns_salesman(salesman_id));
+
+drop policy if exists employee_documents_self_select on public.employee_documents;
+create policy employee_documents_self_select on public.employee_documents
+  for select to authenticated
+  using (public.is_admin() or public.owns_salesman(salesman_id));
+drop policy if exists employee_documents_self_insert on public.employee_documents;
+create policy employee_documents_self_insert on public.employee_documents
+  for insert to authenticated
+  with check (public.is_admin() or public.owns_salesman(salesman_id));
+
+drop policy if exists customer_visits_self_select on public.customer_visits;
+create policy customer_visits_self_select on public.customer_visits
+  for select to authenticated
+  using (public.is_admin() or public.owns_salesman(salesman_id));
+drop policy if exists customer_visits_self_insert on public.customer_visits;
+create policy customer_visits_self_insert on public.customer_visits
+  for insert to authenticated
+  with check (public.is_admin() or public.owns_salesman(salesman_id));
+
 notify pgrst, 'reload schema';

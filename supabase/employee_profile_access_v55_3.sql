@@ -1,125 +1,60 @@
--- Blesscon Candy v55.3 employee profile and document access fix.
--- Additive and non-destructive: does not reset or delete business records.
--- Run as a normal SQL script in Supabase SQL Editor (do not choose "Run and enable RLS").
+-- v55.44: Automatic Sunday Week Off for all salesmen and managers.
+-- Run in Supabase SQL Editor as database owner after backing up the database.
+-- Existing punched/recorded Sundays are preserved. Only missing Sunday records are added.
 
--- Ensure the minimum columns and Manager role helper required by the upload workflow exist.
-alter table public.user_roles drop constraint if exists user_roles_role_check;
-alter table public.user_roles add constraint user_roles_role_check check (role in ('admin','manager','user','salesman'));
-create or replace function public.is_manager() returns boolean
-language sql stable security definer set search_path='' as $$
-  select exists (select 1 from public.user_roles r join public.profiles p on p.id=r.user_id and p.active where r.user_id=auth.uid() and r.role='manager')
-$$;
-revoke all on function public.is_manager() from public, anon;
-grant execute on function public.is_manager() to authenticated;
+DO $$ DECLARE c record; BEGIN
+  FOR c IN SELECT conname, conrelid::regclass AS tbl FROM pg_constraint
+           WHERE contype='c' AND conrelid IN ('public.attendance_records'::regclass,'public.manager_attendance_records'::regclass)
+             AND pg_get_constraintdef(oid) ILIKE '%status%' LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', c.tbl, c.conname);
+  END LOOP;
+END $$;
+ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_status_check
+  CHECK (status IN ('present','late','half_day','absent','leave','pending','week_off'));
+ALTER TABLE public.manager_attendance_records ADD CONSTRAINT manager_attendance_records_status_check
+  CHECK (status IN ('present','late','half_day','absent','leave','pending','week_off'));
 
-alter table public.salesmen add column if not exists user_id uuid references auth.users(id) on delete set null;
-alter table public.salesmen add column if not exists manager_user_id uuid references auth.users(id) on delete set null;
-alter table public.salesmen add column if not exists photo_path text;
-alter table public.salesmen add column if not exists deleted_at timestamptz;
-alter table public.salesmen add column if not exists version integer not null default 1;
-alter table public.salesmen add column if not exists updated_at timestamptz not null default now();
-alter table public.salesmen add column if not exists updated_by uuid;
+CREATE OR REPLACE FUNCTION public.mark_sunday_weekoffs(p_from date DEFAULT current_date, p_to date DEFAULT current_date)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE d date;
+BEGIN
+  IF p_to < p_from OR p_to - p_from > 400 THEN RAISE EXCEPTION 'Date range must be 0–400 days'; END IF;
+  FOR d IN SELECT x::date FROM generate_series(p_from,p_to,interval '1 day') x WHERE extract(isodow FROM x)=7 LOOP
+    INSERT INTO public.attendance_records(salesman_id,attendance_date,status,updated_at)
+      SELECT s.id,d,'week_off',now() FROM public.salesmen s
+      WHERE s.active IS TRUE AND s.deleted_at IS NULL
+      ON CONFLICT(salesman_id,attendance_date) DO NOTHING;
+    INSERT INTO public.manager_attendance_records(manager_user_id,attendance_date,status,updated_at)
+      SELECT p.id,d,'week_off',now() FROM public.profiles p
+      JOIN public.user_roles r ON r.user_id=p.id AND r.role='manager'
+      ON CONFLICT(manager_user_id,attendance_date) DO NOTHING;
+  END LOOP;
+END $$;
+REVOKE ALL ON FUNCTION public.mark_sunday_weekoffs(date,date) FROM PUBLIC, anon, authenticated;
 
-create table if not exists public.employee_documents (
-  id uuid primary key default gen_random_uuid(),
-  salesman_id text not null references public.salesmen(id) on delete cascade,
-  document_type text not null default 'other',
-  file_path text not null,
-  file_name text not null,
-  mime_type text not null,
-  size_bytes bigint not null check (size_bytes > 0 and size_bytes <= 10485760),
-  created_at timestamptz not null default now()
-);
+-- Backfill Sundays from the start of the current month through today for every user.
+SELECT public.mark_sunday_weekoffs(date_trunc('month',current_date)::date,current_date);
 
--- Expand manager-uploadable document categories while preserving existing document records.
-alter table public.employee_documents drop constraint if exists employee_documents_document_type_check;
-alter table public.employee_documents drop constraint if exists employee_documents_document_type_check1;
-alter table public.employee_documents add constraint employee_documents_document_type_check
-  check (document_type in ('identity','education','employment','appointment','contract','salary_bank','other'));
+-- Optional unattended automation: schedule hourly when pg_cron is installed and available.
+-- Function only inserts today's missing rows if today is Sunday; existing punches/statuses remain unchanged.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_cron') THEN
+    PERFORM cron.unschedule(jobid) FROM cron.job WHERE jobname='blesscon-sunday-weekoff-daily';
+    PERFORM cron.schedule('blesscon-sunday-weekoff-daily','0 * * * *',
+      'select public.mark_sunday_weekoffs(current_date,current_date)');
+  ELSE
+    RAISE NOTICE 'pg_cron is not installed; run SELECT public.mark_sunday_weekoffs(date_trunc(''month'',current_date)::date,current_date); periodically, or enable pg_cron for automatic daily marking.';
+  END IF;
+EXCEPTION WHEN undefined_table OR undefined_function OR insufficient_privilege THEN
+  RAISE NOTICE 'Could not configure pg_cron automatically. Sunday marking function and backfill are installed; schedule it in Supabase Cron if available.';
+END $$;
 
-grant select on public.salesmen to authenticated;
-alter table public.salesmen enable row level security;
-drop policy if exists salesman_read on public.salesmen;
-create policy salesman_read on public.salesmen for select to authenticated
-  using (public.is_admin() or public.owns_salesman(id) or (public.is_manager() and manager_user_id=auth.uid()));
-
-alter table public.employee_documents enable row level security;
-revoke all on public.employee_documents from anon, authenticated;
-grant select, insert, delete on public.employee_documents to authenticated;
-drop policy if exists employee_documents_self_select on public.employee_documents;
-drop policy if exists employee_documents_self_insert on public.employee_documents;
-drop policy if exists employee_documents_read_self_or_team on public.employee_documents;
-drop policy if exists employee_documents_manager_admin_write on public.employee_documents;
-create policy employee_documents_read_self_or_team on public.employee_documents
-  for select to authenticated
-  using (
-    public.is_admin()
-    or public.owns_salesman(salesman_id)
-    or exists (
-      select 1 from public.salesmen sm
-      where sm.id = employee_documents.salesman_id
-        and sm.manager_user_id = auth.uid()
-        and public.is_manager()
-        and sm.deleted_at is null
-    )
-  );
-create policy employee_documents_manager_admin_insert on public.employee_documents
-  for insert to authenticated
-  with check (
-    public.is_admin()
-    or exists (
-      select 1 from public.salesmen sm
-      where sm.id = employee_documents.salesman_id
-        and sm.manager_user_id = auth.uid()
-        and public.is_manager()
-        and sm.user_id is not null
-        and sm.deleted_at is null
-    )
-  );
-create policy employee_documents_manager_admin_delete on public.employee_documents
-  for delete to authenticated
-  using (
-    public.is_admin()
-    or exists (
-      select 1 from public.salesmen sm
-      where sm.id = employee_documents.salesman_id
-        and sm.manager_user_id = auth.uid()
-        and public.is_manager()
-        and sm.deleted_at is null
-    )
-  );
-
--- Private employee storage: salesman can read their own files; only Admin or the assigned Manager uploads/deletes.
-do $$ begin
-  if to_regclass('storage.buckets') is not null and to_regclass('storage.objects') is not null then
-    insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
-    values ('employee-private','employee-private',false,10485760,array['application/pdf','image/jpeg','image/png','image/webp'])
-    on conflict (id) do update set public=false, file_size_limit=10485760, allowed_mime_types=excluded.allowed_mime_types;
-    execute 'drop policy if exists employee_private_read on storage.objects';
-    execute 'create policy employee_private_read on storage.objects for select to authenticated using (bucket_id = ''employee-private'' and (public.is_admin() or (storage.foldername(name))[1] = auth.uid()::text or (public.is_manager() and exists (select 1 from public.salesmen sm where sm.manager_user_id = auth.uid() and sm.user_id::text = (storage.foldername(name))[1] and sm.deleted_at is null))))';
-    execute 'drop policy if exists employee_private_insert on storage.objects';
-    execute 'create policy employee_private_insert on storage.objects for insert to authenticated with check (bucket_id = ''employee-private'' and (public.is_admin() or (public.is_manager() and exists (select 1 from public.salesmen sm where sm.manager_user_id = auth.uid() and sm.user_id::text = (storage.foldername(name))[1] and sm.deleted_at is null))))';
-    execute 'drop policy if exists employee_private_delete on storage.objects';
-    execute 'create policy employee_private_delete on storage.objects for delete to authenticated using (bucket_id = ''employee-private'' and (public.is_admin() or (public.is_manager() and exists (select 1 from public.salesmen sm where sm.manager_user_id = auth.uid() and sm.user_id::text = (storage.foldername(name))[1] and sm.deleted_at is null))))';
-  end if;
-end $$;
-
--- Only Admin / assigned Manager can set profile photo path; the RPC validates both identity and path.
-create or replace function public.set_salesman_photo(p_salesman_id text, p_photo_path text) returns void
-language plpgsql security definer set search_path='' as $$
-declare linked_user_id uuid;
-begin
-  select s.user_id into linked_user_id from public.salesmen s where s.id=p_salesman_id and s.deleted_at is null;
-  if linked_user_id is null then raise exception 'Salesman must be linked to a login before uploading a private photo'; end if;
-  if not (public.is_admin() or (public.is_manager() and exists (select 1 from public.salesmen s where s.id=p_salesman_id and s.manager_user_id=auth.uid() and s.deleted_at is null))) then
-    raise exception 'Only Admin or the assigned Manager may update this profile photo';
-  end if;
-  if p_photo_path is null or length(p_photo_path)>1024 or p_photo_path not like linked_user_id::text || '/salesman-profile-%' then
-    raise exception 'Invalid private profile photo path';
-  end if;
-  update public.salesmen set photo_path=p_photo_path, updated_at=now(), updated_by=auth.uid(), version=version+1 where id=p_salesman_id and deleted_at is null;
-  if not found then raise exception 'Salesman not found'; end if;
-end $$;
-revoke all on function public.set_salesman_photo(text,text) from public, anon;
-grant execute on function public.set_salesman_photo(text,text) to authenticated;
-notify pgrst, 'reload schema';
+-- Verification
+SELECT 'salesman' AS employee_type, s.name AS employee, a.attendance_date, a.status
+FROM public.attendance_records a JOIN public.salesmen s ON s.id=a.salesman_id
+WHERE extract(isodow FROM a.attendance_date)=7 AND a.attendance_date >= date_trunc('month',current_date)::date
+UNION ALL
+SELECT 'manager', p.display_name, a.attendance_date, a.status
+FROM public.manager_attendance_records a JOIN public.profiles p ON p.id=a.manager_user_id
+WHERE extract(isodow FROM a.attendance_date)=7 AND a.attendance_date >= date_trunc('month',current_date)::date
+ORDER BY attendance_date, employee;

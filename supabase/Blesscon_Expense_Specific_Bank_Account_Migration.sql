@@ -1,68 +1,100 @@
--- Blesscon Candy: allow each expense to post to its explicitly selected cash/bank/wallet account.
--- Run after schema.sql and cash_bank_book.sql. Safe to re-run.
-begin;
+-- Blesscon Candy Business Manager v55.10
+-- Fixes "new row violates row-level security policy" when uploading photos / documents.
+--
+-- Cause: several older migrations each REPLACED the same storage policy on the private
+-- 'employee-private' bucket, so whichever ran last decided who could upload:
+--   * salesman_self_service / manager_profile_fieldwork: only the user's OWN folder
+--     -> Admin/Manager could not upload for a salesman (files live in the salesman's folder)
+--   * revamp_v53 / v54 / employee_profile_access_v55_3: only Admin or the assigned Manager
+--     -> a Manager could not upload their OWN photo or documents
+-- ALSO a bug in those migrations: inside the salesmen sub-query the bare word `name` meant
+--   salesmen.name, not the uploaded file's name, so the Manager->assigned-salesman check could
+--   never match. Here it is written as objects.name.
+-- This script installs one policy set that allows every flow the app uses.
+-- Safe to re-run. Does not touch any existing files or data.
+--
+-- To see what is live right now (optional):
+--   select policyname, cmd, with_check from pg_policies
+--   where schemaname='storage' and tablename='objects' and policyname like 'employee_private%';
 
-alter table public.expenses
-  add column if not exists cashbook_account_key text references public.cashbook_accounts(account_key);
-
--- Save-master only accepts explicitly allow-listed expense fields. Extend that list safely.
-do $patch$
-declare def text; newdef text;
+-- 0. Bucket (private, 10 MB, PDF + images)
+do $b$
 begin
-  select pg_get_functiondef('private.save_master(text,jsonb,integer)'::regprocedure) into def;
-  if position('cashbook_account_key' in def) > 0 then
-    raise notice 'private.save_master already accepts expense cashbook_account_key';
-  else
-    newdef := replace(def,
-      $old$when 'expenses' then allowed:=array['id','date','category','description','amount_paisa','method','attachment_path','salesman_id','salary_period'];$old$,
-      $new$when 'expenses' then allowed:=array['id','date','category','description','amount_paisa','method','cashbook_account_key','attachment_path','salesman_id','salary_period'];$new$);
-    if newdef = def then
-      raise exception 'Could not patch private.save_master: expected expense allow-list was not found. Do not continue; check schema.sql version.';
-    end if;
-    execute newdef;
+  if to_regclass('storage.buckets') is not null then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('employee-private', 'employee-private', false, 10485760,
+            array['application/pdf','image/jpeg','image/png','image/webp'])
+    on conflict (id) do update
+      set public = false, file_size_limit = 10485760,
+          allowed_mime_types = array['application/pdf','image/jpeg','image/png','image/webp'];
   end if;
 end
-$patch$;
+$b$;
 
-create or replace function private.cashbook_post_expense()
-returns trigger language plpgsql security definer set search_path=''
-as $$
-declare acct text; sid text;
+-- 1. Storage policies. Folder name = the owner's user id.
+do $p$
+declare
+  team_check text := $t$(public.is_manager() and exists (
+      select 1 from public.salesmen sm
+      where sm.manager_user_id = auth.uid() and sm.user_id::text = (storage.foldername(objects.name))[1]))$t$;
 begin
-  sid := new.salesman_id;
-  acct := coalesce(new.cashbook_account_key, private.cashbook_method_account(new.method,sid));
-  if not exists (select 1 from public.cashbook_accounts a where a.account_key=acct and a.active and a.account_type <> 'receivable') then
-    raise exception 'Expense payment account is missing, inactive, or not a cash/bank/wallet account: %', acct;
-  end if;
-  if tg_op='INSERT' then
-    if new.deleted_at is null then
-      insert into public.cashbook_entries(posting_key,transaction_id,business_date,account_key,amount_paisa,entry_type,source_table,source_id,reference,description,salesman_id,created_by)
-      values('expense:'||new.id||':v'||coalesce(new.version,1),new.id,new.date,acct,-new.amount_paisa,'expense','expenses',new.id::text,'','Expense — '||new.category,sid,new.created_by)
-      on conflict(posting_key) do nothing;
-    end if;
-  elsif (old.amount_paisa,old.method,old.cashbook_account_key,old.date,old.salesman_id,old.deleted_at) is distinct from (new.amount_paisa,new.method,new.cashbook_account_key,new.date,new.salesman_id,new.deleted_at) then
-    if old.deleted_at is null then
-      insert into public.cashbook_entries(posting_key,transaction_id,business_date,account_key,amount_paisa,entry_type,source_table,source_id,description,salesman_id,created_by)
-      values('expense:'||old.id||':reverse-v'||old.version,old.id,current_date,coalesce(old.cashbook_account_key,private.cashbook_method_account(old.method,old.salesman_id)),old.amount_paisa,'reversal','expenses',old.id::text,'Reversal of edited/deleted expense',old.salesman_id,auth.uid())
-      on conflict(posting_key) do nothing;
-    end if;
-    if new.deleted_at is null then
-      insert into public.cashbook_entries(posting_key,transaction_id,business_date,account_key,amount_paisa,entry_type,source_table,source_id,description,salesman_id,created_by)
-      values('expense:'||new.id||':v'||coalesce(new.version,1),new.id,new.date,acct,-new.amount_paisa,'expense','expenses',new.id::text,'Expense — '||new.category,sid,new.created_by)
-      on conflict(posting_key) do nothing;
-    end if;
-  end if;
-  return new;
-end $$;
+  if to_regclass('storage.objects') is null then return; end if;
 
--- Refresh the expense ledger postings once for records already carrying a selected account.
--- Existing expenses with NULL selected account retain the prior method-based posting.
-insert into public.cashbook_entries(posting_key,transaction_id,business_date,account_key,amount_paisa,entry_type,source_table,source_id,description,salesman_id,created_by)
-select 'expense:'||e.id||':v'||coalesce(e.version,1),e.id,e.date,e.cashbook_account_key,-e.amount_paisa,'expense','expenses',e.id::text,'Expense — '||e.category,e.salesman_id,e.created_by
-from public.expenses e
-where e.deleted_at is null and e.cashbook_account_key is not null
-on conflict(posting_key) do nothing;
+  execute 'drop policy if exists employee_private_read on storage.objects';
+  execute format($f$create policy employee_private_read on storage.objects for select to authenticated using (
+      bucket_id = 'employee-private' and (
+        public.is_admin()
+        or (storage.foldername(objects.name))[1] = auth.uid()::text
+        or %s))$f$, team_check);
 
-commit;
+  execute 'drop policy if exists employee_private_insert on storage.objects';
+  execute format($f$create policy employee_private_insert on storage.objects for insert to authenticated with check (
+      bucket_id = 'employee-private' and (
+        public.is_admin()
+        or (public.is_manager() and (storage.foldername(objects.name))[1] = auth.uid()::text)
+        or %s))$f$, team_check);
+
+  execute 'drop policy if exists employee_private_delete on storage.objects';
+  execute format($f$create policy employee_private_delete on storage.objects for delete to authenticated using (
+      bucket_id = 'employee-private' and (
+        public.is_admin()
+        or (public.is_manager() and (storage.foldername(objects.name))[1] = auth.uid()::text)
+        or %s))$f$, team_check);
+end
+$p$;
+
+-- 2. Salesman documents table: Admin, or the assigned Manager for a linked salesman.
+drop policy if exists employee_documents_manager_admin_insert on public.employee_documents;
+create policy employee_documents_manager_admin_insert on public.employee_documents
+  for insert to authenticated
+  with check (
+    public.is_admin()
+    or exists (
+      select 1 from public.salesmen sm
+      where sm.id = employee_documents.salesman_id
+        and sm.manager_user_id = auth.uid() and public.is_manager()
+        and sm.user_id is not null and sm.deleted_at is null));
+grant select, insert, delete on public.employee_documents to authenticated;
+
+-- 3. Manager's own documents table: the Manager for themselves, or Admin.
+do $m$
+begin
+  if to_regclass('public.manager_employee_documents') is not null then
+    execute 'drop policy if exists manager_docs_insert_self on public.manager_employee_documents';
+    execute 'create policy manager_docs_insert_self on public.manager_employee_documents for insert to authenticated
+             with check ((manager_user_id = auth.uid() and public.is_manager()) or public.is_admin())';
+    execute 'grant select, insert on public.manager_employee_documents to authenticated';
+  end if;
+end
+$m$;
+
+-- 4. Saving a profile photo path on your own profile (Admin and Manager own photos).
+--    Column-level grant keeps this to avatar_path / updated_at only.
+grant select, update (avatar_path, updated_at) on public.profiles to authenticated;
+drop policy if exists profiles_update_own_avatar on public.profiles;
+create policy profiles_update_own_avatar on public.profiles
+  for update to authenticated
+  using (id = auth.uid())
+  with check (id = auth.uid());
 
 notify pgrst, 'reload schema';

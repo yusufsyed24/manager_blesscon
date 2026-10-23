@@ -1,174 +1,267 @@
--- Blesscon Candy Business Manager: create missing sales-area catalogue and assignments.
--- Additive and safe to rerun. Does not reset business data or delete records.
+-- Combined setup: safe to run when v55.26 is not yet installed; applies v55.26 table/insert posting and v55.27 edit/recovery additions.
 
-begin;
+-- Blesscon Candy v55.26: Admin-issued salary advances for salesmen and managers.
+-- Additive migration. Does not change product/pricing or existing salary records.
 
-create table if not exists public.sales_areas (
-  id uuid primary key default gen_random_uuid(),
-  name text not null check (length(trim(name)) > 0),
-  description text not null default '',
-  active boolean not null default true,
-  created_by uuid default auth.uid() references auth.users(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS public.employee_salary_advances (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_type text NOT NULL CHECK (employee_type IN ('salesman','manager')),
+  employee_name text NOT NULL CHECK (length(trim(employee_name)) > 0),
+  salesman_id text REFERENCES public.salesmen(id),
+  manager_user_id uuid REFERENCES auth.users(id),
+  advance_date date NOT NULL DEFAULT current_date,
+  amount_paisa bigint NOT NULL CHECK (amount_paisa > 0),
+  reason text NOT NULL CHECK (length(trim(reason)) >= 3),
+  account_key text NOT NULL REFERENCES public.cashbook_accounts(account_key),
+  reference text,
+  status text NOT NULL DEFAULT 'posted' CHECK (status IN ('posted','reversed')),
+  created_by uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT employee_salary_advances_exactly_one_employee CHECK (
+    (employee_type = 'salesman' AND salesman_id IS NOT NULL AND manager_user_id IS NULL)
+    OR (employee_type = 'manager' AND manager_user_id IS NOT NULL AND salesman_id IS NULL)
+  )
 );
-create unique index if not exists sales_areas_name_ci_unique
-  on public.sales_areas (lower(name));
 
-create table if not exists public.salesman_area_assignments (
-  id uuid primary key default gen_random_uuid(),
-  salesman_id text not null references public.salesmen(id) on delete restrict,
-  area_name text not null check (length(trim(area_name)) > 0),
-  effective_from date not null,
-  effective_to date,
-  instructions text not null default '',
-  created_by uuid not null default auth.uid() references auth.users(id) on delete restrict,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  check (effective_to is null or effective_to >= effective_from)
-);
-create index if not exists salesman_area_assignments_effective_idx
-  on public.salesman_area_assignments(salesman_id, effective_from desc, effective_to);
-create unique index if not exists salesman_area_assignment_no_duplicate_start
-  on public.salesman_area_assignments(salesman_id, effective_from, area_name);
+CREATE INDEX IF NOT EXISTS employee_salary_advances_date_idx
+  ON public.employee_salary_advances (advance_date DESC);
+CREATE INDEX IF NOT EXISTS employee_salary_advances_salesman_idx
+  ON public.employee_salary_advances (salesman_id, advance_date DESC)
+  WHERE salesman_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS employee_salary_advances_manager_idx
+  ON public.employee_salary_advances (manager_user_id, advance_date DESC)
+  WHERE manager_user_id IS NOT NULL;
 
--- Preserve current area/territory labels as selectable catalogue entries.
-insert into public.sales_areas(name, created_by)
-select min(trim(coalesce(nullif(territory,''), nullif(area,'')))), null
-from public.salesmen
-where deleted_at is null
-  and length(trim(coalesce(nullif(territory,''), nullif(area,''), ''))) > 0
-group by lower(trim(coalesce(nullif(territory,''), nullif(area,''))))
-on conflict do nothing;
+ALTER TABLE public.employee_salary_advances ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS employee_salary_advances_admin_select ON public.employee_salary_advances;
+CREATE POLICY employee_salary_advances_admin_select
+  ON public.employee_salary_advances FOR SELECT TO authenticated
+  USING (public.is_admin());
+DROP POLICY IF EXISTS employee_salary_advances_admin_insert ON public.employee_salary_advances;
+CREATE POLICY employee_salary_advances_admin_insert
+  ON public.employee_salary_advances FOR INSERT TO authenticated
+  WITH CHECK (public.is_admin() AND created_by = auth.uid());
+REVOKE ALL ON public.employee_salary_advances FROM anon, public;
+GRANT SELECT, INSERT ON public.employee_salary_advances TO authenticated;
 
-alter table public.sales_areas enable row level security;
-revoke all on public.sales_areas from anon, authenticated;
-grant select, insert, update on public.sales_areas to authenticated;
-drop policy if exists sales_areas_read on public.sales_areas;
-create policy sales_areas_read on public.sales_areas
-  for select to authenticated using (public.is_admin() or public.is_manager());
-drop policy if exists sales_areas_admin_write on public.sales_areas;
-create policy sales_areas_admin_write on public.sales_areas
-  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+CREATE OR REPLACE FUNCTION private.post_employee_salary_advance_to_cashbook()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  acct public.cashbook_accounts;
+BEGIN
+  IF auth.uid() IS NULL OR NOT public.is_admin() OR NEW.created_by IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'Only Admin can issue salary advances';
+  END IF;
 
-alter table public.salesman_area_assignments enable row level security;
-revoke all on public.salesman_area_assignments from anon, authenticated;
-grant select, insert, update on public.salesman_area_assignments to authenticated;
-drop policy if exists salesman_area_assignments_read on public.salesman_area_assignments;
-create policy salesman_area_assignments_read on public.salesman_area_assignments
-  for select to authenticated
-  using (
-    public.is_admin()
-    or public.owns_salesman(salesman_id)
-    or exists (
-      select 1 from public.salesmen sm
-      where sm.id = salesman_area_assignments.salesman_id
-        and sm.manager_user_id = auth.uid()
-        and public.is_manager()
-        and sm.deleted_at is null
+  SELECT * INTO acct
+  FROM public.cashbook_accounts
+  WHERE account_key = NEW.account_key AND active = true
+    AND account_type IN ('cash','bank','wallet','salesman')
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Choose an active payment account; Market Credit/receivables cannot fund a salary advance';
+  END IF;
+
+  INSERT INTO public.cashbook_entries (
+    posting_key, transaction_id, business_date, account_key, amount_paisa,
+    entry_type, source_table, source_id, reference, description,
+    salesman_id, created_by
+  ) VALUES (
+    'salary-advance:' || NEW.id::text,
+    'SALADV-' || NEW.id::text,
+    NEW.advance_date,
+    NEW.account_key,
+    -NEW.amount_paisa,
+    'expense',
+    'employee_salary_advances',
+    NEW.id::text,
+    COALESCE(NEW.reference, ''),
+    'Salary advance to ' || NEW.employee_name || ': ' || NEW.reason,
+    NEW.salesman_id,
+    NEW.created_by
+  );
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS employee_salary_advance_cashbook_post ON public.employee_salary_advances;
+CREATE TRIGGER employee_salary_advance_cashbook_post
+  AFTER INSERT ON public.employee_salary_advances
+  FOR EACH ROW EXECUTE FUNCTION private.post_employee_salary_advance_to_cashbook();
+
+COMMIT;
+NOTIFY pgrst, 'reload schema';
+
+-- Verification
+SELECT id, employee_type, employee_name, advance_date,
+       amount_paisa, reason, account_key, status, created_at
+FROM public.employee_salary_advances
+ORDER BY created_at DESC
+LIMIT 20;
+
+
+-- Blesscon Candy v55.27: editable salary advances and salary recovery.
+-- Run after employee_salary_advances_v55_26.sql. Products/pricing are not touched.
+
+BEGIN;
+
+ALTER TABLE public.employee_salary_advances
+  ADD COLUMN IF NOT EXISTS recovered_paisa bigint NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_deducted_salary_period text,
+  ADD COLUMN IF NOT EXISTS edit_revision integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS updated_by uuid REFERENCES auth.users(id);
+
+DO $constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.employee_salary_advances'::regclass
+      AND conname = 'employee_salary_advances_recovered_range_check'
+  ) THEN
+    ALTER TABLE public.employee_salary_advances
+      ADD CONSTRAINT employee_salary_advances_recovered_range_check
+      CHECK (recovered_paisa >= 0 AND recovered_paisa <= amount_paisa);
+  END IF;
+END
+$constraints$;
+
+DROP POLICY IF EXISTS employee_salary_advances_admin_update ON public.employee_salary_advances;
+CREATE POLICY employee_salary_advances_admin_update
+  ON public.employee_salary_advances FOR UPDATE TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+GRANT UPDATE ON public.employee_salary_advances TO authenticated;
+
+CREATE OR REPLACE FUNCTION private.guard_and_audit_salary_advance_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  amount_or_reason_changed boolean;
+BEGIN
+  IF auth.uid() IS NULL OR NOT public.is_admin() THEN
+    RAISE EXCEPTION 'Only Admin can update salary advance records';
+  END IF;
+
+  IF NEW.employee_type IS DISTINCT FROM OLD.employee_type
+     OR NEW.employee_name IS DISTINCT FROM OLD.employee_name
+     OR NEW.salesman_id IS DISTINCT FROM OLD.salesman_id
+     OR NEW.manager_user_id IS DISTINCT FROM OLD.manager_user_id
+     OR NEW.advance_date IS DISTINCT FROM OLD.advance_date
+     OR NEW.account_key IS DISTINCT FROM OLD.account_key
+     OR NEW.created_by IS DISTINCT FROM OLD.created_by
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR NEW.reference IS DISTINCT FROM OLD.reference
+     OR NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'Employee, date, account and original transaction fields cannot be edited here';
+  END IF;
+
+  amount_or_reason_changed :=
+    NEW.amount_paisa IS DISTINCT FROM OLD.amount_paisa
+    OR NEW.reason IS DISTINCT FROM OLD.reason;
+
+  IF NEW.recovered_paisa < OLD.recovered_paisa THEN
+    RAISE EXCEPTION 'Salary recovery cannot be reduced by editing an advance; use an audited payroll correction';
+  END IF;
+  IF NEW.recovered_paisa > NEW.amount_paisa THEN
+    RAISE EXCEPTION 'Edited advance amount cannot be lower than the amount already recovered through salary';
+  END IF;
+
+  IF amount_or_reason_changed THEN
+    NEW.edit_revision := OLD.edit_revision + 1;
+    NEW.updated_by := auth.uid();
+    NEW.updated_at := now();
+  ELSIF NEW.recovered_paisa IS DISTINCT FROM OLD.recovered_paisa
+     OR NEW.last_deducted_salary_period IS DISTINCT FROM OLD.last_deducted_salary_period THEN
+    NEW.updated_by := auth.uid();
+    NEW.updated_at := now();
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION private.post_salary_advance_edit_adjustment()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  delta_paisa bigint;
+BEGIN
+  delta_paisa := NEW.amount_paisa - OLD.amount_paisa;
+  IF delta_paisa <> 0 THEN
+    INSERT INTO public.cashbook_entries (
+      posting_key, transaction_id, business_date, account_key, amount_paisa,
+      entry_type, source_table, source_id, reference, description,
+      salesman_id, created_by
+    ) VALUES (
+      'salary-advance-edit:' || NEW.id::text || ':' || NEW.edit_revision::text,
+      'SALADV-EDIT-' || NEW.id::text || '-' || NEW.edit_revision::text,
+      current_date,
+      NEW.account_key,
+      -delta_paisa,
+      'adjustment',
+      'employee_salary_advances',
+      NEW.id::text,
+      COALESCE(NEW.reference, ''),
+      'Advance salary amount edited for ' || NEW.employee_name || ': ' ||
+        to_char(OLD.amount_paisa / 100.0, 'FM999999999990.00') || ' -> ' ||
+        to_char(NEW.amount_paisa / 100.0, 'FM999999999990.00') ||
+        '; reason: ' || NEW.reason,
+      NEW.salesman_id,
+      auth.uid()
+    );
+  END IF;
+
+  INSERT INTO public.audit_log (
+    table_name, record_id, action, actor_id, before_data, after_data
+  ) VALUES (
+    'employee_salary_advances', NEW.id::text, 'UPDATE', auth.uid(),
+    jsonb_build_object(
+      'amount_paisa', OLD.amount_paisa,
+      'recovered_paisa', OLD.recovered_paisa,
+      'reason', OLD.reason,
+      'last_deducted_salary_period', OLD.last_deducted_salary_period
+    ),
+    jsonb_build_object(
+      'amount_paisa', NEW.amount_paisa,
+      'recovered_paisa', NEW.recovered_paisa,
+      'reason', NEW.reason,
+      'last_deducted_salary_period', NEW.last_deducted_salary_period
     )
   );
-drop policy if exists salesman_area_assignments_manage on public.salesman_area_assignments;
-create policy salesman_area_assignments_manage on public.salesman_area_assignments
-  for all to authenticated
-  using (
-    public.is_admin()
-    or (public.is_manager() and exists (
-      select 1 from public.salesmen sm
-      where sm.id = salesman_area_assignments.salesman_id
-        and sm.manager_user_id = auth.uid()
-        and sm.deleted_at is null
-    ))
-  )
-  with check (
-    public.is_admin()
-    or (public.is_manager() and created_by = auth.uid() and exists (
-      select 1 from public.salesmen sm
-      where sm.id = salesman_area_assignments.salesman_id
-        and sm.manager_user_id = auth.uid()
-        and sm.deleted_at is null
-    ))
-  );
+  RETURN NEW;
+END;
+$function$;
 
-create or replace function public.assign_salesman_area(
-  p_salesman_id text,
-  p_area_name text,
-  p_effective_from date,
-  p_effective_to date default null,
-  p_instructions text default ''
-) returns uuid
-language plpgsql security definer set search_path = '' as $$
-declare
-  seller public.salesmen;
-  assignment_id uuid;
-  existing record;
-begin
-  if auth.uid() is null or not (public.is_admin() or public.is_manager()) then
-    raise exception 'Admin or Manager access required';
-  end if;
-  select * into seller from public.salesmen
-    where id = p_salesman_id and deleted_at is null for update;
-  if not found then raise exception 'Salesman not found'; end if;
-  if public.is_manager() and not public.is_admin()
-     and seller.manager_user_id is distinct from auth.uid() then
-    raise exception 'Salesman is outside your assigned team';
-  end if;
-  if p_area_name is null or length(trim(p_area_name)) = 0 then
-    raise exception 'Area name is required';
-  end if;
-  if not exists (
-    select 1 from public.sales_areas a
-    where lower(a.name) = lower(trim(p_area_name)) and a.active
-  ) then raise exception 'Choose an active area from the Admin area catalogue'; end if;
-  if p_effective_from is null or (p_effective_to is not null and p_effective_to < p_effective_from) then
-    raise exception 'Invalid effective dates';
-  end if;
+DROP TRIGGER IF EXISTS employee_salary_advance_update_guard ON public.employee_salary_advances;
+CREATE TRIGGER employee_salary_advance_update_guard
+  BEFORE UPDATE ON public.employee_salary_advances
+  FOR EACH ROW EXECUTE FUNCTION private.guard_and_audit_salary_advance_update();
 
-  for existing in
-    select id, effective_from, effective_to
-    from public.salesman_area_assignments
-    where salesman_id = p_salesman_id
-      and effective_from <> p_effective_from
-      and daterange(effective_from, coalesce(effective_to, 'infinity'::date), '[]')
-          && daterange(p_effective_from, coalesce(p_effective_to, 'infinity'::date), '[]')
-    for update
-  loop
-    if existing.effective_from < p_effective_from then
-      update public.salesman_area_assignments
-      set effective_to = p_effective_from - 1, updated_at = now()
-      where id = existing.id;
-    else
-      raise exception 'This area assignment overlaps a later assignment. Choose an end date before that assignment or edit the existing assignment.';
-    end if;
-  end loop;
+DROP TRIGGER IF EXISTS employee_salary_advance_update_posting ON public.employee_salary_advances;
+CREATE TRIGGER employee_salary_advance_update_posting
+  AFTER UPDATE ON public.employee_salary_advances
+  FOR EACH ROW EXECUTE FUNCTION private.post_salary_advance_edit_adjustment();
 
-  select id into assignment_id from public.salesman_area_assignments
-    where salesman_id = p_salesman_id and effective_from = p_effective_from limit 1;
-  if assignment_id is null then
-    insert into public.salesman_area_assignments
-      (salesman_id, area_name, effective_from, effective_to, instructions, created_by)
-    values
-      (p_salesman_id, trim(p_area_name), p_effective_from, p_effective_to,
-       coalesce(p_instructions, ''), auth.uid())
-    returning id into assignment_id;
-  else
-    update public.salesman_area_assignments
-    set area_name = trim(p_area_name), effective_to = p_effective_to,
-        instructions = coalesce(p_instructions, ''), updated_at = now()
-    where id = assignment_id;
-  end if;
+COMMIT;
+NOTIFY pgrst, 'reload schema';
 
-  if p_effective_from <= current_date and (p_effective_to is null or p_effective_to >= current_date) then
-    update public.salesmen
-    set territory = trim(p_area_name), area = trim(p_area_name),
-        updated_by = auth.uid(), updated_at = now(), version = version + 1
-    where id = p_salesman_id;
-  end if;
-  return assignment_id;
-end;
-$$;
-revoke all on function public.assign_salesman_area(text,text,date,date,text) from public, anon;
-grant execute on function public.assign_salesman_area(text,text,date,date,text) to authenticated;
-
-notify pgrst, 'reload schema';
-commit;
+-- Verification: outstanding_paisa should equal amount_paisa minus recovered_paisa.
+SELECT id, employee_name, amount_paisa, recovered_paisa,
+       amount_paisa - recovered_paisa AS outstanding_paisa,
+       last_deducted_salary_period, edit_revision, status
+FROM public.employee_salary_advances
+ORDER BY advance_date DESC
+LIMIT 50;

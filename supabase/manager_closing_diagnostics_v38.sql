@@ -1,27 +1,18 @@
--- Read-only preflight for manager daily-closing migration.
--- Run this before any schema changes. It does not modify data.
+project_id = "blesscon-candy-manager"
+[functions.admin-create-user]
+verify_jwt = false
+# The function validates the bearer token using auth.getUser() and checks is_admin().
+# This also supports Supabase publishable keys; no service key is sent to browsers.
 
-select column_name, is_nullable, data_type, column_default
-from information_schema.columns
-where table_schema = 'public'
-  and table_name = 'daily_closings'
-order by ordinal_position;
+[functions.admin-reset-user-password]
+verify_jwt = false
+# The function validates the bearer token, requires an active Admin via is_admin(),
+# and uses the service role only server-side to reset another user's password.
 
-select c.conname as constraint_name,
-       c.contype as constraint_type,
-       pg_get_constraintdef(c.oid) as definition
-from pg_constraint c
-where c.conrelid = 'public.daily_closings'::regclass
-order by c.conname;
+[functions.admin-user-directory]
+verify_jwt = false
+# The function verifies the bearer token and requires an active Admin before exposing Auth emails.
 
-select indexname, indexdef
-from pg_indexes
-where schemaname = 'public'
-  and tablename = 'daily_closings'
-order by indexname;
-
--- Show whether the active manager currently has active assigned salesmen.
-select sm.id, sm.name, sm.active, sm.deleted_at, sm.manager_user_id
-from public.salesmen sm
-where sm.manager_user_id = 'd2cf42d4-3806-44f1-9deb-369920e2f152'::uuid
-order by sm.name;
+[functions.admin-delete-user]
+verify_jwt = false
+# The function validates the caller JWT and requires an active Admin; service role stays server-side.

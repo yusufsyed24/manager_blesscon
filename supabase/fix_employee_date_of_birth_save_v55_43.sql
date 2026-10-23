@@ -1,56 +1,43 @@
--- Blesscon Candy Business Manager v55.43
--- Fix employee date of birth not persisting through private.save_master().
--- Safe to rerun; does not modify existing employee attendance or payroll records.
+-- Blesscon Candy v55.28: manager salary release with the same advance-deduction rules as salesman payroll.
+-- Additive migration. Back up the database before applying. Does not alter products or pricing.
+BEGIN;
 
-ALTER TABLE public.salesmen
-  ADD COLUMN IF NOT EXISTS date_of_birth date;
+ALTER TABLE public.expenses
+  ADD COLUMN IF NOT EXISTS manager_user_id uuid REFERENCES auth.users(id);
 
-DO $fix$
+CREATE UNIQUE INDEX IF NOT EXISTS expenses_manager_salary_period_unique
+  ON public.expenses (manager_user_id, salary_period)
+  WHERE manager_user_id IS NOT NULL AND salary_period IS NOT NULL AND deleted_at IS NULL;
+
+-- Extend the existing save_master allowlist without replacing its other security checks.
+DO $migration$
 DECLARE
-  fn_oid oid := to_regprocedure('private.save_master(text,jsonb,integer)');
-  fn_def text;
-  patched text;
-  old_clause text;
-  new_clause text;
+  function_source text;
+  old_fragment text := '''salary_period''];';
+  new_fragment text := '''salary_period'',''manager_user_id''];';
 BEGIN
-  IF fn_oid IS NULL THEN
-    RAISE EXCEPTION 'Could not find private.save_master(text,jsonb,integer). Install the main Blesscon schema first.';
-  END IF;
-
-  fn_def := pg_get_functiondef(fn_oid);
-  new_clause := $new$when 'salesmen' then allowed:=array['id','name','phone','user_id','manager_user_id','joining_date','date_of_birth','base_salary_paisa','payroll_allowance_paisa','payroll_incentive_per_carton_paisa','payroll_working_days','payroll_monthly_target','monthly_target','active','off_days'];$new$;
-
-  -- Handle the common previous allow-lists from earlier migration versions.
-  old_clause := $old$when 'salesmen' then allowed:=array['id','name','phone','user_id','manager_user_id','joining_date','base_salary_paisa','monthly_target','active','off_days'];$old$;
-  patched := replace(fn_def, old_clause, new_clause);
-  IF patched = fn_def THEN
-    old_clause := $old$when 'salesmen' then allowed:=array['id','name','phone','user_id','joining_date','base_salary_paisa','monthly_target','active','off_days'];$old$;
-    patched := replace(fn_def, old_clause, new_clause);
-  END IF;
-  IF patched = fn_def THEN
-    old_clause := $old$when 'salesmen' then allowed:=array['id','name','phone','date_of_birth','joining_date','monthly_target','active','off_days','manager_user_id'];$old$;
-    patched := replace(fn_def, old_clause, new_clause);
-  END IF;
-  IF patched = fn_def THEN
-    IF position('date_of_birth' in fn_def) > 0
-       AND position('payroll_allowance_paisa' in fn_def) > 0
-       AND position('payroll_incentive_per_carton_paisa' in fn_def) > 0 THEN
-      RAISE NOTICE 'Employee date-of-birth and payroll fields are already allowed by private.save_master().';
+  function_source := pg_get_functiondef('private.save_master(text,jsonb,integer)'::regprocedure);
+  IF position(old_fragment in function_source) = 0 THEN
+    IF position('''manager_user_id'']' in function_source) > 0 THEN
       RETURN;
     END IF;
-    RAISE EXCEPTION 'Could not safely patch private.save_master(): expected salesmen allow-list was not found. No function change was applied.';
+    RAISE EXCEPTION 'Could not safely extend private.save_master expenses allowlist. Inspect its definition and apply this migration manually.';
   END IF;
-
-  EXECUTE patched;
-  RAISE NOTICE 'Updated private.save_master() to persist date_of_birth and current individual payroll settings.';
+  function_source := replace(function_source, old_fragment, new_fragment);
+  EXECUTE function_source;
 END
-$fix$;
+$migration$;
 
 NOTIFY pgrst, 'reload schema';
+COMMIT;
 
--- Verify the column exists after the migration.
+-- Verification: should show manager_user_id and the manager payroll uniqueness index.
 SELECT column_name, data_type
 FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name = 'salesmen'
-  AND column_name = 'date_of_birth';
+WHERE table_schema = 'public' AND table_name = 'expenses'
+  AND column_name = 'manager_user_id';
+
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'expenses'
+  AND indexname = 'expenses_manager_salary_period_unique';

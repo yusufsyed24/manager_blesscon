@@ -1,9 +1,7 @@
-# v55.46 — Admin monthly salary & payroll
-
-- Added an Admin-only Salary & Payroll page with month selection and employee search across managers and salesmen.
-- Shows attendance credited (including paid Week Off), carton achievement for salesmen, salary components, advances, estimated net, and release history for the selected month.
-- Salary release is available only when no active salary expense exists for that employee and month; released months show status/history instead of a release action.
-- Existing release flow receives the selected month and retains the duplicate-posting guard.
-- Added manager attendance and payroll settings to the store-loaded data tables.
-
-Validation: JavaScript syntax and ZIP integrity checks are run for this build. Live Supabase payroll behavior must still be verified in the target project.
+// Edit these two public values once, before deployment. NEVER use a service-role key.
+window.APP_CONFIG = Object.freeze({
+  SUPABASE_URL: "https://ggfjddhqevcvosxberua.supabase.co",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_64ui0iuHobWNb7K_dy9oiQ_WkSLImZe",
+  APP_NAME: "Blesscon Candy Business Manager",
+  APP_VERSION: "v55.14",
+});

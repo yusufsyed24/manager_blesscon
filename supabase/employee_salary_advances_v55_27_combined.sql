@@ -1,267 +1,87 @@
--- Combined setup: safe to run when v55.26 is not yet installed; applies v55.26 table/insert posting and v55.27 edit/recovery additions.
+-- Manager role: company-wide view, company monthly target, direct (manager) sales.
+-- Run once in the Supabase SQL editor AFTER schema.sql and operational_modules.sql. Safe to re-run.
 
--- Blesscon Candy v55.26: Admin-issued salary advances for salesmen and managers.
--- Additive migration. Does not change product/pricing or existing salary records.
+alter table public.user_roles drop constraint if exists user_roles_role_check;
+alter table public.user_roles add constraint user_roles_role_check check(role in ('admin','manager','user','salesman'));
 
-BEGIN;
+create or replace function public.is_manager() returns boolean language sql stable security definer set search_path=''
+as $$select exists(select 1 from public.user_roles r join public.profiles p on p.id=r.user_id and p.active where r.user_id=auth.uid() and r.role='manager')$$;
 
-CREATE TABLE IF NOT EXISTS public.employee_salary_advances (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  employee_type text NOT NULL CHECK (employee_type IN ('salesman','manager')),
-  employee_name text NOT NULL CHECK (length(trim(employee_name)) > 0),
-  salesman_id text REFERENCES public.salesmen(id),
-  manager_user_id uuid REFERENCES auth.users(id),
-  advance_date date NOT NULL DEFAULT current_date,
-  amount_paisa bigint NOT NULL CHECK (amount_paisa > 0),
-  reason text NOT NULL CHECK (length(trim(reason)) >= 3),
-  account_key text NOT NULL REFERENCES public.cashbook_accounts(account_key),
-  reference text,
-  status text NOT NULL DEFAULT 'posted' CHECK (status IN ('posted','reversed')),
-  created_by uuid NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT employee_salary_advances_exactly_one_employee CHECK (
-    (employee_type = 'salesman' AND salesman_id IS NOT NULL AND manager_user_id IS NULL)
-    OR (employee_type = 'manager' AND manager_user_id IS NOT NULL AND salesman_id IS NULL)
-  )
-);
+-- Managers can VIEW every sales document, but only create/edit direct sales (no salesman attached).
+create or replace function public.can_document(sid text,section text,action text default 'view') returns boolean language sql stable security definer set search_path=''
+as $$select public.is_admin()
+  or (public.is_manager() and (action='view' or (sid is null and action in ('create','edit','share','export'))))
+  or (public.owns_salesman(sid) and action in ('view','create','edit','share','export') and (exists(select 1 from public.user_roles where user_id=auth.uid() and role='salesman') or public.has_permission(section,action)))$$;
 
-CREATE INDEX IF NOT EXISTS employee_salary_advances_date_idx
-  ON public.employee_salary_advances (advance_date DESC);
-CREATE INDEX IF NOT EXISTS employee_salary_advances_salesman_idx
-  ON public.employee_salary_advances (salesman_id, advance_date DESC)
-  WHERE salesman_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS employee_salary_advances_manager_idx
-  ON public.employee_salary_advances (manager_user_id, advance_date DESC)
-  WHERE manager_user_id IS NOT NULL;
+grant execute on function public.is_manager() to authenticated;
 
-ALTER TABLE public.employee_salary_advances ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS employee_salary_advances_admin_select ON public.employee_salary_advances;
-CREATE POLICY employee_salary_advances_admin_select
-  ON public.employee_salary_advances FOR SELECT TO authenticated
-  USING (public.is_admin());
-DROP POLICY IF EXISTS employee_salary_advances_admin_insert ON public.employee_salary_advances;
-CREATE POLICY employee_salary_advances_admin_insert
-  ON public.employee_salary_advances FOR INSERT TO authenticated
-  WITH CHECK (public.is_admin() AND created_by = auth.uid());
-REVOKE ALL ON public.employee_salary_advances FROM anon, public;
-GRANT SELECT, INSERT ON public.employee_salary_advances TO authenticated;
+-- Patch the existing functions in place (text replace on their current definitions).
+-- A pattern that is not found is skipped, so this never breaks a function.
+do $$
+declare r record; def text; nd text; patched int:=0;
+  pats text[][]:=array[
+    -- accepted roles when creating / editing users
+    array['(''admin'',''salesman'',''user'')','(''admin'',''manager'',''salesman'',''user'')'],
+    -- manager may use any customer when making a direct sale
+    array['not public.is_admin() and not(public.owns_salesman(c.salesman_id) or c.created_by=auth.uid())','not public.is_admin() and not public.is_manager() and not(public.owns_salesman(c.salesman_id) or c.created_by=auth.uid())'],
+    -- manager may record payments on direct sales
+    array['not public.is_admin() and not(public.owns_salesman(o.salesman_id) and public.has_permission(''invoices'',''create''))','not public.is_admin() and not(public.is_manager() and o.salesman_id is null) and not(public.owns_salesman(o.salesman_id) and public.has_permission(''invoices'',''create''))']
+  ];
+  i int;
+begin
+  for r in select p.oid from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','private') and p.prokind='f' loop
+    def:=pg_get_functiondef(r.oid); nd:=def;
+    for i in 1..array_length(pats,1) loop nd:=replace(nd,pats[i][1],pats[i][2]); end loop;
+    if nd<>def then execute nd; patched:=patched+1; end if;
+  end loop;
+  raise notice 'manager_role: patched % function(s)',patched;
+end $$;
 
-CREATE OR REPLACE FUNCTION private.post_employee_salary_advance_to_cashbook()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = ''
-AS $function$
-DECLARE
-  acct public.cashbook_accounts;
-BEGIN
-  IF auth.uid() IS NULL OR NOT public.is_admin() OR NEW.created_by IS DISTINCT FROM auth.uid() THEN
-    RAISE EXCEPTION 'Only Admin can issue salary advances';
-  END IF;
+-- Snapshot: give managers company-wide visibility (customers, salesmen, targets, stock, closings, products).
+-- Salary, cost and profit stay restricted (they still depend on is_admin()/pnl permission only).
+do $$
+declare def text; nd text;
+begin
+  select pg_get_functiondef('public.business_snapshot()'::regprocedure) into def; nd:=def;
+  nd:=replace(nd,'public.is_admin() or public.owns_salesman(','public.is_admin() or public.is_manager() or public.owns_salesman(');
+  nd:=replace(nd,'public.is_admin() or public.has_permission(''products'')','public.is_admin() or public.is_manager() or public.has_permission(''products'')');
+  nd:=replace(nd,'public.is_admin() or public.has_permission(''stock'')','public.is_admin() or public.is_manager() or public.has_permission(''stock'')');
+  if nd<>def then execute nd; raise notice 'manager_role: business_snapshot patched'; else raise notice 'manager_role: business_snapshot already patched'; end if;
+end $$;
 
-  SELECT * INTO acct
-  FROM public.cashbook_accounts
-  WHERE account_key = NEW.account_key AND active = true
-    AND account_type IN ('cash','bank','wallet','salesman')
-  FOR UPDATE;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Choose an active payment account; Market Credit/receivables cannot fund a salary advance';
-  END IF;
+-- Explicit Manager read access for the requested company-wide operational screens.
+-- This release uses company-wide Manager visibility (not per-team assignment).
+-- Admin write policies and existing data are left untouched.
+drop policy if exists product_read on public.products;
+create policy product_read on public.products for select to authenticated
+using (public.is_admin() or public.is_manager() or public.has_permission('products')
+  or exists(select 1 from public.salesmen s where s.user_id=auth.uid() and s.active));
 
-  INSERT INTO public.cashbook_entries (
-    posting_key, transaction_id, business_date, account_key, amount_paisa,
-    entry_type, source_table, source_id, reference, description,
-    salesman_id, created_by
-  ) VALUES (
-    'salary-advance:' || NEW.id::text,
-    'SALADV-' || NEW.id::text,
-    NEW.advance_date,
-    NEW.account_key,
-    -NEW.amount_paisa,
-    'expense',
-    'employee_salary_advances',
-    NEW.id::text,
-    COALESCE(NEW.reference, ''),
-    'Salary advance to ' || NEW.employee_name || ': ' || NEW.reason,
-    NEW.salesman_id,
-    NEW.created_by
-  );
-  RETURN NEW;
-END;
-$function$;
+drop policy if exists salesman_read on public.salesmen;
+create policy salesman_read on public.salesmen for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(id));
 
-DROP TRIGGER IF EXISTS employee_salary_advance_cashbook_post ON public.employee_salary_advances;
-CREATE TRIGGER employee_salary_advance_cashbook_post
-  AFTER INSERT ON public.employee_salary_advances
-  FOR EACH ROW EXECUTE FUNCTION private.post_employee_salary_advance_to_cashbook();
+drop policy if exists customer_read on public.customers;
+create policy customer_read on public.customers for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id)
+  or (created_by=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.active)));
 
-COMMIT;
-NOTIFY pgrst, 'reload schema';
+drop policy if exists target_read on public.salesman_daily_targets;
+create policy target_read on public.salesman_daily_targets for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id));
 
--- Verification
-SELECT id, employee_type, employee_name, advance_date,
-       amount_paisa, reason, account_key, status, created_at
-FROM public.employee_salary_advances
-ORDER BY created_at DESC
-LIMIT 20;
+drop policy if exists stock_admin on public.stock_movements;
+create policy stock_admin on public.stock_movements for select to authenticated
+using (public.is_admin() or public.is_manager() or public.has_permission('stock'));
 
+drop policy if exists daily_closing_read on public.daily_closings;
+create policy daily_closing_read on public.daily_closings for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or public.has_permission('closing'));
 
--- Blesscon Candy v55.27: editable salary advances and salary recovery.
--- Run after employee_salary_advances_v55_26.sql. Products/pricing are not touched.
+drop policy if exists salesman_stock_read on public.salesman_stock_movements;
+create policy salesman_stock_read on public.salesman_stock_movements for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or public.has_permission('stock'));
 
-BEGIN;
-
-ALTER TABLE public.employee_salary_advances
-  ADD COLUMN IF NOT EXISTS recovered_paisa bigint NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS last_deducted_salary_period text,
-  ADD COLUMN IF NOT EXISTS edit_revision integer NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now(),
-  ADD COLUMN IF NOT EXISTS updated_by uuid REFERENCES auth.users(id);
-
-DO $constraints$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.employee_salary_advances'::regclass
-      AND conname = 'employee_salary_advances_recovered_range_check'
-  ) THEN
-    ALTER TABLE public.employee_salary_advances
-      ADD CONSTRAINT employee_salary_advances_recovered_range_check
-      CHECK (recovered_paisa >= 0 AND recovered_paisa <= amount_paisa);
-  END IF;
-END
-$constraints$;
-
-DROP POLICY IF EXISTS employee_salary_advances_admin_update ON public.employee_salary_advances;
-CREATE POLICY employee_salary_advances_admin_update
-  ON public.employee_salary_advances FOR UPDATE TO authenticated
-  USING (public.is_admin())
-  WITH CHECK (public.is_admin());
-GRANT UPDATE ON public.employee_salary_advances TO authenticated;
-
-CREATE OR REPLACE FUNCTION private.guard_and_audit_salary_advance_update()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = ''
-AS $function$
-DECLARE
-  amount_or_reason_changed boolean;
-BEGIN
-  IF auth.uid() IS NULL OR NOT public.is_admin() THEN
-    RAISE EXCEPTION 'Only Admin can update salary advance records';
-  END IF;
-
-  IF NEW.employee_type IS DISTINCT FROM OLD.employee_type
-     OR NEW.employee_name IS DISTINCT FROM OLD.employee_name
-     OR NEW.salesman_id IS DISTINCT FROM OLD.salesman_id
-     OR NEW.manager_user_id IS DISTINCT FROM OLD.manager_user_id
-     OR NEW.advance_date IS DISTINCT FROM OLD.advance_date
-     OR NEW.account_key IS DISTINCT FROM OLD.account_key
-     OR NEW.created_by IS DISTINCT FROM OLD.created_by
-     OR NEW.created_at IS DISTINCT FROM OLD.created_at
-     OR NEW.reference IS DISTINCT FROM OLD.reference
-     OR NEW.status IS DISTINCT FROM OLD.status THEN
-    RAISE EXCEPTION 'Employee, date, account and original transaction fields cannot be edited here';
-  END IF;
-
-  amount_or_reason_changed :=
-    NEW.amount_paisa IS DISTINCT FROM OLD.amount_paisa
-    OR NEW.reason IS DISTINCT FROM OLD.reason;
-
-  IF NEW.recovered_paisa < OLD.recovered_paisa THEN
-    RAISE EXCEPTION 'Salary recovery cannot be reduced by editing an advance; use an audited payroll correction';
-  END IF;
-  IF NEW.recovered_paisa > NEW.amount_paisa THEN
-    RAISE EXCEPTION 'Edited advance amount cannot be lower than the amount already recovered through salary';
-  END IF;
-
-  IF amount_or_reason_changed THEN
-    NEW.edit_revision := OLD.edit_revision + 1;
-    NEW.updated_by := auth.uid();
-    NEW.updated_at := now();
-  ELSIF NEW.recovered_paisa IS DISTINCT FROM OLD.recovered_paisa
-     OR NEW.last_deducted_salary_period IS DISTINCT FROM OLD.last_deducted_salary_period THEN
-    NEW.updated_by := auth.uid();
-    NEW.updated_at := now();
-  END IF;
-
-  RETURN NEW;
-END;
-$function$;
-
-CREATE OR REPLACE FUNCTION private.post_salary_advance_edit_adjustment()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = ''
-AS $function$
-DECLARE
-  delta_paisa bigint;
-BEGIN
-  delta_paisa := NEW.amount_paisa - OLD.amount_paisa;
-  IF delta_paisa <> 0 THEN
-    INSERT INTO public.cashbook_entries (
-      posting_key, transaction_id, business_date, account_key, amount_paisa,
-      entry_type, source_table, source_id, reference, description,
-      salesman_id, created_by
-    ) VALUES (
-      'salary-advance-edit:' || NEW.id::text || ':' || NEW.edit_revision::text,
-      'SALADV-EDIT-' || NEW.id::text || '-' || NEW.edit_revision::text,
-      current_date,
-      NEW.account_key,
-      -delta_paisa,
-      'adjustment',
-      'employee_salary_advances',
-      NEW.id::text,
-      COALESCE(NEW.reference, ''),
-      'Advance salary amount edited for ' || NEW.employee_name || ': ' ||
-        to_char(OLD.amount_paisa / 100.0, 'FM999999999990.00') || ' -> ' ||
-        to_char(NEW.amount_paisa / 100.0, 'FM999999999990.00') ||
-        '; reason: ' || NEW.reason,
-      NEW.salesman_id,
-      auth.uid()
-    );
-  END IF;
-
-  INSERT INTO public.audit_log (
-    table_name, record_id, action, actor_id, before_data, after_data
-  ) VALUES (
-    'employee_salary_advances', NEW.id::text, 'UPDATE', auth.uid(),
-    jsonb_build_object(
-      'amount_paisa', OLD.amount_paisa,
-      'recovered_paisa', OLD.recovered_paisa,
-      'reason', OLD.reason,
-      'last_deducted_salary_period', OLD.last_deducted_salary_period
-    ),
-    jsonb_build_object(
-      'amount_paisa', NEW.amount_paisa,
-      'recovered_paisa', NEW.recovered_paisa,
-      'reason', NEW.reason,
-      'last_deducted_salary_period', NEW.last_deducted_salary_period
-    )
-  );
-  RETURN NEW;
-END;
-$function$;
-
-DROP TRIGGER IF EXISTS employee_salary_advance_update_guard ON public.employee_salary_advances;
-CREATE TRIGGER employee_salary_advance_update_guard
-  BEFORE UPDATE ON public.employee_salary_advances
-  FOR EACH ROW EXECUTE FUNCTION private.guard_and_audit_salary_advance_update();
-
-DROP TRIGGER IF EXISTS employee_salary_advance_update_posting ON public.employee_salary_advances;
-CREATE TRIGGER employee_salary_advance_update_posting
-  AFTER UPDATE ON public.employee_salary_advances
-  FOR EACH ROW EXECUTE FUNCTION private.post_salary_advance_edit_adjustment();
-
-COMMIT;
-NOTIFY pgrst, 'reload schema';
-
--- Verification: outstanding_paisa should equal amount_paisa minus recovered_paisa.
-SELECT id, employee_name, amount_paisa, recovered_paisa,
-       amount_paisa - recovered_paisa AS outstanding_paisa,
-       last_deducted_salary_period, edit_revision, status
-FROM public.employee_salary_advances
-ORDER BY advance_date DESC
-LIMIT 50;
+drop policy if exists stock_voucher_read on public.stock_vouchers;
+create policy stock_voucher_read on public.stock_vouchers for select to authenticated
+using (public.is_admin() or public.is_manager() or public.owns_salesman(salesman_id) or public.has_permission('stock'));
