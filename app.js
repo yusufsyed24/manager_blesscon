@@ -2124,88 +2124,48 @@ function managersPanel() {
     });
   return `<section class="panel"><div class="panel-heading"><h2>Managers & company target</h2><span class="muted">${new Date(from + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })} · month to date</span></div><p class="muted">Manager's own cartons are additional sales and are excluded from the team target calculation. Use <b>Set up salary details</b> beside each manager's name to configure base salary, allowance, individual target, working days and incentive. Outstanding advances are deducted before net payment.</p>${table(["Manager", "Team monthly target", "Team (salesmen) achieved", "Own sales (additional; excluded)", "Team cartons remaining", "Team achievement", "Payroll"], rows, "No manager logins yet. Create a login with the manager role.")}</section>`;
 }
-function payrollCalculationFor(p, month) {
-  const state = S();
-  const start = month + "-01";
-  const endDate = new Date(start + "T12:00:00Z"); endDate.setUTCMonth(endDate.getUTCMonth()+1); endDate.setUTCDate(0);
-  const end = endDate.toISOString().slice(0,10);
-  const inMonth = d => String(d || "") >= start && String(d || "") <= end;
-  const statusDays = {present:1, late:1, week_off:1, half_day:.5};
-  const isManager = p.type === "manager";
-  const setting = isManager ? (state.manager_payroll_settings||[]).find(x=>String(x.manager_user_id)===String(p.id)) : p.record;
-  const attendanceRows = isManager
-    ? (state.manager_attendance_records||[]).filter(a=>String(a.manager_user_id)===String(p.id)&&inMonth(a.attendance_date))
-    : (state.attendance_records||[]).filter(a=>String(a.salesman_id)===String(p.record.id)&&inMonth(a.attendance_date));
-  const credited = attendanceRows.reduce((n,a)=>n+(statusDays[String(a.status||'').toLowerCase()]||0),0);
-  const workingDays = Math.max(1, num(isManager ? setting?.working_days : setting?.payroll_working_days) || 26);
-  const factor = Math.min(1, credited / workingDays);
-  const baseMonthly = Math.max(0,num(isManager ? setting?.base_salary_paisa : setting?.base_salary_paisa));
-  const allowanceMonthly = Math.max(0,num(isManager ? setting?.allowance_paisa : setting?.payroll_allowance_paisa));
-  const target = Math.max(0,num(isManager ? setting?.monthly_target : (setting?.payroll_monthly_target ?? setting?.monthly_target)));
-  const rate = Math.max(0,num(isManager ? setting?.incentive_per_carton_paisa : setting?.payroll_incentive_per_carton_paisa));
-  const orders = (state.orders||[]).filter(o=>o.status==='confirmed'&&!o.deleted_at&&inMonth(o.date)&&(isManager ? String(o.created_by)===String(p.id)&&!o.salesman_id : String(o.salesman_id)===String(p.record.id)));
-  const orderIds = new Set(orders.map(o=>String(o.id)));
-  const itemRows = (state.order_items||[]).filter(i=>orderIds.has(String(i.order_id)));
-  const boxesPerCarton = Math.max(1,num(state.settings?.boxes_per_carton)||24);
-  const achieved = itemRows.reduce((sum,i)=>sum+num(i.boxes)/Math.max(1,num(i.boxes_per_carton)||boxesPerCarton),0);
-  const achievedBoxes = itemRows.reduce((sum,i)=>sum+num(i.boxes),0);
-  const base = Math.round(baseMonthly*factor);
-  const allowance = Math.round(allowanceMonthly*factor);
-  const incentive = Math.round(Math.max(0,achieved-target)*rate);
-  const gross = base+allowance+incentive;
-  const advanceRows = (state.employee_salary_advances||[]).filter(a=>a.status==='posted'&&(isManager?String(a.manager_user_id)===String(p.id):String(a.salesman_id)===String(p.record.id)));
-  const advanceTotal = advanceRows.reduce((n,a)=>n+Math.max(0,num(a.amount_paisa)),0);
-  const advanceRecovered = advanceRows.reduce((n,a)=>n+Math.max(0,num(a.recovered_paisa)),0);
-  const outstanding = Math.max(0,advanceTotal-advanceRecovered);
-  const expenses = (state.expenses||[]).filter(e=>!e.deleted_at&&String(e.salary_period||'')===month&& (isManager?String(e.manager_user_id)===String(p.id):String(e.salesman_id)===String(p.record.id)));
-  const posted = expenses.find(e=>/salary/i.test(String(e.category||'')+' '+String(e.description||''))) || expenses[0] || null;
-  return {p,month,posted,credited,workingDays,factor,baseMonthly,base,allowanceMonthly,allowance,target,rate,achieved,achievedBoxes,boxesPerCarton,incentive,gross,advanceTotal,advanceRecovered,outstanding,net:Math.max(0,gross-outstanding),attendanceRows,orders};
-}
-function payrollDetailsModal(r) {
-  const pct = r.target > 0 ? r.achieved/r.target*100 : 0;
-  const rows = [
-    ["Salary period", r.month],
-    ["Employee type", r.p.type === "manager" ? "Manager" : "Salesman"],
-    ["Paid attendance credited", `${r.credited.toFixed(1)} / ${r.workingDays} days`],
-    ["Attendance factor", `${(r.factor*100).toFixed(1)}%`],
-    ["Monthly base salary", money(r.baseMonthly)],
-    ["Attendance-adjusted base salary", money(r.base)],
-    ["Monthly allowance", money(r.allowanceMonthly)],
-    ["Attendance-adjusted allowance", money(r.allowance)],
-    ["Confirmed cartons achieved", `${r.achieved.toFixed(2)} cartons (${Math.round(r.achievedBoxes)} boxes)`],
-    ["Individual monthly target", `${r.target.toFixed(2)} cartons`],
-    ["Achievement", `${pct.toFixed(1)}%`],
-    ["Cartons above target", `${Math.max(0,r.achieved-r.target).toFixed(2)} cartons`],
-    ["Incentive rate per carton above target", money(r.rate)],
-    ["Carton incentive", money(r.incentive)],
-    ["Gross salary calculation", `<b>${money(r.gross)}</b>`],
-    ["Total advances recorded", money(r.advanceTotal)],
-    ["Advance amounts already recovered", money(r.advanceRecovered)],
-    ["Outstanding advance balance", money(r.outstanding)],
-    ["Estimated net after outstanding advances", `<b>${money(r.posted ? r.posted.amount_paisa : r.net)}</b>`],
-    ["Payment status", r.posted ? "Already released" : "Not released — estimate only"],
-  ];
-  modal("Salary calculation · " + r.p.name + " · " + r.month, `<section class="panel"><p class="muted">This month-specific breakdown uses the same attendance-proration, paid Week Off, target and per-carton incentive rules shown in the employee salary estimate. Manager direct cartons are separate from the team target.</p>${table(["Component","Calculation"],rows,"Salary calculation unavailable.")}</section>`);
-}
 function renderPayroll() {
   if (!admin()) return head("Salary & payroll", "Admin-only monthly salary review.") + '<section class="panel"><p class="notice danger">Only Admin can access payroll.</p></section>';
+  const params = new URLSearchParams(location.hash.includes("?") ? location.hash.slice(location.hash.indexOf("?")+1) : "");
   const month = window.__payrollMonth || today().slice(0,7);
   const query = String(window.__payrollQuery || "").trim().toLowerCase();
-  const months = Array.from({length:60},(_,i)=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);return d.toISOString().slice(0,7);});
+  const months = Array.from({length:36},(_,i)=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);return d.toISOString().slice(0,7);});
   const people=[];
   for (const x of (S().salesmen||[]).filter(x=>x.active!==false&&!x.deleted_at)) people.push({type:"salesman",id:x.id,name:x.name||"Salesman",record:x});
   const roles=S().user_roles||[];
-  for (const p of (S().profiles||[])) if(roles.some(r=>String(r.user_id)===String(p.id)&&String(r.role).toLowerCase()==="manager")) people.push({type:"manager",id:p.id,name:p.display_name||p.full_name||p.email||p.id,record:p});
+  for (const p of (S().profiles||[])) if(roles.some(r=>String(r.user_id)===String(p.id)&&r.role==="manager")) people.push({type:"manager",id:p.id,name:p.display_name||p.email||p.id,record:p});
   const filtered=people.filter(p=>p.name.toLowerCase().includes(query)||p.type.includes(query));
-  const rows=filtered.map(p=>payrollCalculationFor(p,month));
+  const expenses=(S().expenses||[]).filter(e=>!e.deleted_at&&e.salary_period===month&&/salary/i.test(String(e.category||"")+" "+String(e.description||"")));
+  const rows=filtered.map(p=>{
+    const posted=expenses.find(e=>p.type==="manager"?String(e.manager_user_id)===String(p.id):String(e.salesman_id)===String(p.id));
+    let achieved=0, credited=0, workingDays=26, base=0, allowance=0, incentive=0, target=0, gross=0, attendance=[];
+    if(p.type==="salesman"){
+      achieved=(S().salesman_daily_targets||[]).filter(d=>String(d.salesman_id)===String(p.id)&&String(d.date||"").startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0);
+      const att=(S().attendance_records||[]).filter(a=>String(a.salesman_id)===String(p.id)&&String(a.attendance_date||"").startsWith(month));
+      const statusDays={present:1,late:1,week_off:1,half_day:.5};
+      credited=att.reduce((a,x)=>a+(statusDays[String(x.status||"").toLowerCase()]||0),0);
+      workingDays=Math.max(1,Number(p.record.payroll_working_days||26));
+      const result=salary(p.record,achieved,S().settings); target=num(p.record.monthly_target); base=Math.round(num(p.record.base_salary_paisa)*Math.min(1,credited/workingDays));
+      incentive=Math.max(0,num(result.total)-num(p.record.base_salary_paisa)); gross=base+incentive;
+    } else {
+      const setting=(S().manager_payroll_settings||[]).find(x=>String(x.manager_user_id)===String(p.id));
+      workingDays=Math.max(1,num(setting?.working_days)||26); base=num(setting?.base_salary_paisa); allowance=num(setting?.allowance_paisa); target=num(setting?.monthly_target);
+      const att=(S().manager_attendance_records||[]).filter(a=>String(a.manager_user_id)===String(p.id)&&String(a.attendance_date||"").startsWith(month));
+      const statusDays={present:1,late:1,week_off:1,half_day:.5}; credited=att.reduce((a,x)=>a+(statusDays[String(x.status||"").toLowerCase()]||0),0);
+      base=Math.round(base*Math.min(1,credited/workingDays)); allowance=Math.round(allowance*Math.min(1,credited/workingDays));
+      gross=base+allowance;
+    }
+    const advanceRows=(S().employee_salary_advances||[]).filter(a=>a.status==="posted"&&(p.type==="manager"?String(a.manager_user_id)===String(p.id):String(a.salesman_id)===String(p.id)));
+    const outstanding=advanceRows.reduce((sum,a)=>sum+Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa)),0);
+    const net=Math.max(0,gross-outstanding);
+    return {p,posted,achieved,credited,workingDays,base,allowance,incentive,target,gross,outstanding,net};
+  });
   const monthOptions=months.map(m=>[m,new Date(m+"-15T12:00:00Z").toLocaleDateString("en-GB",{month:"long",year:"numeric"})]);
-  const currencyTotal = (key) => rows.reduce((n,r)=>n+num(r[key]),0);
-  return head("Salary & payroll", "Review the full month-wise employee salary calculation and release only unpaid months.", btn("Refresh data","payroll-refresh"))+
-    `<section class="panel"><div class="filters"><div class="field"><label for="payroll-month">Salary month</label><select id="payroll-month">${monthOptions.map(([v,t])=>`<option value="${v}" ${v===month?"selected":""}>${esc(t)}</option>`).join("")}</select></div><div class="field"><label for="payroll-search">Search employee</label><input id="payroll-search" value="${esc(window.__payrollQuery||"")}" placeholder="Manager or salesman name"></div><button data-act="payroll-apply">Show month</button></div><p class="muted">Week Off counts as a paid day. Salary is calculated for the selected month using attendance, each employee's saved salary parameters, confirmed personal carton sales, and recorded advances. Historical figures may depend on the records currently available.</p></section>`+
-    `<section class="panel"><h2>${esc(month)} · Salary calculations</h2><div class="cards">${card("Employees shown",rows.length,"Managers and salesmen")}${card("Gross salary total",money(currencyTotal("gross")),"Before advance deductions")}${card("Estimated net total",money(rows.reduce((n,r)=>n+(r.posted?num(r.posted.amount_paisa):r.net),0)),"Released amounts or current estimates")}</div>${table(["Employee","Type","Paid attendance","Cartons","Base earned","Allowance","Incentive","Gross","Advance balance","Estimated net","Status","Action"],rows.map(r=>[esc(r.p.name),esc(r.p.type),`${r.credited.toFixed(1)} / ${r.workingDays} days`,r.achieved.toFixed(2),money(r.base),money(r.allowance),money(r.incentive),`<b>${money(r.gross)}</b>`,money(r.outstanding),money(r.posted?num(r.posted.amount_paisa):r.net),r.posted?badge("Released","green"):badge("Not released","amber"),`<div class="actions"><button data-act="payroll-details" data-id="${esc(r.p.id)}" data-type="${r.p.type}" data-month="${esc(month)}">View calculation</button>${r.posted?`<span class="muted">Already released</span>`:`<button data-act="payroll-release" data-id="${esc(r.p.id)}" data-type="${r.p.type}" data-month="${esc(month)}">Review & release</button>`}</div>`]),"No matching employees found.")}</section>`+
-    `<section class="panel"><h2>Release history for ${esc(month)}</h2>${table(["Employee","Payment date","Salary period","Net paid","Details"],(S().expenses||[]).filter(e=>!e.deleted_at&&e.salary_period===month&&/salary/i.test(String(e.category||"")+" "+String(e.description||""))).map(e=>{const person=people.find(p=>p.type==="manager"?String(p.id)===String(e.manager_user_id):String(p.record.id)===String(e.salesman_id));return [esc(person?.name||e.description||"Employee"),esc(e.date),esc(e.salary_period),money(e.amount_paisa),esc(e.description||"Salary")]}),"No salary has been released for this month.")}</section>`;
+  return head("Salary & payroll", "Review employee salary calculations by month and release only unpaid months.", btn("Refresh data","payroll-refresh"))+
+    `<section class="panel"><div class="filters"><div class="field"><label for="payroll-month">Salary month</label><select id="payroll-month">${monthOptions.map(([v,t])=>`<option value="${v}" ${v===month?"selected":""}>${esc(t)}</option>`).join("")}</select></div><div class="field"><label for="payroll-search">Search employee</label><input id="payroll-search" value="${esc(window.__payrollQuery||"")}" placeholder="Manager or salesman name"></div><button data-act="payroll-apply">Show month</button></div><p class="muted">Week Off counts as a paid day. Historical figures depend on the attendance, sales, and salary parameters currently available in the records. Review any missing historical settings before releasing.</p></section>`+
+    `<section class="panel"><h2>${esc(month)} · Salary calculations</h2>${table(["Employee","Type","Paid attendance","Cartons","Base earned","Allowance","Incentive","Gross","Advance balance","Estimated net","Status","Action"],rows.map(r=>[esc(r.p.name),esc(r.p.type),`${r.credited.toFixed(1)} / ${r.workingDays} days`,r.p.type==="salesman"?r.achieved.toFixed(2):"Manager sales tracked separately",money(r.base),money(r.allowance),money(r.incentive),`<b>${money(r.posted?num(r.posted.amount_paisa)+0:r.gross)}</b>`,money(r.outstanding),money(r.posted?num(r.posted.amount_paisa):r.net),r.posted?badge("Released","green"):badge("Not released","amber"),r.posted?`<span class="muted">Already released</span>`:`<button data-act="payroll-release" data-id="${esc(r.p.id)}" data-type="${r.p.type}" data-month="${esc(month)}">Review & release</button>`]),"No matching employees found.")}</section>`+
+    `<section class="panel"><h2>Release history for ${esc(month)}</h2>${table(["Employee","Payment date","Salary period","Net paid","Details"],expenses.map(e=>{const person=people.find(p=>p.type==="manager"?String(p.id)===String(e.manager_user_id):String(p.id)===String(e.salesman_id));return [esc(person?.name||e.description||"Employee"),esc(e.date),esc(e.salary_period),money(e.amount_paisa),esc(e.description||"Salary")]}),"No salary has been released for this month.")}</section>`;
 }
-
 
 function renderUsers() {
   const s = S();
@@ -2926,8 +2886,7 @@ async function postManagerSalary(managerId, month = today().slice(0, 7)) {
   if (!accounts.length) throw Error("No active payment accounts are available. Ask Admin to configure Cash & Bank Book accounts.");
   const defaultAccount = accounts.find(a=>/cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
   const reasons = advances.map(a=>`${a.reason} (${money(a.outstanding)} outstanding)`).join("; ");
-  const payrollCalc = payrollCalculationFor({type:"manager",id:managerId,name:managerName,record:managerProfile}, month);
-  modal("Release manager salary · " + managerName, `<form id="manager-salary-post-form" data-manager="${esc(managerId)}" data-month="${esc(month)}"><section class="panel"><p><b>Manager:</b> ${esc(managerName)}</p><p><b>Salary period:</b> ${esc(month)}</p><p class="muted">Enter the manager's gross monthly salary. Outstanding advances will be deducted oldest first, and only the remaining net salary will be paid and recorded.</p>${field("Gross salary (PKR)", "gross_amount", (payrollCalc.gross/100).toFixed(2), "number", 'min="0.01" step="0.01" required')}${table(["Salary calculation","Amount"], [["Outstanding advances",money(outstandingAdvance)],["Advance deduction this salary",`<span id="manager-salary-deduction-preview">Calculated after entering salary</span>`],["Net salary to release",`<b id="manager-salary-net-preview">Calculated after entering salary</b>`]], "No outstanding salary advances.")}${advances.length ? `<p><b>Advance reasons:</b> ${esc(reasons)}</p>` : `<p class="muted">No outstanding salary advances for this manager.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
+  modal("Release manager salary · " + managerName, `<form id="manager-salary-post-form" data-manager="${esc(managerId)}" data-month="${esc(month)}"><section class="panel"><p><b>Manager:</b> ${esc(managerName)}</p><p><b>Salary period:</b> ${esc(month)}</p><p class="muted">Enter the manager's gross monthly salary. Outstanding advances will be deducted oldest first, and only the remaining net salary will be paid and recorded.</p>${field("Gross salary (PKR)", "gross_amount", "", "number", 'min="0.01" step="0.01" required')}${table(["Salary calculation","Amount"], [["Outstanding advances",money(outstandingAdvance)],["Advance deduction this salary",`<span id="manager-salary-deduction-preview">Calculated after entering salary</span>`],["Net salary to release",`<b id="manager-salary-net-preview">Calculated after entering salary</b>`]], "No outstanding salary advances.")}${advances.length ? `<p><b>Advance reasons:</b> ${esc(reasons)}</p>` : `<p class="muted">No outstanding salary advances for this manager.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
   const form = document.getElementById("manager-salary-post-form");
   form?.querySelector('[name="gross_amount"]')?.addEventListener("input", e => {
     const gross = Math.max(0, Math.round(Number(e.target.value || 0) * 100));
@@ -2942,9 +2901,8 @@ async function postManagerSalary(managerId, month = today().slice(0, 7)) {
 async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const s = S().salesmen.find((x) => x.id === id);
   if (!s) throw Error("Salesman not found.");
-  const payrollCalc = payrollCalculationFor({type:"salesman",id:s.user_id||s.id,name:s.name||"Salesman",record:s}, month);
-  const achieved = payrollCalc.achieved;
-  const pay = { total: payrollCalc.gross, incentive: payrollCalc.incentive, percent: payrollCalc.target>0 ? payrollCalc.achieved/payrollCalc.target*100 : 0 };
+  const achieved = S().salesman_daily_targets.filter(d => d.salesman_id === id && d.date.startsWith(month)).reduce((a, d) => a + num(d.achieved_cartons), 0);
+  const pay = salary(s, achieved, S().settings);
   const old = S().expenses.find(e => e.salesman_id === id && e.salary_period === month);
   if (old && !old.deleted_at) {
     if (automatic) return;
@@ -3573,15 +3531,6 @@ async function action(act, id, element) {
       page = "payroll"; render(); break;
     }
     case "payroll-refresh": await store.refresh(); page="payroll"; render(); break;
-    case "payroll-details": {
-      if (!admin()) throw Error("Only Admin can view payroll details.");
-      const month = document.querySelector(`[data-act="payroll-details"][data-id="${CSS.escape(id)}"]`)?.dataset.month || window.__payrollMonth || today().slice(0,7);
-      const type = document.querySelector(`[data-act="payroll-details"][data-id="${CSS.escape(id)}"]`)?.dataset.type;
-      const p = type === "manager" ? (S().profiles||[]).find(x=>String(x.id)===String(id)) : (S().salesmen||[]).find(x=>String(x.id)===String(id)||String(x.user_id)===String(id));
-      if (!p) throw Error("Employee record not found. Refresh data and try again.");
-      payrollDetailsModal(payrollCalculationFor({type,id,name:p.name||p.display_name||p.full_name||p.email||id,record:p},month));
-      break;
-    }
     case "payroll-release": {
       if (!admin()) throw Error("Only Admin can release salary.");
       const el = document.querySelector(`[data-act="payroll-release"][data-id="${CSS.escape(id)}"]`);
