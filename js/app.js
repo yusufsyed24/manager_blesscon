@@ -619,7 +619,7 @@ function attendanceModal(salesmanId) {
   if (!(admin() || manager())) throw Error("Attendance is manager/admin controlled.");
   const seller = S().salesmen.find(s => s.id === salesmanId);
   if (!seller || (manager() && !managerTeamIds(S(), user.id).includes(salesmanId))) throw Error("This salesman is outside your assigned team.");
-  modal("Record attendance · " + seller.name, `<form id="attendance-manager-form" data-salesman="${esc(salesmanId)}"><div class="grid">${field("Attendance date", "attendance_date", today(), "date", "required")}${select("Status", "status", [["present","Present"],["late","Late"],["half_day","Half day"],["absent","Absent"],["leave","Leave"],["pending","Pending"]], "present")}${area("Correction reason / manager remarks", "remarks", "")}</div><p class="muted">Saving creates or updates the single attendance record for this salesman and date. Changes are logged by the database audit trigger where configured.</p><button class="gold" type="submit">Save attendance</button></form>`);
+  modal("Record attendance · " + seller.name, `<form id="attendance-manager-form" data-salesman="${esc(salesmanId)}"><div class="grid">${field("Attendance date", "attendance_date", today(), "date", "required")}${select("Status", "status", [["present","Present"],["late","Late"],["half_day","Half day"],["absent","Absent"],["leave","Leave"],["pending","Pending"],["week_off","Week Off"]], "present")}${area("Correction reason / manager remarks", "remarks", "")}</div><p class="muted">Saving creates or updates the single attendance record for this salesman and date. Changes are logged by the database audit trigger where configured.</p><button class="gold" type="submit">Save attendance</button></form>`);
 }
 
 function renderManagerDashboard() {

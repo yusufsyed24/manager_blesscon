@@ -645,3 +645,11 @@ Salary profile views now show attendance credited, configured working days, mont
 ## v55.43 — Employee date-of-birth persistence fix
 - Added an idempotent Supabase migration to ensure the date-of-birth column exists and is permitted by the secure employee save function.
 - See `supabase/fix_employee_date_of_birth_save_v55_43.sql`.
+
+
+## v55.44 — Sunday Week Off for all employees
+- Added an idempotent Supabase migration to permit `week_off` attendance status for salesmen and managers.
+- Backfills missing Sunday records for all active salesmen and manager accounts; existing Sunday punches/statuses are preserved.
+- Configures hourly pg_cron automation when the extension is already available; otherwise provides the callable function and a notice.
+- Corrected Arsalan's historical attendance import to 1–17 October 2026, removing the prior 24–30 September rows and retaining 5–6 October as absent; Sundays in range are Week Off.
+- Added Week Off as an admin/manager attendance correction status.

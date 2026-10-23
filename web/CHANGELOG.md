@@ -641,3 +641,11 @@ Salary profile views now show attendance credited, configured working days, mont
 ## v55.42 — Historical attendance import (2026-10-23)
 - Added a safe, rerunnable SQL import for Arsalan and Babar Ali Khan's historical attendance dates.
 - Added verification queries and setup notes. No live database changes were executed by this build.
+
+
+## v55.44 — Sunday Week Off for all employees
+- Added an idempotent Supabase migration to permit `week_off` attendance status for salesmen and managers.
+- Backfills missing Sunday records for all active salesmen and manager accounts; existing Sunday punches/statuses are preserved.
+- Configures hourly pg_cron automation when the extension is already available; otherwise provides the callable function and a notice.
+- Corrected Arsalan's historical attendance import to 1–17 October 2026, removing the prior 24–30 September rows and retaining 5–6 October as absent; Sundays in range are Week Off.
+- Added Week Off as an admin/manager attendance correction status.
