@@ -2183,8 +2183,14 @@ function payrollCalculationFor(p, month) {
     if (!previous || units > previous.units) attendanceByDate.set(date, { ...row, units });
   }
   attendanceRows = [...attendanceByDate.values()];
-  const credited = attendanceRows.reduce((n,a)=>n+(a.units ?? statusDays[String(a.status||'').toLowerCase()] ?? 0),0);
+  let credited = attendanceRows.reduce((n,a)=>n+(a.units ?? statusDays[String(a.status||'').toLowerCase()] ?? 0),0);
   const employeeName = String(p.name || p.record?.name || p.record?.display_name || p.record?.full_name || '').trim().toLowerCase().replace(/\s+/g,' ');
+  // Payroll correction confirmed by the business owner: Arsalan's October 2026 salary
+  // must use 17 credited days. The UI currently receives only 16 qualifying attendance
+  // dates, so apply a transparent one-day payroll credit rather than calculating 16 days.
+  // This does not create or alter an attendance record in the database.
+  const arsalanOctoberPayrollAdjustment = employeeName.includes('arsalan') && month === '2026-10' && credited < 17;
+  if (arsalanOctoberPayrollAdjustment) credited = 17;
   // Arsalan's agreed payroll basis is PKR 45,000 / 30 calendar days = PKR 1,500 per credited day.
   // Keep this override in the shared frontend calculator so Admin payroll, salary detail/release
   // previews, and any other view using payrollCalculationFor all calculate the same amount.
@@ -2211,7 +2217,7 @@ function payrollCalculationFor(p, month) {
   const outstanding = Math.max(0,advanceTotal-advanceRecovered);
   const expenses = (state.expenses||[]).filter(e=>!e.deleted_at&&String(e.salary_period||'')===month&& (isManager?String(e.manager_user_id)===String(p.id):String(e.salesman_id)===String(p.record.id)));
   const posted = expenses.find(e=>/salary/i.test(String(e.category||'')+' '+String(e.description||''))) || expenses[0] || null;
-  return {p,month,posted,credited,workingDays,factor,baseMonthly,base,allowanceMonthly,allowance,target,rate,achieved,achievedBoxes,boxesPerCarton,incentive,gross,advanceTotal,advanceRecovered,outstanding,net:Math.max(0,gross-outstanding),attendanceRows,orders};
+  return {p,month,posted,credited,workingDays,factor,baseMonthly,base,allowanceMonthly,allowance,target,rate,achieved,achievedBoxes,boxesPerCarton,incentive,gross,advanceTotal,advanceRecovered,outstanding,net:Math.max(0,gross-outstanding),attendanceRows,orders,arsalanOctoberPayrollAdjustment};
 }
 function payrollDetailsModal(r) {
   const pct = r.target > 0 ? r.achieved/r.target*100 : 0;
@@ -2237,7 +2243,7 @@ function payrollDetailsModal(r) {
     ["Estimated net after outstanding advances", `<b>${money(r.posted ? r.posted.amount_paisa : r.net)}</b>`],
     ["Payment status", r.posted ? "Already released" : "Not released — estimate only"],
   ];
-  modal("Salary calculation · " + r.p.name + " · " + r.month, `<section class="panel"><p class="muted">This month-specific breakdown uses the same attendance-proration, paid Week Off, target and per-carton incentive rules shown in the employee salary estimate. Manager direct cartons are separate from the team target.</p>${table(["Component","Calculation"],rows,"Salary calculation unavailable.")}</section>`);
+  modal("Salary calculation · " + r.p.name + " · " + r.month, `<section class="panel"><p class="muted">This month-specific breakdown uses the same attendance-proration, paid Week Off, target and per-carton incentive rules shown in the employee salary estimate. Manager direct cartons are separate from the team target. ${r.arsalanOctoberPayrollAdjustment ? 'Payroll adjustment: one additional credited day has been applied to Arsalan for October 2026 to match the confirmed 17-day calculation; attendance records themselves were not changed.' : ''}</p>${table(["Component","Calculation"],rows,"Salary calculation unavailable.")}</section>`);
 }
 function renderPayroll() {
   if (!admin()) return head("Salary & payroll", "Admin-only monthly salary review.") + '<section class="panel"><p class="notice danger">Only Admin can access payroll.</p></section>';
