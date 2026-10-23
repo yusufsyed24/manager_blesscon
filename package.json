@@ -1,6 +1,6 @@
 {
   "name": "blesscon-candy-manager",
-  "version": "55.48.0",
+  "version": "55.50.0",
   "description": "Configurable carton-based payroll for salesmen and managers",
   "directories": {
     "doc": "docs",

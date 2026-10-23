@@ -425,6 +425,36 @@ async function hydrateSalesmanSalary(seller) {
   const el = $("my-salary-panel");
   if (!el || !client) return;
   const month = today().slice(0, 7);
+  const basisResult = await client.from("salesman_compensation_settings").select("salary_basis").eq("user_id", seller.user_id || seller.id).maybeSingle();
+  if (!el.isConnected) return;
+  if (!basisResult.error && basisResult.data?.salary_basis === "commission") {
+    const [rateResult, itemResult] = await Promise.all([
+      client.from("salesman_product_commissions").select("product_id,product_name,commission_per_carton_paisa").eq("user_id", seller.user_id || seller.id),
+      client.from("order_items").select("order_id,product_id,boxes,boxes_per_carton")
+    ]);
+    if (rateResult.error || itemResult.error) {
+      el.innerHTML = `<p class="notice danger">Commission earnings could not be loaded: ${esc(rateResult.error?.message || itemResult.error?.message)}. Contact Admin.</p>`;
+      return;
+    }
+    const rates = new Map((rateResult.data || []).map(r => [String(r.product_id), r]));
+    const orders = S().orders.filter(o => String(o.salesman_id) === String(seller.id) && o.status === "confirmed" && !o.deleted_at && String(o.date || "").startsWith(month));
+    const orderById = new Map(orders.map(o => [String(o.id), o]));
+    const itemRows = (itemResult.data || []).filter(i => orderById.has(String(i.order_id)));
+    const detail = new Map();
+    for (const item of itemRows) {
+      const rate = rates.get(String(item.product_id));
+      const boxesPerCarton = Math.max(1, num(item.boxes_per_carton) || num(S().settings?.boxes_per_carton) || 24);
+      const cartons = num(item.boxes) / boxesPerCarton;
+      const commission = rate ? Math.round(cartons * num(rate.commission_per_carton_paisa)) : 0;
+      const key = String(item.product_id);
+      const prev = detail.get(key) || { name: rate?.product_name || (S().products || []).find(p=>String(p.id)===key)?.name || key, cartons: 0, rate: num(rate?.commission_per_carton_paisa), commission: 0 };
+      prev.cartons += cartons; prev.commission += commission; detail.set(key, prev);
+    }
+    const totalCartons = [...detail.values()].reduce((n,x)=>n+x.cartons,0);
+    const totalCommission = [...detail.values()].reduce((n,x)=>n+x.commission,0);
+    el.innerHTML = `<div class="cards">${card("Salary basis","Commission","Per-product rate")}${card("Confirmed cartons sold",totalCartons.toFixed(2),"This month")}${card("Commission earned",money(totalCommission),"Based on confirmed personal sales")}</div><h4>Commission calculation by product</h4>${table(["Product","Cartons sold","Commission per carton","Commission earned"],[...detail.values()].map(x=>[esc(x.name),x.cartons.toFixed(2),money(x.rate),`<b>${money(x.commission)}</b>`]),"No confirmed product sales for this month.")}<p class="muted">Commission is calculated per product using confirmed personal sales only. Fixed salary and target-based incentive calculations do not apply to this commission-basis salesman.</p>`;
+    return;
+  }
   const boxes = S().orders
     .filter((o) => String(o.salesman_id) === String(seller.id) && o.status === "confirmed" && !o.deleted_at && String(o.date || "").startsWith(month))
     .reduce((n, o) => n + (S().order_items || []).filter((i) => i.order_id === o.id).reduce((a, i) => a + num(i.boxes), 0), 0);
@@ -3077,7 +3107,7 @@ async function userModal(id) {
   if (!id) {
     modal(
       "Create login",
-      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select(
+      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select("Salesman salary basis", "salary_basis", [["fixed","Fixed salary (existing rules)"],["commission","Commission basis"]], "fixed")}${(() => { const products = (S().products || []).filter(p => p.active !== false && !p.deleted_at); return `<section id="commission-products-config" class="panel" style="grid-column:1/-1;display:none"><h3>Commission per carton by product</h3><p class="muted">Set the commission earned for each carton of each product. Only confirmed personal sales count.</p><div class="grid">${products.map(p => field(`${p.name} — commission per carton (Rs.)`, `commission_${String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`, "0", "number", 'min="0" step="0.01"')).join("") || '<p class="muted">No active products found. Save the user, then configure commissions after products load.</p>'}</div></section>`; })()}${select(
         "Link salesman (optional)",
         "salesman_id",
         [
@@ -3092,6 +3122,19 @@ async function userModal(id) {
         ],
       )}${select("Assign salesman to manager (optional)", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], "")}</div><p class="muted">The login is created without sending an email. Share the password securely. If a manager is selected, the salesman appears in that manager's team overview. Deleting a login later preserves linked business history.</p><button class="gold">Create login</button></form>`,
     );
+    const createForm = $("create-user-form");
+    const basisSelect = createForm?.elements?.namedItem("salary_basis");
+    const roleSelect = createForm?.elements?.namedItem("role");
+    const commissionPanel = $("commission-products-config");
+    const basisWrap = basisSelect?.closest(".field") || basisSelect?.parentElement;
+    const toggleCommission = () => {
+      const isSalesman = roleSelect?.value === "salesman";
+      if (basisWrap) basisWrap.style.display = isSalesman ? "" : "none";
+      if (commissionPanel) commissionPanel.style.display = isSalesman && basisSelect?.value === "commission" ? "block" : "none";
+    };
+    basisSelect?.addEventListener("change", toggleCommission);
+    roleSelect?.addEventListener("change", toggleCommission);
+    toggleCommission();
     return;
   }
   const linkedSeller = S().salesmen.find((seller) => seller.user_id === id);
@@ -4832,6 +4875,23 @@ document.addEventListener("submit", async (e) => {
           }
         }
         await store.refresh();
+        if (f.role === "salesman") {
+          const basis = f.salary_basis === "commission" ? "commission" : "fixed";
+          const seller = (S().salesmen || []).find(x => String(x.user_id || "") === String(data.user_id));
+          if (!seller) throw Error("Login was created, but the salesman profile could not be found to save salary basis. Open Users & Access and retry setup.");
+          const settingsPayload = { user_id: data.user_id, salesman_id: seller.id, salary_basis: basis, updated_at: new Date().toISOString() };
+          const { error: settingsError } = await client.from("salesman_compensation_settings").upsert(settingsPayload, { onConflict: "user_id" });
+          if (settingsError) throw Error("Login created, but salary basis could not be saved. Apply supabase/salesman_commission_basis_v55_50.sql. Details: " + settingsError.message);
+          if (basis === "commission") {
+            const products = (S().products || []).filter(p => p.active !== false && !p.deleted_at);
+            const rates = products.map(p => {
+              const key = `commission_${String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`;
+              return { product_id: String(p.id), product_name: String(p.name || ""), commission_per_carton_paisa: Math.round(Math.max(0, Number(f[key] || 0)) * 100) };
+            });
+            const { error: rateError } = await client.from("salesman_product_commissions").upsert(rates.map(r => ({ user_id: data.user_id, salesman_id: seller.id, ...r, updated_at: new Date().toISOString() })), { onConflict: "user_id,product_id" });
+            if (rateError) throw Error("Login created, but product commission rates could not be saved. Apply the v55.50 SQL migration. Details: " + rateError.message);
+          }
+        }
         close();
         render();
         toast("Login created and salesman linked to the selected manager");
