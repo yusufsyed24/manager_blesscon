@@ -1688,7 +1688,7 @@ function renderStaff() {
     head(
       "Salesmen & targets",
       manager() ? "Manage your assigned team, attendance, areas, stock accountability and operational messages." : "Manage employee profiles, assign managers, monitor targets and review fieldwork.",
-      (admin() || manager()) ? btn("+ Create salesman", "add-staff", "", "", "gold") + btn("Manage areas", "manage-areas") + (admin() ? btn("+ Advance salary", "advance-salary", "", "", "gold") : "") : "",
+      (admin() || manager()) ? btn("Manage areas", "manage-areas") + (admin() ? btn("+ Advance salary", "advance-salary", "", "", "gold") : "") : "",
     ) +
     `<section class="panel"><div class="panel-heading"><h2>Team overview</h2><span>${esc(attendanceDate)} · ${sellers.length} assigned salesman${sellers.length===1?"":"men"}</span></div>${table(
       ["Salesman", "Attendance", "Assigned area", "Today / target", "Monthly progress", "Stock in hand", "Actions"],
@@ -2295,14 +2295,14 @@ function renderPayroll() {
 
 
 function renderUsers() {
+  if (!admin()) return head("Users & access", "Administrator-only account management.") + '<section class="panel"><p class="notice danger">Only Admin can create or manage login accounts.</p></section>';
   const s = S();
   return (
     head(
       "Users & access",
-      "Manage user roles, access and employee profiles. Only Admin can reset another user's password; database and server checks enforce these restrictions.",
-      btn("+ Create login", "create-user", "", "", "gold"),
+      "Create a login and its linked employee profile in one workflow. Managers cannot create users or salesman profiles.",
+      btn("+ Create user", "create-user", "", "", "gold"),
     ) +
-    managersPanel() +
     `<section class="panel"><p class="muted">Login email addresses are not displayed here. To help a user sign in, share their login details through your approved secure process. Password resets remain available to Admin.</p>${table(
       ["Name", "Role", "Linked salesman", "Assigned manager", "Status", "Actions"],
       s.profiles.map((p) => {
@@ -2636,6 +2636,7 @@ const dates = (text) => {
   return [...new Set(a)];
 };
 async function saveMaster(form) {
+  if (form.dataset.kind === "staff" && !form.dataset.id && !admin()) throw Error("Managers cannot create salesman profiles. Admin must create the login and linked salesman profile from Users & Access.");
   const f = Object.fromEntries(new FormData(form)),
     kind = form.dataset.kind,
     tableName = {
@@ -3160,37 +3161,62 @@ async function userModal(id) {
   }
   const p = S().profiles.find((p) => p.id === id),
     role = S().user_roles.find((r) => r.user_id === id)?.role || "salesman";
+  if (!admin()) throw Error("Only Admin can create or edit user access.");
   if (!id) {
+    const defaultManager = "";
     modal(
-      "Create login",
-      `<form id="create-user-form"><div class="grid">${field("Display name", "display_name", "", "text", "required")}${field("Email", "email", "", "email", "required")}${field("Password", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}${select("Role", "role", ["salesman", "manager", "user", "admin"], "salesman")}${select("Salesman salary basis", "salary_basis", [["fixed","Fixed salary (existing rules)"],["commission","Commission basis"]], "fixed")}${(() => { const products = (S().products || []).filter(p => p.active !== false && !p.deleted_at); return `<section id="commission-products-config" class="panel" style="grid-column:1/-1;display:none"><h3>Commission per carton by product</h3><p class="muted">Set the commission earned for each carton of each product. Only confirmed personal sales count.</p><div class="grid">${products.map(p => field(`${p.name} — commission per carton (Rs.)`, `commission_${String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`, "0", "number", 'min="0" step="0.01"')).join("") || '<p class="muted">No active products found. Save the user, then configure commissions after products load.</p>'}</div></section>`; })()}${select(
-        "Link salesman (optional)",
-        "salesman_id",
-        [
-          ["", "Create a new salesman profile"],
-          ...linkableSalesmen
-            .filter((seller) => !seller.deleted_at && seller.active !== false)
-            // Show every active existing profile to Admin. A stale profiles row can
-            // exist even when its Auth user was never created, so checking profiles
-            // alone incorrectly hid the employee from this linking dropdown.
-            // Explicitly label already-linked records so Admin can verify before repair.
-            .map((seller) => [seller.id, `${seller.name}${seller.user_id ? " (currently linked; selecting will relink)" : " (unlinked)"}`]),
-        ],
-      )}${select("Assign salesman to manager (optional)", "manager_user_id", [["", "Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || "Manager"])], "")}</div><p class="muted">The login is created without sending an email. Share the password securely. If a manager is selected, the salesman appears in that manager's team overview. Deleting a login later preserves linked business history.</p><button class="gold">Create login</button></form>`,
+      "Create user + employee profile",
+      `<form id="create-user-form"><div class="grid">
+      ${field("Full name", "display_name", "", "text", "required")}
+      ${field("Login email", "email", "", "email", "required")}
+      ${field("Temporary password (minimum 12 characters)", "temporary_password", "", "password", 'minlength="12" autocomplete="new-password" required')}
+      ${select("Create profile as", "role", [["salesman","Salesman"],["manager","Manager"]], "salesman")}
+      <section id="salesman-profile-fields" class="panel" style="grid-column:1/-1"><h3>Salesman profile details</h3><div class="grid">
+      ${field("Employee ID (leave blank to generate)", "employee_id", "", "text", 'pattern="[A-Za-z0-9._:-]{1,180}"')}
+      ${field("Phone", "employee_phone", "", "tel")}
+      ${field("Date of birth", "date_of_birth", "", "date")}
+      ${field("Joining date", "joining_date", today(), "date", 'min="2000-01-01" required')}
+      ${field("Base monthly salary (Rs.)", "base_salary", num(S().settings.base_salary_paisa || 4500000)/100, "number", 'min="0" step="0.01" required')}
+      ${field("Monthly allowance (Rs.)", "payroll_allowance", "0", "number", 'min="0" step="0.01" required')}
+      ${field("Incentive per carton above target (Rs.)", "payroll_incentive", "0", "number", 'min="0" step="0.01" required')}
+      ${field("Working days per month", "payroll_working_days", "26", "number", 'min="1" max="31" step="1" required')}
+      ${field("Monthly target (cartons)", "monthly_target", num(S().settings.monthly_target || 130), "number", 'min="1" step="0.01" required')}
+      ${select("Salesman status", "employee_active", [["true","Active"],["false","Inactive"]], "true")}
+      ${select("Assign salesman to manager (optional)", "manager_user_id", [["","Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || profile.email || "Manager"])], defaultManager)}
+      ${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", "")}
+      ${select("Salary basis", "salary_basis", [["fixed","Fixed salary"],["commission","Commission basis"]], "fixed")}
+      <div class="field"><label for="new-salesman-photo">Profile photo (optional, JPG/PNG/WebP, max 5 MB)</label><input id="new-salesman-photo" name="profile_photo" type="file" accept="image/jpeg,image/png,image/webp"></div>
+      <div class="field"><label for="new-salesman-nic">NIC / identity document (optional, PDF/JPG/PNG/WebP, max 10 MB)</label><input id="new-salesman-nic" name="identity_document" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div>
+      </div><section id="commission-products-config" class="panel" style="display:none"><h3>Commission per carton by product</h3><p class="muted">Only confirmed personal sales count.</p><div class="grid">${(S().products || []).filter(p => p.active !== false && !p.deleted_at).map(p => field(`${p.name} — commission per carton (Rs.)`, `commission_${String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`, "0", "number", 'min="0" step="0.01"')).join("") || '<p class="muted">No active products found.</p>'}</div></section></section>
+      <section id="manager-profile-fields" class="panel" style="grid-column:1/-1;display:none"><h3>Manager profile details</h3><div class="grid">
+      ${field("Base monthly salary (Rs.)", "manager_base_salary", "0", "number", 'min="0" step="0.01" required')}
+      ${field("Monthly allowance (Rs.)", "manager_allowance", "0", "number", 'min="0" step="0.01" required')}
+      ${field("Incentive per carton above target (Rs.)", "manager_incentive", "0", "number", 'min="0" step="0.01" required')}
+      ${field("Individual monthly target (cartons)", "manager_monthly_target", "0", "number", 'min="0" step="0.01" required')}
+      ${field("Working days per month", "manager_working_days", "26", "number", 'min="1" max="31" step="1" required')}
+      </div><p class="muted">A manager login creates a manager profile and payroll settings. Manager direct sales remain separate from the team target.</p></section>
+      </div><p class="muted">The login, role and matching employee profile are created together. Managers cannot access this workflow.</p><button class="gold">Create user and profile</button></form>`,
     );
     const createForm = $("create-user-form");
-    const basisSelect = createForm?.elements?.namedItem("salary_basis");
     const roleSelect = createForm?.elements?.namedItem("role");
+    const basisSelect = createForm?.elements?.namedItem("salary_basis");
+    const salesmanFields = $("salesman-profile-fields");
+    const managerFields = $("manager-profile-fields");
     const commissionPanel = $("commission-products-config");
-    const basisWrap = basisSelect?.closest(".field") || basisSelect?.parentElement;
-    const toggleCommission = () => {
+    const toggleRoleFields = () => {
       const isSalesman = roleSelect?.value === "salesman";
-      if (basisWrap) basisWrap.style.display = isSalesman ? "" : "none";
+      if (salesmanFields) salesmanFields.style.display = isSalesman ? "block" : "none";
+      if (managerFields) managerFields.style.display = isSalesman ? "none" : "block";
       if (commissionPanel) commissionPanel.style.display = isSalesman && basisSelect?.value === "commission" ? "block" : "none";
+      for (const el of salesmanFields?.querySelectorAll("input,select,textarea") || []) {
+        if (["display_name","email","temporary_password","role"].includes(el.name)) continue;
+        el.disabled = !isSalesman;
+      }
+      for (const el of managerFields?.querySelectorAll("input,select,textarea") || []) el.disabled = isSalesman;
     };
-    basisSelect?.addEventListener("change", toggleCommission);
-    roleSelect?.addEventListener("change", toggleCommission);
-    toggleCommission();
+    roleSelect?.addEventListener("change", toggleRoleFields);
+    basisSelect?.addEventListener("change", toggleRoleFields);
+    toggleRoleFields();
     return;
   }
   const linkedSeller = S().salesmen.find((seller) => seller.user_id === id);
@@ -3527,8 +3553,8 @@ async function action(act, id, element) {
       render(); toast(p.active ? "Product deactivated" : "Product activated"); break;
     }
     case "add-staff":
-      masterForm("staff");
-      break;
+      if (!admin()) throw Error("Create employee logins and profiles from Admin → Users & Access. Managers cannot create users or salesmen.");
+      throw Error("The standalone Add Salesman workflow has been removed. Create the login and linked salesman profile together from Admin → Users & Access.");
     case "edit-staff":
       masterForm("staff", id);
       break;
@@ -4884,73 +4910,71 @@ document.addEventListener("submit", async (e) => {
         break;
       }
       case "create-user-form": {
+        if (!admin()) throw Error("Only Admin can create login accounts and employee profiles.");
         if (!client) throw Error("Configure Supabase to create logins");
-        if (f.role === "salesman" && !f.salesman_id) {
-          // Reuse an existing unlinked profile with the same name instead of creating a duplicate.
-          const match = unlinkedSalesmanByName(f.display_name);
-          if (match.length === 1) f.salesman_id = match[0].id;
-          else if (match.length > 1) throw Error("More than one unlinked salesman profile is named \"" + f.display_name + "\". Choose the correct one in 'Link salesman'.");
-        }
-        const { data, error } = await client.functions.invoke(
-          "admin-create-user",
-          { body: { ...f, request_id: uid() } },
-        );
+        const isSalesman = f.role === "salesman";
+        if (!isSalesman && f.role !== "manager") throw Error("Choose Salesman or Manager as the profile type.");
+        const photoFile = f.profile_photo instanceof File && f.profile_photo.size ? f.profile_photo : null;
+        const identityFile = f.identity_document instanceof File && f.identity_document.size ? f.identity_document : null;
+        if (photoFile && (!/^image\/(jpeg|png|webp)$/.test(photoFile.type) || photoFile.size > 5*1024*1024)) throw Error("Profile photo must be JPG, PNG or WebP up to 5 MB.");
+        if (identityFile && (!(identityFile.type === "application/pdf" || /^image\/(jpeg|png|webp)$/.test(identityFile.type)) || identityFile.size > 10*1024*1024)) throw Error("NIC document must be PDF, JPG, PNG or WebP up to 10 MB.");
+        const payload = { display_name: String(f.display_name || "").trim(), email: String(f.email || "").trim(), temporary_password: f.temporary_password, role: f.role, request_id: uid() };
+        if (!payload.display_name) throw Error("Full name is required.");
+        const { data, error } = await client.functions.invoke("admin-create-user", { body: payload });
         if (error) throw Error(await edgeFunctionError(error, "admin-create-user"));
-        if (data.error) throw Error(data.error);
+        if (data?.error) throw Error(data.error);
+        const createdUserId = data.user_id;
+        if (!createdUserId) throw Error("The server did not return the new user ID.");
+        try {
+          if (isSalesman) {
+            const employeeId = String(f.employee_id || "").trim() || ("SP-" + uid());
+            if (!/^[A-Za-z0-9._:-]{1,180}$/.test(employeeId)) throw Error("Employee ID may contain letters, numbers, dot, underscore, colon or hyphen.");
+            if ((S().salesmen || []).some(x => String(x.id).toLowerCase() === employeeId.toLowerCase())) throw Error("This Employee ID is already in use.");
+            const seller = {
+              id: employeeId, name: payload.display_name, phone: String(f.employee_phone || "").trim(), date_of_birth: f.date_of_birth || null,
+              joining_date: f.joining_date || today(), base_salary_paisa: paisa(f.base_salary), payroll_allowance_paisa: paisa(f.payroll_allowance),
+              payroll_incentive_per_carton_paisa: paisa(f.payroll_incentive), payroll_working_days: Math.max(1, Math.min(31, Math.round(num(f.payroll_working_days) || 26))),
+              monthly_target: num(f.monthly_target), payroll_monthly_target: num(f.monthly_target), active: f.employee_active !== "false", user_id: createdUserId,
+              manager_user_id: f.manager_user_id || null, off_days: dates(String(f.off_days || "")),
+            };
+            if (!(seller.monthly_target > 0)) throw Error("Monthly target must be greater than zero.");
+            const savedSeller = await store.run("master.save", { table: "salesmen", record: seller, expected_version: undefined });
+            if (savedSeller?.error || savedSeller?.queued) throw Error(savedSeller?.error || "Salesman profile is queued offline and not yet confirmed by Supabase.");
+            await store.refresh();
+            const liveSeller = (S().salesmen || []).find(x => String(x.user_id || "") === String(createdUserId)) || seller;
+            const basis = f.salary_basis === "commission" ? "commission" : "fixed";
+            const { error: settingsError } = await client.from("salesman_compensation_settings").upsert({ user_id: createdUserId, salesman_id: liveSeller.id, salary_basis: basis, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+            if (settingsError) throw Error("Salesman profile created, but salary basis could not be saved. Apply the v55.50 SQL migration. " + settingsError.message);
+            if (basis === "commission") {
+              const products = (S().products || []).filter(p => p.active !== false && !p.deleted_at);
+              const rates = products.map(product => ({ user_id: createdUserId, salesman_id: liveSeller.id, product_id: String(product.id), product_name: String(product.name || ""), commission_per_carton_paisa: Math.round(Math.max(0, Number(f[`commission_${String(product.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`] || 0)) * 100), updated_at: new Date().toISOString() }));
+              if (rates.length) { const { error: rateError } = await client.from("salesman_product_commissions").upsert(rates, { onConflict: "user_id,product_id" }); if (rateError) throw Error("Salesman profile created, but commission rates could not be saved: " + rateError.message); }
+            }
+            if (photoFile) {
+              const path = `${createdUserId}/salesman-profile-${Date.now()}-${photoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+              const up = await client.storage.from("employee-private").upload(path, photoFile, { contentType: photoFile.type, upsert: false });
+              if (up.error) throw Error("Salesman profile created, but photo upload failed: " + up.error.message);
+              const { error: photoError } = await client.rpc("set_salesman_photo", { p_salesman_id: liveSeller.id, p_photo_path: path });
+              if (photoError) throw Error("Salesman profile created, but photo path could not be saved: " + photoError.message);
+            }
+            if (identityFile) {
+              const path = `${createdUserId}/salesman-documents/${Date.now()}-${identityFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+              const up = await client.storage.from("employee-private").upload(path, identityFile, { contentType: identityFile.type, upsert: false });
+              if (up.error) throw Error("Salesman profile created, but NIC upload failed: " + up.error.message);
+              const { error: docError } = await client.from("employee_documents").insert({ salesman_id: liveSeller.id, document_type: "identity", file_path: path, file_name: identityFile.name, mime_type: identityFile.type, size_bytes: identityFile.size });
+              if (docError) throw Error("Salesman profile created, but NIC document record could not be saved: " + docError.message);
+            }
+          } else {
+            const managerSettings = { manager_user_id: createdUserId, base_salary_paisa: paisa(f.manager_base_salary), allowance_paisa: paisa(f.manager_allowance), incentive_per_carton_paisa: paisa(f.manager_incentive), monthly_target: Math.max(0, num(f.manager_monthly_target)), working_days: Math.max(1, Math.min(31, Math.round(num(f.manager_working_days) || 26))), updated_at: new Date().toISOString() };
+            const { error: managerSettingsError } = await client.from("manager_payroll_settings").upsert(managerSettings, { onConflict: "manager_user_id" });
+            if (managerSettingsError) throw Error("Manager login/profile created, but manager payroll settings could not be saved. Check the v55.38 manager payroll migration and permissions. " + managerSettingsError.message);
+          }
+        } catch (profileError) {
+          throw Error("Login was created, but the linked " + (isSalesman ? "salesman" : "manager") + " profile setup did not finish: " + (profileError?.message || String(profileError)) + ". The login remains in Users & Access so Admin can retry profile setup.");
+        }
         await store.refresh();
-        if (f.role === "salesman" && !f.salesman_id) {
-          await store.run("master.save", {
-            table: "salesmen",
-            record: {
-              id: uid(),
-              name: String(f.display_name || "").trim(),
-              phone: "",
-              user_id: data.user_id,
-              manager_user_id: f.manager_user_id || null,
-              active: true,
-              joining_date: today(),
-              base_salary_paisa: num(S().settings.base_salary_paisa) || 4500000,
-              monthly_target: num(S().settings.monthly_target) || 130,
-              off_days: [],
-            },
-            expected_version: undefined,
-          });
-        }
-        if (f.role === "salesman" && f.salesman_id) {
-          let linked = S().salesmen.find((seller) => String(seller.id) === String(f.salesman_id) || String(seller.user_id || "") === String(data.user_id));
-          // The dropdown uses a direct Admin query, so its selected row may not be
-          // present in the cached business snapshot. Fetch the exact row before saving.
-          if (!linked) {
-            const { data: selectedSeller, error: selectedSellerError } = await client.from("salesmen").select("*").eq("id", f.salesman_id).maybeSingle();
-            if (selectedSellerError) throw Error("Login created, but could not load Arsalan's selected salesman profile for linking: " + selectedSellerError.message + ". Retry linking from Users & Access.");
-            linked = selectedSeller || null;
-          }
-          if (!linked) throw Error("Login created, but the selected salesman profile was not found. Refresh Users & Access and link the existing profile.");
-          if (String(linked.user_id || "") !== String(data.user_id) || String(linked.manager_user_id || "") !== String(f.manager_user_id || "")) {
-            await store.run("master.save", { table: "salesmen", record: { ...linked, user_id: data.user_id, manager_user_id: f.manager_user_id || null }, expected_version: linked.version });
-          }
-        }
-        await store.refresh();
-        if (f.role === "salesman") {
-          const basis = f.salary_basis === "commission" ? "commission" : "fixed";
-          const seller = (S().salesmen || []).find(x => String(x.user_id || "") === String(data.user_id));
-          if (!seller) throw Error("Login was created, but the salesman profile could not be found to save salary basis. Open Users & Access and retry setup.");
-          const settingsPayload = { user_id: data.user_id, salesman_id: seller.id, salary_basis: basis, updated_at: new Date().toISOString() };
-          const { error: settingsError } = await client.from("salesman_compensation_settings").upsert(settingsPayload, { onConflict: "user_id" });
-          if (settingsError) throw Error("Login created, but salary basis could not be saved. Apply supabase/salesman_commission_basis_v55_50.sql. Details: " + settingsError.message);
-          if (basis === "commission") {
-            const products = (S().products || []).filter(p => p.active !== false && !p.deleted_at);
-            const rates = products.map(p => {
-              const key = `commission_${String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`;
-              return { product_id: String(p.id), product_name: String(p.name || ""), commission_per_carton_paisa: Math.round(Math.max(0, Number(f[key] || 0)) * 100) };
-            });
-            const { error: rateError } = await client.from("salesman_product_commissions").upsert(rates.map(r => ({ user_id: data.user_id, salesman_id: seller.id, ...r, updated_at: new Date().toISOString() })), { onConflict: "user_id,product_id" });
-            if (rateError) throw Error("Login created, but product commission rates could not be saved. Apply the v55.50 SQL migration. Details: " + rateError.message);
-          }
-        }
-        close();
-        render();
-        toast("Login created and salesman linked to the selected manager");
+        close(); render();
+        toast(isSalesman ? "Salesman login and linked employee profile created." : "Manager login and manager profile created.");
         break;
       }
       case "user-form": {
