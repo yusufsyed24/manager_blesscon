@@ -1,406 +1,329 @@
-export const DEFAULTS = {
-  company_name: "Blesscon Candy",
-  phone: "+923413905030",
-  email: "blessconcandy@gmail.com",
-  website: "www.blessconcandy.com",
-  address: "",
-  ntn: "",
-  bank_details: "",
-  terms: "Please pay by the agreed due date.",
-  monthly_target: 130,
-  company_monthly_target: 2000,
-  boxes_per_carton: 24,
-  base_salary_paisa: 4500000,
-  working_days: [1, 2, 3, 4, 5, 6],
-  holidays: [],
-  carry_month_end: true,
-  reduce_by_surplus: false,
-  block_negative_stock: true,
-  allow_customer_credit: false,
-  low_stock_boxes: 24,
-  auto_salary_expense: false,
-  tiers: [
-    { min: 0, label: "1–5", rate_paisa: 23000 },
-    { min: 6, label: "6–24", rate_paisa: 23000 },
-    { min: 25, label: "25–49", rate_paisa: 22500 },
-    { min: 50, label: "50+", rate_paisa: 22000 },
+import { LOGO } from "./brand.js";
+import { PDF_FONT } from "./pdf-font.js";
+import { esc, money, paymentState } from "./domain.js";
+export const DOCUMENT_TEMPLATES = {
+  invoice: [
+    { id: "classic", label: "Classic" }, { id: "modern", label: "Modern Branded" },
+    { id: "minimal", label: "Minimal / Black & White" }, { id: "thermal", label: "Compact Thermal Receipt (80 mm)" },
+    { id: "wholesale", label: "Detailed Wholesale" }, { id: "bilingual", label: "Urdu / Bilingual" },
+    { id: "challan", label: "Delivery Challan / Packing Slip" }, { id: "statement", label: "Statement of Account" },
   ],
-  incentives: [
-    { min: 0, amount_paisa: 0 },
-    { min: 60, amount_paisa: 300000 },
-    { min: 75, amount_paisa: 600000 },
-    { min: 90, amount_paisa: 800000 },
-    { min: 100, amount_paisa: 1000000 },
+  quote: [
+    { id: "classic", label: "Classic" }, { id: "modern", label: "Modern Branded" },
+    { id: "minimal", label: "Minimal / Black & White" }, { id: "proforma", label: "Proforma Invoice" },
+    { id: "pricelist", label: "Price List / Rate Card" }, { id: "bilingual", label: "Bilingual (English + Urdu)" },
   ],
 };
-export const money = (n) =>
-  "Rs. " +
-  (Math.round(Number(n) || 0) / 100).toLocaleString("en-PK", {
-    maximumFractionDigits: 2,
-  });
-export const paisa = (n) => {
-  const v = Number(
-    String(n ?? "")
-      .replace(/Rs\.?|PKR|,/gi, "")
-      .trim(),
-  );
-  if (!Number.isFinite(v)) throw Error("Invalid money value");
-  return Math.round(v * 100);
-};
-export const uid = () => crypto.randomUUID();
-export const esc = (v) =>
-  String(v ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ],
-  );
-export const today = () =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Karachi",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-export const addDays = (d, n) => {
-  const x = new Date(d + "T12:00:00Z");
-  x.setUTCDate(x.getUTCDate() + n);
-  return x.toISOString().slice(0, 10);
-};
-export const monthStart = (d) => d.slice(0, 7) + "-01";
-export const monthEnd = (d) => {
-  const x = new Date(monthStart(d) + "T12:00:00Z");
-  x.setUTCMonth(x.getUTCMonth() + 1);
-  x.setUTCDate(0);
-  return x.toISOString().slice(0, 10);
-};
-export const isRani = (p) => /^Rani Candy/i.test(p.name);
-export function getRate(
-  product,
-  cartonsOnInvoice,
-  channel,
-  settings = DEFAULTS,
-  tiers = [],
-) {
-  if (channel === "retail")
-    return { rate_paisa: product.retail_paisa, label: "Retail" };
-  if (!isRani(product))
-    return { rate_paisa: product.wholesale_paisa, label: "Wholesale" };
-  const own = tiers.filter((t) => t.product_id === product.id && !t.deleted_at);
-  const pool = (
-    own.length
-      ? own.map((t) => ({ ...t, min: Number(t.min_cartons) }))
-      : settings.tiers
-  )
-    .filter((t) => t.min <= cartonsOnInvoice)
-    .sort((a, b) => b.min - a.min);
-  if (!pool.length) throw Error("Missing wholesale tier for " + product.name);
-  return { rate_paisa: Number(pool[0].rate_paisa), label: pool[0].label };
-}
-export function priceLines(
-  lines,
-  products,
-  channel,
-  settings = DEFAULTS,
-  tiers = [],
-  canOverride = false,
-) {
-  const enriched = lines.map((l) => {
-    const p = products.find((p) => p.id === l.product_id);
-    if (!p) throw Error("Choose a product");
-    const cartons = Number(l.cartons) || 0,
-      loose_boxes = Number(l.loose_boxes) || 0;
-    if (
-      !Number.isInteger(cartons) ||
-      !Number.isInteger(loose_boxes) ||
-      cartons < 0 ||
-      loose_boxes < 0
-    )
-      throw Error("Use whole, nonnegative quantities");
-    return {
-      ...l,
-      cartons,
-      loose_boxes,
-      p,
-      boxes: cartons * p.boxes_per_carton + loose_boxes,
-    };
-  });
-  const invoiceCartons = enriched.reduce(
-    (n, l) => n + (isRani(l.p) ? l.boxes / l.p.boxes_per_carton : 0),
-    0,
-  );
-  return enriched.map(({ p, ...l }) => {
-    const r = getRate(p, invoiceCartons, channel, settings, tiers);
-    const override = l.override_reason?.trim();
-    if (override && !canOverride) throw Error("Admin or Manager required for manual rates");
-    const rate = override ? Number(l.rate_paisa) : r.rate_paisa;
-    if (!Number.isSafeInteger(rate) || rate < 0) throw Error("Invalid rate");
-    return {
-      ...l,
-      product_name: p.name,
-      boxes_per_carton: p.boxes_per_carton,
-      rate_paisa: rate,
-      cost_paisa: p.cost_paisa,
-      amount_paisa: rate * l.boxes,
-      tier_label: r.label,
-      margin_paisa: (rate - p.cost_paisa) * l.boxes,
-      invoice_cartons: invoiceCartons,
-    };
-  });
-}
-export function paymentState(total, paid) {
+export function documentData(s, id, type = "invoice") {
+  const quote = type === "quote";
+  const d = s[quote ? "quotations" : "orders"].find((x) => x.id === id);
+  if (!d) throw Error("Document not found");
+  const invoice = quote ? null : s.invoices.find((x) => x.order_id === d.id);
   return {
-    status: paid <= 0 ? "UNPAID" : paid < total ? "PART PAID" : "PAID",
-    paid,
-    balance: Math.max(0, total - paid),
-    credit: Math.max(0, paid - total),
-  };
-}
-export function invoiceState(invoice, payments) {
-  return paymentState(
-    invoice.total_paisa,
-    payments
-      .filter((p) => p.invoice_id === invoice.id && !p.voided_at)
-      .reduce((a, p) => a + Number(p.amount_paisa), 0),
-  );
-}
-export function workingDay(date, settings, salesman) {
-  const weekday = new Date(date + "T12:00:00Z").getUTCDay();
-  return (
-    settings.working_days.includes(weekday) &&
-    !settings.holidays.includes(date) &&
-    !(salesman.off_days || []).includes(date)
-  );
-}
-export function workingDays(date, settings, salesman) {
-  let n = 0;
-  for (let d = monthStart(date); d <= monthEnd(date); d = addDays(d, 1))
-    if (workingDay(d, settings, salesman)) n++;
-  return n;
-}
-export function targetChain(
-  salesman,
-  orders,
-  items,
-  settings = DEFAULTS,
-  through = today(),
-  imported = [],
-) {
-  let carry = 0,
-    prevMonth = "",
-    rows = [];
-  const allOrders = orders.filter(
-    (o) =>
-      o.salesman_id === salesman.id &&
-      o.status === "confirmed" &&
-      !o.deleted_at,
-  );
-  for (let d = salesman.joining_date; d <= through; d = addDays(d, 1)) {
-    if (prevMonth && prevMonth !== d.slice(0, 7) && !settings.carry_month_end)
-      carry = 0;
-    prevMonth = d.slice(0, 7);
-    const dayOrders = allOrders.filter((o) => o.date === d);
-    const dayItems = items.filter((l) =>
-      dayOrders.some((o) => o.id === l.order_id),
-    );
-    const fallback = imported.find(
-      (r) => r.date === d && r.salesman_id === salesman.id,
-    );
-    const achieved = dayOrders.length
-      ? dayItems.reduce((a, l) => a + l.boxes / l.boxes_per_carton, 0)
-      : Number(fallback?.imported_actual_cartons || 0);
-    if (!workingDay(d, settings, salesman) && !achieved) continue;
-    const base = workingDay(d, settings, salesman)
-      ? salesman.monthly_target / workingDays(d, settings, salesman)
-      : 0;
-    const effective = Math.max(0, base + carry);
-    const shortfall = Math.max(0, effective - achieved),
-      surplus = Math.max(0, achieved - effective);
-    const out = settings.reduce_by_surplus ? effective - achieved : shortfall;
-    rows.push({
-      id: salesman.id + ":" + d,
-      salesman_id: salesman.id,
-      date: d,
-      base_target: base,
-      carried_forward_in: carry,
-      effective_target: effective,
-      achieved_cartons: achieved,
-      achieved_boxes: dayOrders.length
-        ? dayItems.reduce((a, l) => a + l.boxes, 0)
-        : Number(fallback?.imported_actual_boxes || 0),
-      sales_amount:
-        dayOrders.reduce((a, o) => a + Number(o.total_paisa), 0) ||
-        Number(fallback?.imported_sales_amount || 0),
-      shortfall,
-      surplus,
-      carried_forward_out: out,
-      closed: d < today(),
-    });
-    carry = out;
-  }
-  return rows;
-}
-export function targetPerformance(
-  orders,
-  items,
-  from,
-  to,
-  managerUserId = "",
-  managerSalesmanId = "",
-) {
-  const periodOrders = orders.filter(
-    (order) =>
-      order.status === "confirmed" &&
-      !order.deleted_at &&
-      order.date >= from &&
-      order.date <= to,
-  );
-  const cartonsFor = (order) =>
-    items
-      .filter((item) => item.order_id === order.id)
-      .reduce(
-        (sum, item) =>
-          sum + Number(item.boxes || 0) / (Number(item.boxes_per_carton) || 1),
-        0,
-      );
-  const managerOrders = periodOrders.filter(
-    (order) =>
-      !order.salesman_id ||
-      (managerUserId && order.sold_by_user_id === managerUserId) ||
-      (managerUserId &&
-        order.created_by === managerUserId &&
-        managerSalesmanId &&
-        order.salesman_id === managerSalesmanId),
-  );
-  const managerDirectCartons = managerOrders.reduce(
-    (sum, order) => sum + cartonsFor(order),
-    0,
-  );
-  const salesmanCartons = periodOrders
-    .filter((order) => !managerOrders.includes(order))
-    .reduce((sum, order) => sum + cartonsFor(order), 0);
-  return {
-    // The target is exclusively for salesman/team sales. Manager direct sales
-    // are reported separately and must never close or reduce the team target.
-    achieved_cartons: salesmanCartons,
-    manager_direct_cartons: managerDirectCartons,
-    salesman_cartons: salesmanCartons,
-  };
-}
-export function salary(salesman, achieved, settings = DEFAULTS) {
-  const percent = (achieved / salesman.monthly_target) * 100;
-  const slab = [...settings.incentives]
-    .sort((a, b) => b.min - a.min)
-    .find((x) => percent >= x.min) || { amount_paisa: 0 };
-  return {
-    percent,
-    incentive: slab.amount_paisa,
-    total: Number(salesman.base_salary_paisa) + slab.amount_paisa,
-  };
-}
-export function profitLoss(
-  orders,
-  items,
-  expenses,
-  payments,
-  invoices,
-  from,
-  to,
-) {
-  const os = orders.filter(
-      (o) =>
-        o.status === "confirmed" &&
-        !o.deleted_at &&
-        o.date >= from &&
-        o.date <= to,
+    type,
+    settings: s.settings,
+    document: d,
+    invoice,
+    customer: s.customers.find((c) => c.id === d.customer_id) || {},
+    salesman:
+      s.salesmen.find((x) => x.id === d.salesman_id)?.name || "Unassigned",
+    items: s[quote ? "quotation_items" : "order_items"].filter(
+      (l) => l[quote ? "quotation_id" : "order_id"] === id,
     ),
-    ids = new Set(os.map((o) => o.id));
-  const ls = items.filter((l) => ids.has(l.order_id));
-  const ex = expenses.filter(
-    (e) => !e.deleted_at && e.date >= from && e.date <= to,
-  );
-  const subtotal = os.reduce((a, o) => a + Number(o.subtotal_paisa), 0),
-    discount = os.reduce((a, o) => a + Number(o.discount_paisa), 0),
-    revenue = subtotal - discount,
-    cogs = ls.reduce((a, l) => a + l.boxes * Number(l.cost_paisa), 0),
-    expense = ex.reduce((a, e) => a + Number(e.amount_paisa), 0);
-  const gross = revenue - cogs,
-    net = gross - expense;
-  const categories = {},
-    channels = {},
-    salesmen = {},
-    products = {};
-  ex.forEach(
-    (e) =>
-      (categories[e.category] =
-        (categories[e.category] || 0) + Number(e.amount_paisa)),
-  );
-  os.forEach((o) => {
-    channels[o.channel] = (channels[o.channel] || 0) + Number(o.total_paisa);
-    salesmen[o.salesman_id || "Unassigned"] =
-      (salesmen[o.salesman_id || "Unassigned"] || 0) + Number(o.total_paisa);
-  });
-  ls.forEach((l) => {
-    const o = os.find((o) => o.id === l.order_id),
-      alloc = o.subtotal_paisa
-        ? Math.round((o.discount_paisa * l.amount_paisa) / o.subtotal_paisa)
-        : 0;
-    products[l.product_name] =
-      (products[l.product_name] || 0) +
-      l.boxes * (l.rate_paisa - l.cost_paisa) -
-      alloc;
-  });
-  const collected = payments
-    .filter((p) => !p.voided_at && p.date >= from && p.date <= to)
-    .reduce((a, p) => a + Number(p.amount_paisa), 0);
-  const outstanding = invoices
-    .filter((i) => ids.has(i.order_id))
-    .reduce((a, i) => a + invoiceState(i, payments).balance, 0);
-  return {
-    subtotal,
-    discount,
-    revenue,
-    cogs,
-    gross,
-    expense,
-    net,
-    grossMargin: revenue ? (gross / revenue) * 100 : 0,
-    netMargin: revenue ? (net / revenue) * 100 : 0,
-    collected,
-    outstanding,
-    categories,
-    channels,
-    salesmen,
-    products,
+    payments: quote
+      ? []
+      : s.payments.filter((p) => p.invoice_id === invoice?.id && !p.voided_at),
   };
 }
-export const expiryStatus = (d, now = today()) =>
-  !d
-    ? "Not set"
-    : d < now
-      ? "Expired"
-      : d <= addDays(now, 30)
-        ? "≤30 days"
-        : d <= addDays(now, 90)
-          ? "≤90 days"
-          : "OK";
-export function diffRecords(before, after, key = "id") {
-  const map = new Map(before.map((x) => [x[key], x]));
-  let created = 0,
-    updated = 0,
-    unchanged = 0;
-  for (const r of after) {
-    const old = map.get(r[key]);
-    if (!old) created++;
-    else if (
-      Object.keys(r).some(
-        (k) =>
-          k !== "version" && JSON.stringify(r[k]) !== JSON.stringify(old[k]),
-      )
-    )
-      updated++;
-    else unchanged++;
+export function signatures(state, settings, d) {
+  if (state.status === "PAID")
+    return [
+      "Received with thanks.",
+      "Authorised signature: " +
+        (settings.signature_name || settings.company_name),
+    ];
+  if (state.status === "PART PAID")
+    return [
+      "Receiver of goods: ____________________",
+      "Company signature: ____________________",
+      "Balance due by " + d.due_date,
+    ];
+  return [
+    "Customer acknowledgement: I acknowledge receipt of goods and agree to pay " +
+      money(state.balance) +
+      " by " +
+      d.due_date +
+      ".",
+    "Customer signature: ____________________",
+  ];
+}
+export function documentHTML(payload, pending = false, template = "classic") {
+  const {
+    settings: s,
+    document: d,
+    customer: c,
+    items,
+    payments,
+    salesman,
+    type,
+  } = payload;
+  const quote = type === "quote";
+  const tmpl = String(template || "classic");
+  const noPrices = tmpl === "challan";
+  const thermal = tmpl === "thermal";
+  const bilingual = tmpl === "bilingual";
+  const state =
+    d.status === "cancelled"
+      ? { status: "CANCELLED", paid: 0, balance: 0, credit: 0 }
+      : paymentState(
+          Number(d.total_paisa),
+          payments.reduce((a, p) => a + Number(p.amount_paisa), 0),
+        );
+  const paidDate = [...payments].sort((a, b) => b.date.localeCompare(a.date))[0]
+    ?.date;
+  const sig =
+    d.status === "cancelled"
+      ? ["Cancelled invoice — no payment due."]
+      : quote
+        ? [
+            "Accepted by: ____________________",
+            "Name / date: ____________________",
+          ]
+        : signatures(state, s, d);
+  const templateStyle = tmpl === "modern" ? "border-top:12px solid #c8a44d;background:linear-gradient(90deg,#12233f 0 100%);color:#fff;padding:14px" : tmpl === "minimal" ? "filter:grayscale(1);background:#fff;color:#111" : thermal ? "width:72mm;max-width:72mm;font-size:10px" : "";
+  const documentTitle = tmpl === "proforma" ? "PROFORMA INVOICE" : tmpl === "challan" ? "DELIVERY CHALLAN" : tmpl === "pricelist" ? "PRICE LIST / RATE CARD" : (quote ? "QUOTATION" : "INVOICE");
+  const columns = noPrices ? "<th>Product</th><th>Cartons</th><th>Loose</th><th>Boxes</th>" : "<th>Product</th><th>Cartons</th><th>Loose</th><th>Boxes</th><th>Rate / box</th><th>Amount</th>";
+  const lineRows = items.map((l) => `<tr><td>${esc(l.product_name)}<small>${esc(l.product_id)}</small></td><td>${l.cartons}</td><td>${l.loose_boxes}</td><td>${l.boxes}</td>${noPrices ? "" : `<td>${money(l.rate_paisa)}</td><td>${money(l.amount_paisa)}</td>`}</tr>`).join("");
+  return `<article class="document template-${esc(tmpl)}" style="${templateStyle}" aria-label="${quote ? "Quotation" : "Invoice"} ${esc(d.number)}"><header class="doc-head"><img src="${LOGO}" alt="Blesscon Candy logo"><div><h1>${esc(s.company_name)}</h1><p>${esc(s.address)}<br>${esc(s.phone)} · ${esc(s.email)}<br>${esc(s.website)}${s.ntn ? "<br>NTN: " + esc(s.ntn) : ""}</p></div><div class="doc-title"><h2>${documentTitle}${bilingual ? " / " + (quote ? "کوٹیشن" : "انوائس") : ""}</h2><b>${esc(d.number)}</b><p>Date: ${esc(d.date)}<br>${quote ? "Valid until" : "Due date"}: ${esc(quote ? d.valid_until : d.due_date)}${quote ? "<br>Revision: " + esc(d.revision) : ""}</p></div></header>${pending ? '<p class="notice">PENDING SYNC — provisional document. Await server confirmation before issuing.</p>' : ""}${d.status === "cancelled" ? '<p class="notice danger">CANCELLED — no amount due</p>' : ""}<section class="doc-parties"><div><small>${quote ? "QUOTATION FOR" : "BILL TO"}</small><h3>${esc(c.name)}</h3><p>${esc(c.address)}<br>${esc(c.phone)} ${esc(c.email)}</p></div><div><small>SALESMAN / CHANNEL</small><p>${esc(salesman)}<br>${esc(d.channel)}</p></div></section><table class="doc-lines"><thead><tr>${columns}</tr></thead><tbody>${lineRows}</tbody></table><p class="doc-note">Pricing: ${[...new Set(items.map((l) => l.tier_label))].map(esc).join(", ")}. Rani wholesale tiers use combined Rani cartons, including loose boxes.</p>${noPrices ? `<p>Receiver name: ____________________ &nbsp; Signature: ____________________</p>` : `<section class="doc-summary"><div>${!quote ? `<div class="stamp ${state.status === "PAID" ? "paid" : state.status === "PART PAID" ? "partial" : "unpaid"}">${state.status === "UNPAID" ? "UNPAID / CREDIT SALE" : state.status}</div>${state.status === "PAID" ? "<p>Received with thanks · " + esc(paidDate || d.date) + "</p>" : ""}` : `<p>Status: ${esc(d.status)}</p>`}</div><table><tbody><tr><td>Subtotal</td><td>${money(d.subtotal_paisa)}</td></tr><tr><td>Discount</td><td>${money(d.discount_paisa)}</td></tr><tr class="total"><th>Total</th><th>${money(d.total_paisa)}</th></tr>${!quote ? `<tr><td>Paid</td><td>${money(state.paid)}</td></tr><tr><th>Balance due</th><th>${money(state.balance)}</th></tr>${state.credit ? `<tr><td>Customer credit</td><td>${money(state.credit)}</td></tr>` : ""}` : ""}</tbody></table></section>`}${!quote && payments.length && !noPrices ? `<section><h3>Payment history</h3><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${payments.map((p) => `<tr><td>${esc(p.date)}</td><td>${esc(p.method)}</td><td>${esc(p.reference || "")}</td><td>${money(p.amount_paisa)}</td></tr>`).join("")}</tbody></table></section>` : ""}<section class="doc-terms"><h3>Terms & payment details</h3><p>${esc(d.terms || s.terms).replace(/\n/g, "<br>")}</p>${s.bank_details ? "<p>" + esc(s.bank_details).replace(/\n/g, "<br>") + "</p>" : ""}${d.notes ? "<p>Notes: " + esc(d.notes) + "</p>" : ""}</section><footer class="doc-sign">${sig.map((x) => "<p>" + esc(x) + "</p>").join("")}${!quote && state.status === "PAID" && /^data:image\/(png|jpeg);base64,/.test(s.signature_data || "") ? `<img src="${s.signature_data}" alt="Authorised company signature" style="max-width:160px;max-height:60px">` : ""}<small>Thank you for choosing ${esc(s.company_name)}.</small></footer></article>`;
+}
+export function makePDF(payload, jsPDF = globalThis.jspdf?.jsPDF, template = "classic") {
+  if (!jsPDF) throw Error("PDF library is unavailable; reload once online");
+  const {
+    settings: s,
+    document: d,
+    customer: c,
+    items,
+    payments,
+    salesman,
+    type,
+  } = payload;
+  const quote = type === "quote";
+  const pdf = new jsPDF({ unit: "mm", format: template === "thermal" ? [80, 220] : template === "challan" ? "a4" : "a4" });
+  pdf.addFileToVFS("BlessconSans.ttf", PDF_FONT);
+  pdf.addFont("BlessconSans.ttf", "BlessconSans", "normal");
+  pdf.setFont("BlessconSans", "normal");
+  let y = 18,
+    page = 1;
+  const text = (value, x = 16, size = 10, width = 178) => {
+    pdf.setFontSize(size);
+    let lines = pdf.splitTextToSize(
+      String(value || "").replace(/[–—]/g, "-"),
+      width,
+    );
+    for (const line of lines) {
+      if (y > 276) {
+        pdf.addPage();
+        page++;
+        y = 18;
+      }
+      pdf.text(line, x, y);
+      y += size * 0.46;
+    }
+    y += 2;
+  };
+  const need = (h) => {
+    if (y + h > 279) {
+      pdf.addPage();
+      page++;
+      y = 18;
+    }
+  };
+  pdf.addImage(LOGO, "JPEG", 15, 12, 28, 28);
+  if (template === "minimal") pdf.setTextColor(0, 0, 0); else pdf.setTextColor(18, 35, 63);
+  pdf.setFontSize(17);
+  pdf.text(s.company_name, 48, 20);
+  pdf.setFontSize(9);
+  pdf.text(
+    [
+      s.address || "",
+      s.phone + " | " + s.email,
+      s.website || "",
+      s.ntn ? "NTN: " + s.ntn : "",
+    ].filter(Boolean),
+    48,
+    26,
+  );
+  y = 49;
+  text((template === "proforma" ? "PROFORMA INVOICE" : template === "challan" ? "DELIVERY CHALLAN" : template === "pricelist" ? "PRICE LIST / RATE CARD" : (quote ? "QUOTATION" : "INVOICE")) + "  " + d.number, 16, 16);
+  text(
+    "Date: " +
+      d.date +
+      "    " +
+      (quote
+        ? "Valid until: " + d.valid_until + "    Revision " + d.revision
+        : "Due date: " + d.due_date),
+  );
+  text(
+    "Customer: " + c.name + "\n" + (c.address || "") + "\n" + (c.phone || ""),
+  );
+  text("Salesman: " + salesman + "   |   " + d.channel);
+  y += 3;
+  const columns = [16, 89, 108, 125, 140, 170];
+  const header = () => {
+    need(12);
+    pdf.setFillColor(18, 35, 63);
+    pdf.rect(14, y - 5, 182, 9, "F");
+    pdf.setTextColor(255);
+    pdf.setFontSize(8);
+    ["Product", "Cartons", "Loose", "Boxes", "Rate/box", "Amount"].forEach(
+      (x, i) => pdf.text(x, columns[i], y),
+    );
+    pdf.setTextColor(18, 35, 63);
+    y += 9;
+  };
+  header();
+  for (const l of items) {
+    const names = pdf.splitTextToSize(l.product_name, 69);
+    const h = Math.max(10, names.length * 4 + 5);
+    if (y + h > 278) {
+      pdf.addPage();
+      y = 18;
+      header();
+    }
+    pdf.setFontSize(8);
+    pdf.text(names, 16, y);
+    [
+      l.cartons,
+      l.loose_boxes,
+      l.boxes,
+      money(l.rate_paisa),
+      money(l.amount_paisa),
+    ].forEach((v, i) => pdf.text(String(v), columns[i + 1], y));
+    y += h;
+    pdf.setDrawColor(220);
+    pdf.line(14, y - 5, 196, y - 5);
   }
-  return { created, updated, unchanged };
+  text(
+    "Pricing: " +
+      [...new Set(items.map((l) => l.tier_label))].join(", ") +
+      ". Combined Rani cartons include loose boxes.",
+    16,
+    8,
+  );
+  need(45);
+  const paid = payments.reduce((a, p) => a + Number(p.amount_paisa), 0),
+    state =
+      d.status === "cancelled"
+        ? { status: "CANCELLED", paid: 0, balance: 0, credit: 0 }
+        : paymentState(Number(d.total_paisa), paid);
+  text(
+    "Subtotal: " +
+      money(d.subtotal_paisa) +
+      "\nDiscount: " +
+      money(d.discount_paisa) +
+      "\nTotal: " +
+      money(d.total_paisa),
+    120,
+    11,
+    76,
+  );
+  if (!quote) {
+    text(
+      "Paid: " +
+        money(paid) +
+        "\nBalance due: " +
+        money(state.balance) +
+        (state.credit ? "\nCustomer credit: " + money(state.credit) : ""),
+      120,
+      10,
+      76,
+    );
+    pdf.setTextColor(
+      ...(state.status === "PAID"
+        ? [21, 112, 67]
+        : state.status === "PART PAID"
+          ? [139, 87, 0]
+          : [175, 40, 40]),
+    );
+    need(18);
+    pdf.setFontSize(13);
+    const stampLabel =
+      state.status === "UNPAID" ? "UNPAID / CREDIT SALE" : state.status;
+    pdf.setDrawColor(
+      ...(state.status === "PAID"
+        ? [21, 112, 67]
+        : state.status === "PART PAID"
+          ? [139, 87, 0]
+          : [175, 40, 40]),
+    );
+    pdf.setLineWidth(0.6);
+    pdf.roundedRect(16, y - 6, pdf.getTextWidth(stampLabel) + 10, 11, 1, 1);
+    text(stampLabel, 21, 13);
+    pdf.setTextColor(18, 35, 63);
+    if (state.status === "PAID")
+      text(
+        "Received with thanks. Paid date: " +
+          [...payments].sort((a, b) => b.date.localeCompare(a.date))[0]?.date,
+      );
+    if (payments.length) {
+      text("Payment history", 16, 11);
+      payments.forEach((p) =>
+        text(
+          p.date +
+            " | " +
+            p.method +
+            " | " +
+            money(p.amount_paisa) +
+            " | " +
+            (p.reference || ""),
+          16,
+          9,
+        ),
+      );
+    }
+  }
+  text("Terms & payment details", 16, 11);
+  text(d.terms || s.terms);
+  if (s.bank_details) text(s.bank_details);
+  if (d.notes) text("Notes: " + d.notes);
+  need(30);
+  (d.status === "cancelled"
+    ? ["Cancelled invoice - no payment due."]
+    : quote
+      ? [
+          "Accepted by: ____________________",
+          "Name / date: ____________________",
+        ]
+      : signatures(state, s, d)
+  ).forEach((t) => text(t));
+  if (
+    !quote &&
+    state.status === "PAID" &&
+    /^data:image\/(png|jpeg);base64,/.test(s.signature_data || "")
+  ) {
+    need(25);
+    pdf.addImage(s.signature_data, 16, y, 45, 18);
+    y += 20;
+  }
+  const count = pdf.getNumberOfPages();
+  for (let i = 1; i <= count; i++) {
+    pdf.setPage(i);
+    pdf.setFontSize(8);
+    pdf.setTextColor(100);
+    pdf.text(
+      s.company_name + " | " + d.number + " | " + i + " / " + count,
+      16,
+      290,
+    );
+  }
+  return pdf;
+}
+export function shareText(p, link = "") {
+  const paid = p.payments.reduce((a, x) => a + Number(x.amount_paisa), 0);
+  return `${p.settings.company_name}\n${p.type === "quote" ? "Quotation" : "Invoice"} ${p.document.number}\nTotal: ${money(p.document.total_paisa)}${p.type === "quote" ? "" : "\nBalance: " + money(Math.max(0, p.document.total_paisa - paid))}\n${link || "Please download the PDF and attach it to this message."}`;
+}
+export function whatsappURL(phone, text) {
+  let p = String(phone || "").replace(/\D/g, "");
+  if (p.startsWith("0")) p = "92" + p.slice(1);
+  return "https://wa.me/" + p + "?text=" + encodeURIComponent(text);
 }
