@@ -359,6 +359,7 @@ async function hydrateManagerFieldwork() {
     const signed = await client.storage.from("employee-private").createSignedUrl(profile.data.avatar_path, 3600);
     if (!signed.error && signed.data?.signedUrl && avatar.isConnected) avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="Manager profile photo">`;
   }
+  hydrateOwnSalarySlips("manager",user.id).catch((e)=>toast("Could not load salary slips: "+e.message));
   const salaryRoot = $("manager-salary-history");
   if (salaryRoot) {
     const [salaryRows, advanceRows] = await Promise.all([
@@ -447,6 +448,14 @@ function applyArsalanOctoberPayrollCorrection(snapshot, employeeName) {
   pay.total_paisa = pay.estimated_net_after_outstanding_advances_paisa;
   pay.arsalan_payroll_correction = true;
   return pay;
+}
+
+async function hydrateOwnSalarySlips(employeeType, employeeId) {
+  const root=$(employeeType==="manager"?"manager-salary-slip-history":"my-salary-slip-history"); if(!root||!client)return;
+  let q=client.from("employee_salary_slips").select("id,salary_period,salary_basis,gross_paisa,arrears_paisa,advance_deduction_paisa,net_paid_paisa,payment_date").order("salary_period",{ascending:false}).limit(60);
+  q=employeeType==="manager"?q.eq("manager_user_id",employeeId):q.eq("salesman_id",employeeId);
+  const {data,error}=await q;
+  root.innerHTML=error?`<p class="notice">Salary slip history unavailable: ${esc(error.message)}. Apply the v55.61 payroll migration.</p>`:`<h3>My salary slips · month-wise</h3>${table(["Month","Basis","Gross","Arrears","Advance deduction","Net paid","Slip"],(data||[]).map(x=>[esc(x.salary_period),esc(x.salary_basis),money(x.gross_paisa),money(x.arrears_paisa||0),money(x.advance_deduction_paisa||0),money(x.net_paid_paisa),btn("Open / print","salary-slip",x.id)]),"No salary slips released yet.")}`;
 }
 
 async function hydrateSalesmanSalary(seller) {
@@ -551,6 +560,7 @@ async function hydrateSalesmanProfile() {
     dayInput.addEventListener("change", () => { const body = $("my-day-body"); if (body) body.innerHTML = salesmanDayBody(seller.id, dayInput.value || today()); });
   }
   await hydrateSalesmanSalary(seller);
+  await hydrateOwnSalarySlips("salesman",seller.id);
 }
 
 function salesmanTargetDetails(salesmanId) {
@@ -626,7 +636,7 @@ async function hydrateSalesmanNotifications() {
     else if (result.data) { const pay = applyArsalanOctoberPayrollCorrection(result.data, own()?.name || own()?.display_name); salaryValue.textContent = money(pay.total_paisa ?? pay.gross_paisa ?? 0); salaryMeta.textContent = `${pay.status === "posted" ? `Posted for ${pay.salary_period}` : `Estimate for ${pay.salary_period} · pending Admin approval`} · Base earned ${money(pay.base_salary_paisa || 0)} · Attendance ${num(pay.attendance_days).toFixed(1)}/${num(pay.working_days)} days`; }
   }
   if (!root) return;
-  const { data, error } = await client.from("employee_notifications").select("id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,expires_at,created_at").eq("recipient_salesman_id", own().id).order("created_at", { ascending: false }).limit(50);
+  const { data, error } = await client.from("employee_notifications").select("id,title,message,priority,requires_acknowledgement,acknowledged_at,read_at,expires_at,created_at").or(`recipient_salesman_id.eq.${own().id},recipient_user_id.eq.${user.id}`).order("created_at", { ascending: false }).limit(50);
   if (error) { root.innerHTML = `<p class="notice danger">Notifications unavailable: ${esc(error.message)}. Apply the revamp migration and verify access policies.</p>`; return; }
   const activeMessages = (data || []).filter(n => !n.expires_at || n.expires_at >= new Date().toISOString());
   const unreadCount = activeMessages.filter(n => !n.read_at).length;
@@ -718,7 +728,7 @@ function renderManagerMyProfile() {
   const current = user || {};
   return head("My profile & fieldwork", "Manager profile, attendance, secure documents, field visits and attendance of salesmen linked to your account.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="manager-profile-avatar">♙</div><div><h2>${esc(current.name || current.email || "Manager")}</h2><p class="muted">${esc(current.email || "Email not available")}</p><p>Role: <b>Manager</b></p><p class="muted">Account ID: ${esc(current.id || "—")}</p></div></div><div class="grid"><div class="field"><label for="manager-profile-photo">Upload / change profile photo</label><input id="manager-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="manager-profile-photo-upload">Upload profile photo</button></div><p class="muted">JPG, PNG or WebP up to 5 MB. Stored privately.</p></section>
-    <section class="panel"><h2>My salary & advances</h2><p class="muted">Your posted salary payments and any salary advance still outstanding are shown here.</p><div id="manager-salary-history"><p class="muted">Loading salary and advance details…</p></div></section>
+    <section class="panel"><h2>My salary & advances</h2><p class="muted">Your posted salary payments and any salary advance still outstanding are shown here.</p><div id="manager-salary-slip-history"><p class="muted">Loading salary slips…</p></div><div id="manager-salary-history"><p class="muted">Loading salary and advance details…</p></div></section>
     <section class="panel"><h2>My attendance</h2><p>Check in and check out for today. GPS is optional and only requested when you check in.</p><div class="actions">${btn("Check in", "manager-attendance-check-in", "", "", "gold")}${btn("Check out", "manager-attendance-check-out")}</div><div id="manager-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
     <section class="panel"><h2>My documents & photos</h2><div class="grid">${select("Document type","manager-document-type",[["identity","Identity document"],["employment","Employment document"],["other","Other document"]],"other")}<div class="field"><label for="manager-document-file">Choose PDF or photo</label><input id="manager-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="manager-document-upload">Upload securely</button><p class="muted">Maximum 10 MB. Private links expire after one hour.</p><div id="manager-document-history"><p class="muted">Loading documents…</p></div></section>
     <section class="panel"><h2>Customer visits & fieldwork</h2><p class="muted">Record visits and notes. GPS is optional.</p><div class="grid">${field("Customer name or ID","manager-visit-customer","")}${field("Area visited","manager-visit-area","")}${select("Visit purpose","manager-visit-purpose",["Sales visit","Recovery","Order follow-up","Relationship visit","Other"],"Sales visit")}${area("Visit notes / outcome","manager-visit-notes","")}</div><div class="actions">${btn("Save visit without GPS","manager-visit-save")}${btn("Save visit with my location","manager-visit-save-location","","","gold")}</div><div id="manager-visit-history"><p class="muted">Loading visit history…</p></div></section>
@@ -742,7 +752,7 @@ function renderMyProfile() {
   return head("My profile", "Your profile, assigned area, daily stock and sales, monthly target, salary estimate and manager-uploaded documents.") +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="profile-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p class="muted">Employee ID: ${esc(seller.id)} · ${esc(seller.phone || "No phone added")}</p><p>Date of birth: <b>${esc(seller.date_of_birth || "Not recorded")}</b></p><p>Assigned area: <b id="my-current-area">${esc(seller.territory || seller.area || (client ? "Loading…" : "Not assigned"))}</b></p><p>Status: <b>${seller.active ? "Active" : "Inactive"}</b></p></div></div><p class="notice">Profile details, photograph, date of birth, NIC and education documents can only be changed by authorized management. Please contact your manager if anything needs correction.</p></section>
     <div class="cards">${card("Boxes sold today", orders.filter(o=>o.date===today()).reduce((n,o)=>n+(s.order_items||[]).filter(i=>i.order_id===o.id).reduce((a,i)=>a+num(i.boxes),0),0), "Confirmed sales quantity")}${card("Monthly target progress", `${monthBoxes} boxes sold · ${monthCartons.toFixed(2)} / ${monthlyTarget.toFixed(2)} cartons`, `${achievementPercent.toFixed(1)}% achieved · salary incentive follows confirmed sales`)}${card("Stock in hand", productRows.reduce((n,r)=>n+num(r[1]),0).toFixed(2), "Recorded quantity against you")}</div>
-    <section class="panel"><h2>My salary this month</h2><div id="my-salary-panel"><p class="muted">Loading salary…</p></div></section>
+    <section class="panel"><h2>My salary this month</h2><div id="my-salary-panel"><p class="muted">Loading salary…</p></div><div id="my-salary-slip-history"><p class="muted">Loading salary slip history…</p></div></section>
     <section class="panel"><div class="panel-heading"><h2>Stock assigned &amp; sales by day</h2><div class="field" style="margin:0"><label for="my-day-date">Day</label><input id="my-day-date" type="date" value="${today()}" max="${today()}"></div></div><div id="my-day-body">${salesmanDayBody(sid, today())}</div></section>
     <section class="panel"><h2>My stock in hand</h2>${table(["Product","Balance","Unit"], productRows, "No stock is currently recorded against you.")}</section>
     <section class="panel"><h2>Attendance history</h2><p class="muted">Attendance is recorded and corrected by authorized management. This view is read-only.</p><div id="my-attendance-history"><p class="muted">Loading attendance history…</p></div></section>
@@ -1831,7 +1841,9 @@ async function openAdminManagerProfile(managerUserId) {
   const managerUploadHtml = `<section class="panel"><h3>Upload manager documents (Admin)</h3><p>Upload any document or file type for this manager. Maximum file size: 25 MB. Files remain in private storage.</p><div class="grid">${select("Document category","manager-admin-document-type",[["identity","Identity / NIC"],["education","Education / certificates"],["appointment","Appointment letter"],["contract","Employment contract"],["employment","Employment record"],["salary_bank","Salary / bank document"],["tax","Tax / compliance document"],["training","Training certificate"],["performance","Performance review"],["policy","Policy acknowledgement"],["medical","Medical / leave document"],["other","Other document"]],"other")}<div class="field"><label for="manager-admin-document-file">Choose document or file (any format, up to 25 MB)</label><input id="manager-admin-document-file" type="file"></div></div><button class="gold" data-act="manager-admin-document-upload" data-id="${esc(managerUserId)}">Upload document to manager profile</button><p class="muted">The file is associated with this manager and visible to authorized Admin and the manager.</p></section>`;
   const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null || r.longitude == null ? "Not shared" : `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${encodeURIComponent(r.latitude)},${encodeURIComponent(r.longitude)}">View map</a>`]), "No fieldwork visits.");
   const salary = payroll.error ? `<p class="muted">Manager salary settings unavailable: ${esc(payroll.error.message)}</p>` : payroll.data ? table(["Salary setting","Value"], [["Base monthly salary", money(payroll.data.base_salary_paisa)], ["Monthly allowance", money(payroll.data.allowance_paisa)], ["Incentive per carton", money(payroll.data.incentive_per_carton_paisa)], ["Individual monthly target", `${num(payroll.data.monthly_target).toFixed(2)} cartons`], ["Working days per month", esc(payroll.data.working_days)], ["Payroll status", "Configured"]]) : `<p class="muted">No manager salary settings saved yet.</p>`;
-  modal(`${p.display_name || "Manager"} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(p.display_name || "Manager")}</h3><p><b>Role:</b> Manager</p><p><b>Account ID:</b> ${esc(p.id)}</p><p><b>Status:</b> ${p.active === false ? "Inactive" : "Active"}</p><p><b>Created:</b> ${esc(p.created_at ? new Date(p.created_at).toLocaleDateString() : "—")}</p></div></div></section><section class="panel"><h3>Salary & target settings</h3>${salary}</section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private document links expire after one hour.</p>${docsHtml}</section>${managerUploadHtml}<section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+  const slips=await client.from("employee_salary_slips").select("id,salary_period,salary_basis,gross_paisa,arrears_paisa,advance_deduction_paisa,net_paid_paisa,payment_date").eq("manager_user_id",managerUserId).order("salary_period",{ascending:false}).limit(60);
+  const slipsHtml=slips.error?`<p class="notice">Salary slips unavailable: ${esc(slips.error.message)}</p>`:table(["Month","Basis","Gross","Arrears","Advance deduction","Net paid","Slip"],(slips.data||[]).map(x=>[esc(x.salary_period),esc(x.salary_basis),money(x.gross_paisa),money(x.arrears_paisa||0),money(x.advance_deduction_paisa||0),money(x.net_paid_paisa),btn("Open / print","salary-slip",x.id)]),"No salary slips released yet.");
+  modal(`${p.display_name || "Manager"} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(p.display_name || "Manager")}</h3><p><b>Role:</b> Manager</p><p><b>Account ID:</b> ${esc(p.id)}</p><p><b>Status:</b> ${p.active === false ? "Inactive" : "Active"}</p><p><b>Created:</b> ${esc(p.created_at ? new Date(p.created_at).toLocaleDateString() : "—")}</p></div></div></section><section class="panel"><h3>Salary & target settings</h3>${salary}<h3>Salary slips · month-wise</h3>${slipsHtml}</section><section class="panel"><h3>Attendance history</h3>${attendanceHtml}</section><section class="panel"><h3>Uploaded documents</h3><p class="muted">Private document links expire after one hour.</p>${docsHtml}</section>${managerUploadHtml}<section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
 }
 
 async function openAdminSalesmanProfile(salesmanId) {
@@ -1885,7 +1897,9 @@ async function openAdminSalesmanProfile(salesmanId) {
       client.from("expenses").select("date,description,amount_paisa,salary_period,deleted_at").eq("salesman_id", seller.id).is("deleted_at", null).order("date", {ascending:false}).limit(36),
       client.from("employee_salary_advances").select("advance_date,amount_paisa,recovered_paisa,reason,status").eq("salesman_id", seller.id).order("advance_date", {ascending:false}).limit(50)
     ]);
-    salaryHistoryRoot.innerHTML = (salaryResult.error ? `<p class="notice">Salary history unavailable: ${esc(salaryResult.error.message)}</p>` : `<h4>Salary payments</h4>${table(["Date","Period","Details","Net paid"],(salaryResult.data||[]).filter(x=>/salary/i.test(x.description||"") || x.salary_period).map(x=>[esc(x.date),esc(x.salary_period||"—"),esc(x.description||"Salary"),money(x.amount_paisa)]),"No salary payments recorded.")}`) + (advanceResult.error ? `<p class="notice">Advance history unavailable: ${esc(advanceResult.error.message)}</p>` : `<h4>Salary advances</h4>${table(["Date","Advance taken","Recovered","Outstanding","Reason","Status"],(advanceResult.data||[]).map(a=>[esc(a.advance_date),money(a.amount_paisa),money(a.recovered_paisa||0),money(Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa))),esc(a.reason||"—"),esc(a.status||"posted")]),"No salary advances recorded.")}`);
+    const slipsResult=await client.from("employee_salary_slips").select("id,salary_period,employee_name,gross_paisa,arrears_paisa,advance_deduction_paisa,net_paid_paisa,payment_date,salary_basis").eq("salesman_id",seller.id).order("salary_period",{ascending:false}).limit(60);
+    const slipsHtml=slipsResult.error?`<p class="notice">Salary slips unavailable: ${esc(slipsResult.error.message)}. Apply supabase/salary_slips_notifications_v55_61.sql.</p>`:`<h4>Salary slips by month</h4>${table(["Month","Basis","Gross","Arrears","Advance deduction","Net paid","Slip"],(slipsResult.data||[]).map(x=>[esc(x.salary_period),esc(x.salary_basis),money(x.gross_paisa),money(x.arrears_paisa||0),money(x.advance_deduction_paisa||0),money(x.net_paid_paisa),btn("Open / print","salary-slip",x.id)]),"No salary slips released yet.")}`;
+    salaryHistoryRoot.innerHTML = slipsHtml + (salaryResult.error ? `<p class="notice">Salary history unavailable: ${esc(salaryResult.error.message)}</p>` : `<h4>Salary payments</h4>${table(["Date","Period","Details","Net paid"],(salaryResult.data||[]).filter(x=>/salary/i.test(x.description||"") || x.salary_period).map(x=>[esc(x.date),esc(x.salary_period||"—"),esc(x.description||"Salary"),money(x.amount_paisa)]),"No salary payments recorded.")}`) + (advanceResult.error ? `<p class="notice">Advance history unavailable: ${esc(advanceResult.error.message)}</p>` : `<h4>Salary advances</h4>${table(["Date","Advance taken","Recovered","Outstanding","Reason","Status"],(advanceResult.data||[]).map(a=>[esc(a.advance_date),money(a.amount_paisa),money(a.recovered_paisa||0),money(Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa))),esc(a.reason||"—"),esc(a.status||"posted")]),"No salary advances recorded.")}`);
   }
 
 }
@@ -2998,9 +3012,42 @@ function targetsModal(id) {
     )}`,
   );
 }
+function salarySlipMarkup(slip) {
+  const b = slip.breakdown || {};
+  const rows = [
+    ["Salary month", slip.salary_period], ["Employee", slip.employee_name],
+    ["Employee type / basis", `${slip.employee_type} / ${slip.salary_basis || "fixed"}`],
+    ["Gross earnings", money(slip.gross_paisa)], ["Previous-month arrears", money(slip.arrears_paisa || 0)],
+    ["Advance deduction", money(slip.advance_deduction_paisa || 0)], ["Net amount paid", money(slip.net_paid_paisa)],
+    ["Payment date", slip.payment_date], ["Payment account", slip.payment_account_key || "—"],
+    ["Reference", slip.payment_reference || "—"], ...(Array.isArray(b.lines) ? b.lines.map(x=>[x.label, x.value]) : [])
+  ];
+  return `<div style="font-family:Arial,sans-serif;color:#222;padding:28px;max-width:780px;margin:auto"><header style="display:flex;align-items:center;gap:18px;border-bottom:3px solid #b68b35;padding-bottom:16px;margin-bottom:20px"><img src="assets/logo.jpeg" alt="Blesscon Candy" style="width:90px;max-height:90px;object-fit:contain"><div><h1 style="margin:0;color:#6f4b12">BLESSCON CANDY</h1><p style="margin:5px 0">Salary Slip · ${esc(slip.salary_period)}</p><small>${esc(S().settings?.address || "")}</small></div></header><h2 style="text-align:center">SALARY SLIP</h2>${table(["Description","Amount / detail"],rows.map(r=>[esc(r[0]),esc(String(r[1]??"—"))]),"")}<p style="margin-top:30px;border-top:1px solid #bbb;padding-top:14px">This is a system-generated salary slip from Blesscon Candy Business Manager.</p><button onclick="window.print()" class="gold" style="padding:10px 18px">Print / Save PDF</button></div>`;
+}
+async function printSalarySlip(slipId) {
+  if (!client) throw Error("Salary slips require a connected session.");
+  const {data,error}=await client.from("employee_salary_slips").select("*").eq("id",slipId).single();
+  if(error) throw error;
+  const w=window.open("","_blank"); if(!w) throw Error("Allow pop-ups to print the salary slip.");
+  w.document.write(`<!doctype html><html><head><title>Blesscon Candy Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border:1px solid #ddd;text-align:left}th{background:#f5f0e6}button{margin-top:20px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(data)}</body></html>`); w.document.close();
+}
+async function saveSalarySlipAndNotify({id,employeeUserId,salesmanId,managerUserId,employeeName,employeeType,month,basis="fixed",gross,arrears=0,deduction,net,date,account,reference="",lines=[]}) {
+  const slipId=`SLIP-${employeeType}-${salesmanId || managerUserId}-${month}`;
+  const payload={id:slipId,employee_user_id:employeeUserId||null,salesman_id:salesmanId||null,manager_user_id:managerUserId||null,employee_name:employeeName,employee_type:employeeType,salary_period:month,salary_basis:basis,gross_paisa:gross,arrears_paisa:arrears,advance_deduction_paisa:deduction,net_paid_paisa:net,payment_date:date||today(),payment_account_key:account||null,payment_reference:reference||"",breakdown:{lines}};
+  const saved=await client.from("employee_salary_slips").upsert(payload,{onConflict:"id"});
+  if(saved.error) throw Error("Salary was posted but salary slip could not be saved. Do not release again; contact Admin to reconcile: "+saved.error.message);
+  if(employeeUserId || salesmanId) {
+    const notice={title:"Salary released",message:`Your salary for ${month} has been released. Net paid: ${money(net)}. Your Blesscon Candy salary slip is available in your profile.`,priority:"normal",requires_acknowledgement:false};
+    if(employeeUserId) notice.recipient_user_id=employeeUserId; else notice.recipient_salesman_id=salesmanId;
+    const n=await client.from("employee_notifications").insert(notice);
+    if(n.error) console.warn("Salary slip saved but notification failed:",n.error.message);
+  }
+  return slipId;
+}
+
 async function advanceSalaryModal(preselectedSalesmanId = "") {
   if (!admin()) throw Error("Only Admin can release salary advances.");
-  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable");
+  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable" && !a.salesman_id && !a.user_id);
   if (!accounts.length) throw Error("No active cash or bank accounts are available. Configure Cash & Bank Book accounts first.");
   const employees = [];
   for (const seller of (S().salesmen || []).filter(x => x.active !== false && !x.deleted_at)) {
@@ -3071,7 +3118,7 @@ async function postSalary(id, month = today().slice(0, 7), automatic = false) {
     if (automatic) return;
     throw Error("Salary already posted for " + month);
   }
-  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable" && (!manager() || !a.salesman_id || a.salesman_id === own()?.id));
+  const accounts = (S().cashbook_accounts || []).filter(a => a.active && a.account_type !== "receivable" && !a.salesman_id && !a.user_id);
   if (!accounts.length) throw Error("No active payment accounts are available. Ask Admin to configure Cash & Bank Book accounts.");
   const defaultAccount = accounts.find(a => /cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
   const advanceResult = await client.from("employee_salary_advances").select("id,employee_name,amount_paisa,recovered_paisa,reason,advance_date").eq("salesman_id", id).eq("status", "posted").order("advance_date", { ascending: true });
@@ -3732,6 +3779,7 @@ async function action(act, id, element) {
       page = "payroll"; render(); break;
     }
     case "payroll-refresh": await store.refresh(); page="payroll"; render(); break;
+    case "salary-slip": await printSalarySlip(id); break;
     case "payroll-details": {
       if (!admin()) throw Error("Only Admin can view payroll details.");
       const month = document.querySelector(`[data-act="payroll-details"][data-id="${CSS.escape(id)}"]`)?.dataset.month || window.__payrollMonth || today().slice(0,7);
@@ -4606,6 +4654,7 @@ document.addEventListener("submit", async (e) => {
         if (!confirm(`Release manager salary to ${managerName} for ${month}?\nGross salary: ${money(grossAmount)}\nAdvance deduction: ${money(deduction)}\nNet amount to pay: ${money(netAmount)}\nAccount: ${account.label}\n${reasons ? "Advance reasons: " + reasons + "\n" : ""}The selected account will be debited only for the net amount.`)) break;
         const salaryId = "MGR-SAL-" + managerId + "-" + month;
         await store.run("master.save", {table:"expenses", record:{id:salaryId,date:f.date||today(),category:"Salaries",description:`Salary released to manager ${managerName} — ${month}; gross ${money(grossAmount)}; advance deduction ${money(deduction)}${reasons ? "; advance reasons: "+reasons : "; no outstanding advance"}${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:netAmount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,manager_user_id:managerId,salary_period:month}});
+        await saveSalarySlipAndNotify({employeeUserId:managerId,managerUserId:managerId,employeeName:managerName,employeeType:"manager",month,gross:grossAmount,deduction,net:netAmount,date:f.date||today(),account:account.label,reference:f.reference||"",lines:[{label:"Gross salary",value:money(grossAmount)},{label:"Advance deduction",value:money(deduction)}]});
         if (deduction > 0) {
           let remaining = deduction;
           for (const advance of advances) {
@@ -4625,7 +4674,16 @@ document.addEventListener("submit", async (e) => {
         const salesmanId = form.dataset.salesman, month = form.dataset.month;
         const seller = S().salesmen.find(x => x.id === salesmanId);
         if (!seller) throw Error("Salesman not found.");
-        const grossAmount = salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total;
+        let salaryBasis="fixed"; let commissionLines=[]; let grossAmount=0;
+        const basisRes=await client.from("salesman_compensation_settings").select("salary_basis").eq("user_id",seller.user_id||seller.id).maybeSingle();
+        if(basisRes.error) throw Error("Could not verify salary basis: "+basisRes.error.message);
+        salaryBasis=basisRes.data?.salary_basis||"fixed";
+        if(salaryBasis==="commission") {
+          const [rateRes,itemRes]=await Promise.all([client.from("salesman_product_commissions").select("product_id,product_name,commission_per_carton_paisa").eq("user_id",seller.user_id||seller.id),client.from("order_items").select("order_id,product_id,boxes,boxes_per_carton")]);
+          if(rateRes.error||itemRes.error) throw Error("Could not calculate commission: "+(rateRes.error?.message||itemRes.error?.message));
+          const orders=S().orders.filter(o=>String(o.salesman_id)===String(salesmanId)&&o.status==="confirmed"&&!o.deleted_at&&String(o.date||"").startsWith(month)); const orderIds=new Set(orders.map(o=>String(o.id))); const rates=new Map((rateRes.data||[]).map(r=>[String(r.product_id),r]));
+          for(const it of (itemRes.data||[]).filter(i=>orderIds.has(String(i.order_id)))) { const rate=rates.get(String(it.product_id)); if(!rate) continue; const cartons=num(it.boxes)/Math.max(1,num(it.boxes_per_carton)||num(S().settings?.boxes_per_carton)||24); const earned=Math.round(cartons*num(rate.commission_per_carton_paisa)); grossAmount+=earned; commissionLines.push({label:`${rate.product_name||it.product_id}: ${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,value:money(earned)}); }
+        } else { grossAmount=salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total; commissionLines=[{label:"Fixed salary and configured incentives",value:money(grossAmount)}]; }
         const advanceResult = await client.from("employee_salary_advances").select("id,amount_paisa,recovered_paisa,reason,advance_date").eq("salesman_id", salesmanId).eq("status", "posted").order("advance_date", {ascending:true});
         if (advanceResult.error) throw Error("Could not load salary advances: " + advanceResult.error.message);
         const advances = (advanceResult.data || []).map(a=>({...a,outstanding:Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0))})).filter(a=>a.outstanding>0);
@@ -4642,6 +4700,7 @@ document.addEventListener("submit", async (e) => {
         const prior = S().expenses.find(e=>e.salesman_id===salesmanId && e.salary_period===month && !e.deleted_at);
         if (prior) throw Error("Salary already posted for " + month);
         await store.run("master.save", {table:"expenses", record:{id:"SAL-"+salesmanId+"-"+month,date:f.date||today(),category:"Salaries",description:`Salary released to ${seller.name} — ${month}; gross ${money(grossAmount)}; advance deduction ${money(deduction)}${reasons ? "; advance reasons: "+reasons : "; no outstanding advance"}; base + incentive (${achieved.toFixed(2)} cartons)${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:amount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,salesman_id:salesmanId,salary_period:month}});
+        await saveSalarySlipAndNotify({employeeUserId:seller.user_id||null,salesmanId,employeeName:seller.name,employeeType:"salesman",month,basis:salaryBasis,gross:grossAmount,deduction,net:amount,date:f.date||today(),account:account.label,reference:f.reference||"",lines:commissionLines});
         if (deduction > 0) {
           let remaining = deduction;
           for (const advance of advances) {
