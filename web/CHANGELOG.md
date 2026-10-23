@@ -1,3 +1,7 @@
+# v55.41 — Manager salary setup visibility
+
+See `CHANGELOG_V55_41.md`.
+
 # v55.26 — Admin Salary Advances
 
 - Admin can issue a salary advance to a salesman or manager with a required reason, date, amount, and payment account.
@@ -568,12 +572,72 @@ The v40 migration now recognizes an existing `private.save_master` implementatio
 - Reset stale expense category/date filters and open the Expenses module with the newly released salary expense in view.
 - If the expense cannot be found after refresh, show an explicit error instead of silently reporting success.
 
-## v55.36 — Existing salesman login linking fix
-- Show active existing salesman profiles in Admin Create Login even when `user_id` references a stale `profiles` row.
-- Fetch selected salesman profile directly if it is absent from cached snapshot before saving the user link.
-- No database migration applied; live linking must be verified in Supabase.
+## v55.27.0 — Editable salary advances and salary deduction
+- Added Admin-only editing for advance amount and reason before any amount has been recovered.
+- Editing an advance posts a balancing Cash & Bank Book adjustment and an audit-log entry; employee, original payment account and date remain immutable in the edit flow.
+- Salary release for salesmen now displays gross salary, outstanding advances, deduction, reasons and net salary to pay.
+- Outstanding advances are applied oldest-first, and recovered amounts are persisted to prevent repeat deductions in later salary periods.
+- Added `supabase/employee_salary_advances_v55_27.sql` as an additive migration after v55.26.
+- Important: the existing salary-release screen is for salesmen. Manager advances can be recorded/edited, but the app does not yet have a manager payroll-release workflow to apply those deductions.
+- Validation: JavaScript syntax checks passed; live Supabase behavior is not verified.
+
+## v55.29 — Manager sales-order price overrides
+
+- Enabled editable per-box rates for Manager-role Sales Orders.
+- Saved manual rates and their reason remain in place when reopening/editing an order; lines without overrides continue using automatic pricing.
+- Added `supabase/manager_order_price_override_v55_29.sql` to permit manager overrides server-side while retaining existing team/document authorization guards.
+
+## v55.32 — Expense scope, loss chart color, salary and advance visibility
+
+- Manager expense page is limited to the manager's own daily expense records; Admin can review all manager expenses.
+- Loss category in the expense doughnut chart is red.
+- Added manager/salesman salary advance visibility in profiles and salary breakdowns, plus Admin salary history details.
+- Added Supabase migration `supabase/expense_salary_visibility_v55_32.sql`; it must be run separately in the live project.
+
+## v55.33 — Manager expense access and payroll visibility
+- Manager role now includes the Expenses page in built-in navigation permissions.
+- Added employee salary advances to the shared store table list so Admin salary/advance views can receive these records.
+- No business records or product pricing/stock logic changed.
+
+## v55.34 — Salesman login linking repair
+- Show existing unlinked/orphan-linked salesman profiles in Create Login.
+- Persist `user_id` when linking even if manager assignment is unchanged.
+
+## v55.35
+- Create Login now directly loads salesman profiles for Admin from Supabase so existing profiles can be selected; surfaces permission/load errors rather than silently showing only the create-new option.
+# v55.36 — Existing salesman login linking fix
+
+- Admin Create Login now lists all active, non-deleted existing salesman profiles, including records with a stale `user_id` reference. Already-linked records are labeled so Admin can verify before relinking.
+- The link workflow fetches the selected salesman row directly when it is absent from the cached business snapshot, then persists the new authentication user ID.
+- No database migration is included and no live Supabase data was changed.
+- Validation: JavaScript syntax check and ZIP integrity check. Live Supabase permissions and account linking remain to be tested in the deployment.
+
+## v55.37 — Configurable carton-based payroll
+- Added Admin Settings for salesman and manager monthly allowance and incentive per confirmed carton, plus manager base salary.
+- Added `supabase/payroll_carton_incentive_v55_37.sql` with employee-specific salary snapshot RPCs.
+- Rates default to zero until configured. Manager's own sales count toward their personal incentive, not the team target.
+
+
+## v55.38
+- Attendance-prorated salary and allowance, target-threshold incentives, and manager salary snapshot support. See `CHANGELOG_V55_38.md`.
+
+
+## v55.39 — Attendance salary visibility
+- Added attendance-days and attendance-proration details to salesman and manager salary profile breakdowns.
+- Displayed target threshold, extra cartons eligible for incentive, advances/recoveries/outstanding, and estimated net after advances.
+- JavaScript syntax checks passed; full check script could not run because `typescript` is not installed in the build environment. Not live-tested against Supabase.
 
 
 ## Payroll attendance display correction
 
 Salary profile views now show attendance credited, configured working days, monthly base salary per attendance day, prorated base earned, prorated allowance, target and above-target carton incentive, gross estimate, and advance-adjusted estimate where available. The SQL snapshot returns the original monthly base salary separately from the attendance-prorated amount. Apply the SQL migration before expecting live calculation data.
+
+
+## v55.40 — Admin manager payroll settings and attendance salary fix
+- Added per-manager salary parameter form in Admin → Users & Access.
+- Exposed attendance credited and attendance-adjusted base salary in salesman overview summary.
+- Requires the payroll migration and live schema verification.
+
+## v55.42 — Historical attendance import (2026-10-23)
+- Added a safe, rerunnable SQL import for Arsalan and Babar Ali Khan's historical attendance dates.
+- Added verification queries and setup notes. No live database changes were executed by this build.

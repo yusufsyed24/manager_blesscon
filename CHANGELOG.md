@@ -637,3 +637,11 @@ Salary profile views now show attendance credited, configured working days, mont
 - Added per-manager salary parameter form in Admin → Users & Access.
 - Exposed attendance credited and attendance-adjusted base salary in salesman overview summary.
 - Requires the payroll migration and live schema verification.
+
+## v55.42 — Historical attendance import (2026-10-23)
+- Added a safe, rerunnable SQL import for Arsalan and Babar Ali Khan's historical attendance dates.
+- Added verification queries and setup notes. No live database changes were executed by this build.
+
+## v55.43 — Employee date-of-birth persistence fix
+- Added an idempotent Supabase migration to ensure the date-of-birth column exists and is permitted by the secure employee save function.
+- See `supabase/fix_employee_date_of_birth_save_v55_43.sql`.
