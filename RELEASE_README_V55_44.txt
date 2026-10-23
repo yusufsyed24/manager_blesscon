@@ -9,3 +9,9 @@ REQUIRED DATABASE STEPS
 4. Verify the returned rows before relying on payroll. Week Off is not counted as present in the current salary snapshot logic.
 
 The ZIP is a source build and has not been tested against your live Supabase project. If pg_cron is unavailable, the migration installs the marking function but automatic future marking requires scheduling that function through Supabase Cron. Do not bypass Microsoft Defender if it flags this archive; keep it blocked and investigate.
+
+
+v55.45 salary rule: Week Off is a paid attendance day for both salesmen and managers. Apply supabase/paid_weekoff_salary_v55_45.sql after the v55.44 Week Off migration. This changes estimates going forward; already-posted payroll is not automatically rewritten.
+
+
+v55.45 salary rule: Week Off is a paid attendance day for both salesmen and managers. Apply supabase/paid_weekoff_salary_v55_45.sql after the v55.44 Week Off migration. This changes estimates going forward; already-posted payroll is not automatically rewritten.

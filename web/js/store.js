@@ -33,6 +33,8 @@ export const TABLES = [
   "user_roles",
   "user_permissions",
   "attendance_records",
+  "manager_attendance_records",
+  "manager_payroll_settings",
   "employee_documents",
   "customer_visits",
 ];

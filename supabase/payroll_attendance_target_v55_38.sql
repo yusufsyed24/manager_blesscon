@@ -23,7 +23,7 @@ create policy manager_payroll_self_read on public.manager_payroll_settings for s
 grant select,insert,update,delete on public.manager_payroll_settings to authenticated;
 
 -- Payroll snapshot functions are intentionally kept separate from salary release records.
--- Estimates use present/late = full day, half_day = half day; absent/leave/pending = zero.
+-- Estimates use present/late/week_off = full paid day, half_day = half day; absent/leave/pending = zero.
 create or replace function public.own_salary_snapshot() returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare seller public.salesmen; period_start date; period_end date; achieved numeric:=0; achieved_boxes bigint:=0; present_units numeric:=0; base_pay bigint:=0; base_monthly bigint:=0; allowance bigint:=0; per_carton bigint:=0; target_cartons numeric:=0; incentive bigint:=0; gross bigint:=0; adv_total bigint:=0; adv_recovered bigint:=0; posted bigint; workdays integer:=26;
@@ -33,7 +33,7 @@ begin
  if not found then raise exception 'No active salesman profile is linked to this login'; end if;
  period_start:=date_trunc('month',private.business_today())::date; period_end:=private.business_today();
  select coalesce(sum(i.boxes::numeric/nullif(i.boxes_per_carton,0)),0),coalesce(sum(i.boxes),0)::bigint into achieved,achieved_boxes from public.orders o join public.order_items i on i.order_id=o.id where o.salesman_id=seller.id and o.date between period_start and period_end and o.status='confirmed' and o.deleted_at is null;
- select coalesce(sum(case when status in ('present','late') then 1 when status='half_day' then .5 else 0 end),0) into present_units from public.attendance_records where salesman_id=seller.id and attendance_date between period_start and period_end;
+ select coalesce(sum(case when status in ('present','late','week_off') then 1 when status='half_day' then .5 else 0 end),0) into present_units from public.attendance_records where salesman_id=seller.id and attendance_date between period_start and period_end;
  workdays:=greatest(1,coalesce(seller.payroll_working_days,26));
  base_pay:=greatest(0,coalesce(seller.base_salary_paisa,0)); base_monthly:=base_pay; allowance:=greatest(0,coalesce(seller.payroll_allowance_paisa,0)); per_carton:=greatest(0,coalesce(seller.payroll_incentive_per_carton_paisa,0)); target_cartons:=greatest(0,coalesce(seller.payroll_monthly_target,seller.monthly_target,0));
  base_pay:=round(base_pay*least(1,present_units/workdays))::bigint; allowance:=round(allowance*least(1,present_units/workdays))::bigint;
@@ -52,7 +52,7 @@ begin
  period_start:=date_trunc('month',private.business_today())::date; period_end:=private.business_today();
  select * into cfg from public.manager_payroll_settings where manager_user_id=auth.uid();
  select coalesce(sum(i.boxes::numeric/nullif(i.boxes_per_carton,0)),0),coalesce(sum(i.boxes),0)::bigint into achieved,achieved_boxes from public.orders o join public.order_items i on i.order_id=o.id where o.created_by=auth.uid() and o.salesman_id is null and o.date between period_start and period_end and o.status='confirmed' and o.deleted_at is null;
- select coalesce(sum(case when status in ('present','late') then 1 when status='half_day' then .5 else 0 end),0) into present_units from public.manager_attendance_records where manager_user_id=auth.uid() and attendance_date between period_start and period_end;
+ select coalesce(sum(case when status in ('present','late','week_off') then 1 when status='half_day' then .5 else 0 end),0) into present_units from public.manager_attendance_records where manager_user_id=auth.uid() and attendance_date between period_start and period_end;
  workdays:=greatest(1,coalesce(cfg.working_days,26)); target_cartons:=greatest(0,coalesce(cfg.monthly_target,0)); base_pay:=greatest(0,coalesce(cfg.base_salary_paisa,0)); base_monthly:=base_pay; allowance:=greatest(0,coalesce(cfg.allowance_paisa,0)); per_carton:=greatest(0,coalesce(cfg.incentive_per_carton_paisa,0));
  base_pay:=round(base_pay*least(1,present_units/workdays))::bigint; allowance:=round(allowance*least(1,present_units/workdays))::bigint; incentive:=greatest(0,round(greatest(0,achieved-target_cartons)*per_carton))::bigint; gross:=base_pay+allowance+incentive;
  select coalesce(sum(greatest(0,amount_paisa)),0),coalesce(sum(greatest(0,recovered_paisa)),0) into adv_total,adv_recovered from public.employee_salary_advances where manager_user_id=auth.uid() and status='posted';
