@@ -2184,7 +2184,12 @@ function payrollCalculationFor(p, month) {
   }
   attendanceRows = [...attendanceByDate.values()];
   const credited = attendanceRows.reduce((n,a)=>n+(a.units ?? statusDays[String(a.status||'').toLowerCase()] ?? 0),0);
-  const workingDays = Math.max(1, num(isManager ? setting?.working_days : setting?.payroll_working_days) || 26);
+  const employeeName = String(p.name || p.record?.name || p.record?.display_name || p.record?.full_name || '').trim().toLowerCase().replace(/\s+/g,' ');
+  // Arsalan's agreed payroll basis is PKR 45,000 / 30 calendar days = PKR 1,500 per credited day.
+  // Keep this override in the shared frontend calculator so Admin payroll, salary detail/release
+  // previews, and any other view using payrollCalculationFor all calculate the same amount.
+  const configuredWorkingDays = num(isManager ? setting?.working_days : setting?.payroll_working_days);
+  const workingDays = Math.max(1, employeeName.includes('arsalan') ? 30 : (configuredWorkingDays || 26));
   const factor = Math.min(1, credited / workingDays);
   const baseMonthly = Math.max(0,num(isManager ? setting?.base_salary_paisa : setting?.base_salary_paisa));
   const allowanceMonthly = Math.max(0,num(isManager ? setting?.allowance_paisa : setting?.payroll_allowance_paisa));
