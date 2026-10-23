@@ -1215,7 +1215,28 @@ export class Store extends EventTarget {
       settings: { ...DEFAULTS, ...data.settings },
       cashbook_loaded: false,
       cashbook_error: "",
+      payroll_data_error: "",
     };
+    // The older business_snapshot RPC may omit payroll/attendance tables or return stale
+    // projections. Admin payroll must use the authoritative Supabase rows, not zero-filled
+    // snapshot defaults. Load each table independently so one optional table does not blank
+    // the rest of the payroll view.
+    if (String(this.user?.role || "").toLowerCase() === "admin") {
+      const payrollTables = [
+        "salesmen", "profiles", "user_roles", "orders", "order_items",
+        "attendance_records", "manager_attendance_records", "manager_payroll_settings",
+        "employee_salary_advances", "expenses",
+      ];
+      const payrollErrors = [];
+      await Promise.all(payrollTables.map(async (table) => {
+        try {
+          this.base[table] = await this.all(table);
+        } catch (e) {
+          payrollErrors.push(`${table}: ${e?.message || String(e)}`);
+        }
+      }));
+      if (payrollErrors.length) this.base.payroll_data_error = payrollErrors.join("; ");
+    }
     try {
       const [accounts, entries, closings] = await Promise.all([
         this.all("cashbook_accounts"),
