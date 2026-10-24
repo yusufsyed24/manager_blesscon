@@ -35,6 +35,7 @@ export const TABLES = [
   "attendance_records",
   "manager_attendance_records",
   "manager_payroll_settings",
+  "salesman_compensation_settings",
   "employee_documents",
   "customer_visits",
 ];
@@ -1236,6 +1237,15 @@ export class Store extends EventTarget {
         }
       }));
       if (payrollErrors.length) this.base.payroll_data_error = payrollErrors.join("; ");
+    }
+    // Salary basis (fixed / commission) is used to hide targets for commission salesmen.
+    // Optional: if the current role cannot read it, targets simply display as before.
+    if (["admin", "manager"].includes(String(this.user?.role || "").toLowerCase())) {
+      try {
+        this.base.salesman_compensation_settings = await this.all("salesman_compensation_settings");
+      } catch (e) {
+        this.base.salesman_compensation_settings = [];
+      }
     }
     try {
       const [accounts, entries, closings] = await Promise.all([
