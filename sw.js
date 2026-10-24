@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-88-advance-in-expenses-20261024";
+const CACHE = "blesscon-static-v55-89-pnl-salary-lines-20261024";
 const ASSETS = [
   "./",
   "./index.html",

@@ -820,7 +820,7 @@ function renderDashboard() {
     p = admin() || can("pnl") ? profitLoss(
       s.orders,
       s.order_items,
-      s.expenses,
+      pnlExpenses(),
       s.payments,
       s.invoices,
       overviewFrom,
@@ -1903,8 +1903,8 @@ function managerExpenseScope(e) {
 // Released salary advances are shown on the Admin Expenses page as display-only rows.
 // They are NOT written to the expenses table: the advance already posts its own cash-book debit,
 // so a real expense row would debit the account twice. Manage advances from "Advance salary".
-function advanceExpenseRows() {
-  if (!admin()) return [];
+function advanceExpenseRows(includeForPnl = false) {
+  if (!admin() && !includeForPnl) return [];
   return (S().employee_salary_advances || [])
     .filter(a => a.status === "posted" && !a.deleted_at && num(a.amount_paisa) > 0)
     .map(a => ({
@@ -1918,6 +1918,11 @@ function advanceExpenseRows() {
       cashbook_account_key: a.account_key || "",
       salesman_id: a.salesman_id || null,
     }));
+}
+// Profit & loss counts salary cost as: salaries (net paid, category "Salaries") + advances released.
+// Advances already recovered were deducted from the net salary, so nothing is counted twice.
+function pnlExpenses() {
+  return [...S().expenses, ...advanceExpenseRows(true)];
 }
 function renderExpenses() {
   const rows = [...visible(S().expenses), ...advanceExpenseRows()].sort((x, y) => String(y.date).localeCompare(String(x.date))).filter(
@@ -1967,12 +1972,13 @@ function renderExpenses() {
     )}</section>`
   );
 }
+const salOf = (r) => Object.entries(r.categories || {}).filter(([k]) => /^salar(y|ies)$/i.test(k.trim())).reduce((n, [, v]) => n + v, 0);
 function renderPnl() {
   const s = S(),
     p = profitLoss(
       s.orders,
       s.order_items,
-      s.expenses,
+      pnlExpenses(),
       s.payments,
       s.invoices,
       filter.from,
@@ -1983,7 +1989,7 @@ function renderPnl() {
     prev = profitLoss(
       s.orders,
       s.order_items,
-      s.expenses,
+      pnlExpenses(),
       s.payments,
       s.invoices,
       addDays(filter.from, -days),
@@ -2010,7 +2016,10 @@ function renderPnl() {
         ["Net revenue", money(p.revenue), money(prev.revenue)],
         ["COGS", money(p.cogs), money(prev.cogs)],
         ["Gross profit", money(p.gross), money(prev.gross)],
-        ["Expenses", money(p.expense), money(prev.expense)],
+        ["Salaries (net paid)", money(salOf(p)), money(salOf(prev))],
+        ["Salary advances released", money(p.categories["Salary Advance"] || 0), money(prev.categories["Salary Advance"] || 0)],
+        ["Other operating expenses", money(p.expense - (salOf(p)) - (p.categories["Salary Advance"] || 0)), money(prev.expense - (salOf(prev)) - (prev.categories["Salary Advance"] || 0))],
+        ["Total expenses", `<b>${money(p.expense)}</b>`, money(prev.expense)],
         [
           "Net profit / loss",
           `<b class="${p.net < 0 ? "text-red" : "text-green"}">${money(p.net)}</b>`,
@@ -2023,7 +2032,7 @@ function renderPnl() {
           money(prev.outstanding),
         ],
       ],
-    )}<p class="muted">Cancelled sales are excluded. Cash collected uses payment dates; receivables show current balances.</p></section><section class="panel"><h2>Expenses by category</h2><div class="chart"><canvas id="expense-chart" role="img" aria-label="Expense categories"></canvas></div>${breakdown(p.categories)}</section></div><div class="two-col"><section class="panel"><h2>Sales by channel</h2>${breakdown(p.channels)}<h2 style="margin-top:24px">Sales by salesman</h2>${breakdown(p.salesmen, true)}</section><section class="panel"><h2>Top products by profit</h2><div class="chart"><canvas id="product-chart" role="img" aria-label="Product profit"></canvas></div>${breakdown(
+    )}<p class="muted">Cancelled sales are excluded. Salary cost = salaries paid (after advance deduction) + advances released, so advance recoveries are not counted twice. Cash collected uses payment dates; receivables show current balances.</p></section><section class="panel"><h2>Expenses by category</h2><div class="chart"><canvas id="expense-chart" role="img" aria-label="Expense categories"></canvas></div>${breakdown(p.categories)}</section></div><div class="two-col"><section class="panel"><h2>Sales by channel</h2>${breakdown(p.channels)}<h2 style="margin-top:24px">Sales by salesman</h2>${breakdown(p.salesmen, true)}</section><section class="panel"><h2>Top products by profit</h2><div class="chart"><canvas id="product-chart" role="img" aria-label="Product profit"></canvas></div>${breakdown(
       Object.fromEntries(
         Object.entries(p.products)
           .sort((a, b) => b[1] - a[1])
@@ -2047,7 +2056,7 @@ function drawCharts() {
         p = profitLoss(
           s.orders,
           s.order_items,
-          s.expenses,
+          pnlExpenses(),
           s.payments,
           s.invoices,
           first,
@@ -2109,7 +2118,7 @@ function drawCharts() {
   const p = profitLoss(
     s.orders,
     s.order_items,
-    s.expenses,
+    pnlExpenses(),
     s.payments,
     s.invoices,
     filter.from,
