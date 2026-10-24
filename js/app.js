@@ -116,41 +116,6 @@ const canBase = (p) =>
 // used to see Cash & Bank Book, Invoices, Quotations, Ledger, Products, Salesmen & targets.
 const SALESMAN_PAGES = ["myprofile"];
 const can = (p) => (user?.role === "salesman" ? SALESMAN_PAGES.includes(p) : (manager() && p === "cashbook") ? false : canBase(p));
-// Commission-basis salesmen have no carton target: show cartons sold only, never "to go".
-const isCommissionSalesman = (id) =>
-  (S().salesman_compensation_settings || []).some(
-    (r) => String(r.salesman_id) === String(id) && r.salary_basis === "commission",
-  );
-// Commission earned = confirmed personal cartons x per-product rate. Rates are readable by Admin
-// (and by the salesman himself); for Managers they are not, so amounts return null and stay hidden.
-const commissionBreakdown = (id, from = monthStart(today()), to = today()) => {
-  const st = S();
-  const rateRows = (st.salesman_product_commissions || []).filter((r) => String(r.salesman_id) === String(id));
-  if (!rateRows.length) return null;
-  const rates = new Map(rateRows.map((r) => [String(r.product_id), r]));
-  const orderIds = new Set(
-    (st.orders || [])
-      .filter((o) => String(o.salesman_id) === String(id) && o.status === "confirmed" && !o.deleted_at && o.date >= from && o.date <= to)
-      .map((o) => String(o.id)),
-  );
-  const byProduct = new Map();
-  for (const item of st.order_items || []) {
-    if (!orderIds.has(String(item.order_id))) continue;
-    const key = String(item.product_id), rate = rates.get(key);
-    const perCarton = Math.max(1, num(item.boxes_per_carton) || num(st.settings?.boxes_per_carton) || 24);
-    const cartons = num(item.boxes) / perCarton;
-    const row = byProduct.get(key) || {
-      name: rate?.product_name || (st.products || []).find((p) => String(p.id) === key)?.name || key,
-      cartons: 0, rate: num(rate?.commission_per_carton_paisa), commission: 0,
-    };
-    row.cartons += cartons;
-    row.commission += rate ? Math.round(cartons * num(rate.commission_per_carton_paisa)) : 0;
-    byProduct.set(key, row);
-  }
-  const rows = [...byProduct.values()];
-  return { rows, cartons: rows.reduce((n, r) => n + r.cartons, 0), total: rows.reduce((n, r) => n + r.commission, 0) };
-};
-const commissionEarned = (id, from, to) => commissionBreakdown(id, from, to)?.total ?? null;
 const badge = (s, t = "") =>
   `<span class="badge ${t || (/PAID|Accepted|Synced|OK/.test(s) && !/PART|UNPAID/.test(s) ? "green" : /PART|Draft|Sent|Pending|30/.test(s) ? "amber" : /UNPAID|Expired|cancel|Rejected/.test(s) ? "red" : "")}">${esc(s)}</span>`;
 const btn = (text, act, id = "", extra = "", cls = "secondary") =>
@@ -589,10 +554,6 @@ function salesmanTargetDetails(salesmanId) {
   const s = S(), target = targetRows().find(t => t.id === seller.id);
   const days = s.salesman_daily_targets.filter(d => d.salesman_id === seller.id && d.date >= monthStart(today()) && d.date <= today()).sort((a,b)=>a.date.localeCompare(b.date));
   const rows = days.map(d => [esc(d.date), num(d.effective_target).toFixed(2), num(d.achieved_cartons).toFixed(2), num(d.achieved_boxes), Math.max(0,num(d.effective_target)-num(d.achieved_cartons)).toFixed(2), num(d.carried_forward_out).toFixed(2)]);
-  if (isCommissionSalesman(seller.id)) {
-    modal("My sales · " + today().slice(0,7), `<section class="panel"><div class="cards">${card("Cartons sold this month", `${num(target?.achieved).toFixed(2)} cartons`, "Commission basis — no monthly target")}</div>${table(["Date","Achieved (ct)","Boxes"], days.map(d => [esc(d.date), num(d.achieved_cartons).toFixed(2), num(d.achieved_boxes)]), "No sales recorded for this month.")}<p class="muted">Quantities only. Your earnings are based on confirmed cartons × your product commission rates.</p></section>`);
-    return;
-  }
   modal("My monthly target · " + today().slice(0,7), `<section class="panel"><div class="cards">${card("Monthly target", `${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved", `${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining", `${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement", `${num(target?.percent).toFixed(1)}%`)}</div>${table(["Date","Daily target (ct)","Achieved (ct)","Boxes","Remaining (ct)","Carry forward (ct)"], rows, "No daily target records are available for this month.")}<p class="muted">Quantities only. Cancelled, returned and reversed sales follow the business target policy.</p></section>`);
 }
 
@@ -607,11 +568,11 @@ function renderSalesmanDashboard() {
   const photo = seller.photo_url ? `<img src="${esc(seller.photo_url)}" alt="${esc(seller.name)} profile photo">` : "♙";
   return head("My overview", `Welcome, ${seller.name}. This dashboard shows your own operational activity only.`, btn("Open my profile", "go-myprofile", "", "", "gold")) +
     `<section class="panel"><div class="profile-hero"><div class="profile-avatar" id="salesman-dashboard-avatar">${photo}</div><div><h2>${esc(seller.name)}</h2><p>Employee ID: ${esc(seller.id)} · Date of birth: ${esc(seller.date_of_birth || "Not recorded")}</p><p>${esc(seller.territory || seller.area || "Territory not assigned")}</p></div></div></section>
-    <div class="cards">${card("Quantity sold today",soldQuantity(todays),`${todays.length} confirmed order(s)`,true)}${card("Quantity sold this month",soldQuantity(month),`${month.length} confirmed order(s)`)}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Recorded quantity against you")}${isCommissionSalesman(sid) ? card("Cartons sold this month",`${num(target?.achieved).toFixed(2)} cartons`,"Commission basis — no monthly target") : card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}<div class="card"><div class="label">Monthly salary</div><div class="value" id="salesman-salary-value">Loading…</div><div class="meta" id="salesman-salary-meta">Waiting for the server calculation</div></div></div>
+    <div class="cards">${card("Quantity sold today",soldQuantity(todays),`${todays.length} confirmed order(s)`,true)}${card("Quantity sold this month",soldQuantity(month),`${month.length} confirmed order(s)`)}${card("Stock in hand",held.reduce((n,x)=>n+x.qty,0).toFixed(2),"Recorded quantity against you")}${card("Monthly target",`${num(target?.achieved).toFixed(2)} / ${num(target?.monthly_target).toFixed(2)} cartons`,`${num(target?.percent).toFixed(1)}% achieved`)}<div class="card"><div class="label">Monthly salary</div><div class="value" id="salesman-salary-value">Loading…</div><div class="meta" id="salesman-salary-meta">Waiting for the server calculation</div></div></div>
     <section class="panel"><div class="panel-heading"><h2>My stock in hand</h2></div>${table(["Product","Balance","Unit"],held.map(x=>[esc(x.name),x.qty.toFixed(2),esc(x.unit)]),"No stock currently recorded against your account.")}</section>
     <section class="panel"><div class="panel-heading"><h2>My latest sales quantities</h2></div>${table(["Date","Order","Quantity"],orders.slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8).map(o=>[esc(o.date),esc(o.number),num((s.order_items||[]).filter(i=>i.order_id===o.id).reduce((n,i)=>n+num(i.boxes),0))]),"No sales recorded yet.")}</section>
     <section class="panel"><div class="panel-heading"><h2>Messages from management</h2><span class="muted">Updates and instructions</span></div><div id="salesman-notifications"><p class="muted">Loading messages…</p></div></section>
-    <section class="panel"><h2>Quick access</h2><div class="actions">${btn("View my profile","go-myprofile","","","gold")}${btn(isCommissionSalesman(sid) ? "My sales details" : "Monthly target details","my-target-details",sid)}${btn("Salary breakdown","my-salary-details",sid)}${btn("Daily sales report","go-dsr")}</div></section>`;
+    <section class="panel"><h2>Quick access</h2><div class="actions">${btn("View my profile","go-myprofile","","","gold")}${btn("Monthly target details","my-target-details",sid)}${btn("Salary breakdown","my-salary-details",sid)}${btn("Daily sales report","go-dsr")}</div></section>`;
 }
 
 async function hydrateSalesmanPhotoNodes() {
@@ -655,10 +616,8 @@ async function hydrateSalesmanNotifications() {
   if (avatar && own()?.photo_path) { const signed = await client.storage.from("employee-private").createSignedUrl(own().photo_path, 3600); if (!signed.error && signed.data?.signedUrl) avatar.innerHTML = `<img src="${esc(signed.data.signedUrl)}" alt="${esc(own().name)} profile photo">`; }
   const salaryValue = $("salesman-salary-value"), salaryMeta = $("salesman-salary-meta");
   if (salaryValue && salaryMeta) {
-    const commissionOwn = isCommissionSalesman(own().id) ? commissionEarned(own().id) : undefined;
-    const result = commissionOwn !== undefined ? { data: null, error: null } : await client.rpc("own_salary_snapshot");
-    if (commissionOwn !== undefined) { salaryValue.textContent = commissionOwn === null ? "Unavailable" : money(commissionOwn); salaryMeta.textContent = commissionOwn === null ? "Commission rates could not be loaded. Contact Admin." : `Commission earned so far in ${today().slice(0,7)} · confirmed cartons × your product rates · pending Admin approval`; }
-    else if (result.error) { salaryValue.textContent = "Unavailable"; salaryMeta.textContent = "Salary calculation could not be loaded. Contact Admin."; }
+    const result = await client.rpc("own_salary_snapshot");
+    if (result.error) { salaryValue.textContent = "Unavailable"; salaryMeta.textContent = "Salary calculation could not be loaded. Contact Admin."; }
     else if (result.data) { const pay = applyArsalanOctoberPayrollCorrection(result.data, own()?.name || own()?.display_name); salaryValue.textContent = money(pay.total_paisa ?? pay.gross_paisa ?? 0); salaryMeta.textContent = `${pay.status === "posted" ? `Posted for ${pay.salary_period}` : `Estimate for ${pay.salary_period} · pending Admin approval`} · Base earned ${money(pay.base_salary_paisa || 0)} · Attendance ${num(pay.attendance_days).toFixed(1)}/${num(pay.working_days)} days`; }
   }
   if (!root) return;
@@ -739,7 +698,7 @@ function renderManagerDashboard() {
   const stockReturns = (s.salesman_stock_movements || []).filter(m => teamIds.has(String(m.salesman_id)) && String(m.kind).startsWith("return_") && m.date === today()).reduce((n,m)=>n+Math.abs(num(m.boxes)),0);
   const cards = `<div class="cards">${card("Team monthly target", `${teamTarget.toFixed(2)} cartons`, "Configured team target", true)}${card("Team achieved (salesmen)", `${achievedCartons.toFixed(2)} cartons`, `${(achievedCartons / teamTarget * 100 || 0).toFixed(1)}% of target achieved`)}${card("Your additional cartons sold", `+${managerCartons.toFixed(2)} cartons`, `${managerOrders.length} confirmed order(s) sold directly under your manager account · not counted toward team target`)}${card("Remaining team target", `${remainingTeamTarget.toFixed(2)} cartons`, "Based on salesmen's achievement only", true)}${card("Salesmen present", present, `${team.length} assigned`)}${card("Salesmen absent / leave", absent, "Attendance records today")}${card("Attendance missing", Math.max(0,team.length-recorded), "Not yet recorded")}${card("Boxes sold today", quantity(teamOrders.filter(o=>o.date===today())), "Confirmed team sales quantity")}${card("Stock issued today", stockIssues.toFixed(2), "Existing stock ledger")}${card("Stock returned today", stockReturns.toFixed(2), "Existing stock ledger")}</div>`;
   return head("Manager overview", "Operational control for your assigned salesmen. Financial account balances, revenue, wholesale prices and profit are not displayed.", btn("Manage salesmen", "go-staff", "", "", "gold")) + cards +
-    `<section class="panel"><div class="panel-heading"><h2>My team</h2>${btn("Open salesmen & targets", "go-staff")}</div>${table(["Salesman","Area","Attendance","Monthly target","Achieved","Remaining","Actions"], targets.map(t => { const seller=team.find(x=>String(x.id)===String(t.id)); const att=attendance.find(a=>String(a.salesman_id)===String(t.id)); return [`<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b>`,esc(seller?.territory||seller?.area||"Not assigned"),esc(att?.status||"Not recorded"),isCommissionSalesman(t.id)?"Commission basis":`${num(t.monthly_target).toFixed(2)} cartons`,`${num(t.achieved).toFixed(2)} cartons`,isCommissionSalesman(t.id)?"—":`${Math.max(0,num(t.monthly_target)-num(t.achieved)).toFixed(2)} cartons`,`${btn("Details","salesman-profile",t.id)}${btn("Attendance","mark-attendance",t.id)}${btn("Message","notify-salesman",t.id)}`]; }), "No salesmen are assigned to this manager. Admin should assign employees from Salesmen & Targets.")}</section><section class="panel"><div class="panel-heading"><h2>Messages from Admin</h2><span class="muted">Announcements and instructions</span></div><div id="manager-notifications"><p class="muted">Loading messages…</p></div></section>`;
+    `<section class="panel"><div class="panel-heading"><h2>My team</h2>${btn("Open salesmen & targets", "go-staff")}</div>${table(["Salesman","Area","Attendance","Monthly target","Achieved","Remaining","Actions"], targets.map(t => { const seller=team.find(x=>String(x.id)===String(t.id)); const att=attendance.find(a=>String(a.salesman_id)===String(t.id)); return [`<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b>`,esc(seller?.territory||seller?.area||"Not assigned"),esc(att?.status||"Not recorded"),`${num(t.monthly_target).toFixed(2)} cartons`,`${num(t.achieved).toFixed(2)} cartons`,`${Math.max(0,num(t.monthly_target)-num(t.achieved)).toFixed(2)} cartons`,`${btn("Details","salesman-profile",t.id)}${btn("Attendance","mark-attendance",t.id)}${btn("Message","notify-salesman",t.id)}`]; }), "No salesmen are assigned to this manager. Admin should assign employees from Salesmen & Targets.")}</section><section class="panel"><div class="panel-heading"><h2>Messages from Admin</h2><span class="muted">Announcements and instructions</span></div><div id="manager-notifications"><p class="muted">Loading messages…</p></div></section>`;
 }
 
 function renderAdminMyProfile() {
@@ -807,13 +766,9 @@ function targetRows() {
       );
       const day = days.find((d) => d.date === today());
       const achieved = days.reduce((n, d) => n + num(d.achieved_cartons), 0);
-      const row = { ...x, day, achieved, ...salary(x, achieved, s.settings) };
-      // Commission salesmen have no target, no achievement % and no fixed salary:
-      // their "salary" is the commission earned so far this month.
-      if (!isCommissionSalesman(x.id)) return row;
-      return { ...row, commission: true, percent: 0, incentive: 0, total: commissionEarned(x.id) };
+      return { ...x, day, achieved, ...salary(x, achieved, s.settings) };
     })
-    .sort((a, b) => (a.commission === b.commission ? (a.commission ? b.achieved - a.achieved : b.percent - a.percent) : a.commission ? 1 : -1));
+    .sort((a, b) => b.percent - a.percent);
 }
 function overviewReport(state, from, to, salesmanId = "") {
   const days = [];
@@ -865,7 +820,7 @@ function renderDashboard() {
     p = admin() || can("pnl") ? profitLoss(
       s.orders,
       s.order_items,
-      pnlExpenses(),
+      s.expenses,
       s.payments,
       s.invoices,
       overviewFrom,
@@ -907,7 +862,7 @@ function renderDashboard() {
     myCartons = myDirect.reduce((a, o) => a + cartonsOf(o), 0),
     myValue = myDirect.reduce((a, o) => a + num(o.total_paisa), 0),
     companyPanel = mgmt()
-      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · additional manager sales, excluded from the team target`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => isCommissionSalesman(t.id) ? [esc(t.name), `${t.achieved.toFixed(2)} cartons sold`, badge("Commission basis", "green")] : [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
+      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · additional manager sales, excluded from the team target`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
       : "",
     todaysClosings = s.daily_closings.filter(
       (closing) =>
@@ -975,7 +930,7 @@ function renderDashboard() {
               btn("New quotation", "new-quote") +
               btn("+ New sale", "new-order", "", "", "gold"),
           ) +
-          `${companyPanel}<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${p ? card(admin() ? "Net profit (period)" : p.net < 0 ? "Loss in period" : "Profit in period", money(admin() ? Math.max(0, p.net) : Math.abs(p.net)), admin() ? "After cost of goods and operating expenses" : "Restricted management figure") : ""}${admin() && p ? card("Net loss (period)", money(Math.max(0, -p.net)), "Loss after cost of goods and operating expenses") : ""}${admin() ? card("Warehouse cartons", warehouse.cartons, `${warehouse.loose} loose boxes · current warehouse stock`) + card("Warehouse boxes", warehouse.boxes, "Total boxes physically held in warehouse") + card("Estimated market value", money(warehouse.marketValuePaisa), `${warehouse.pricedBoxes} boxes valued at saved retail prices${warehouse.incompleteProducts ? ` · ${warehouse.incompleteProducts} products need pricing` : ""}`) + card("Potential stock profit", money(warehouse.potentialProfitPaisa), "Retail value less saved cost; before operating expenses") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => !t.commission && num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => t.commission ? [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} cartons sold`, `${t.achieved.toFixed(2)} cartons sold`, badge("Commission basis", "green"), ...(admin() || can("pnl") ? [t.total == null ? "—" : `${money(t.total)}<small>commission earned</small>`] : [])] : [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
+          `${companyPanel}<section class="panel"><div class="filters"><div class="field"><label for="f-overview-from">From</label><input id="f-overview-from" type="date" value="${esc(overviewFrom)}"></div><div class="field"><label for="f-overview-to">To</label><input id="f-overview-to" type="date" value="${esc(overviewTo)}"></div><button data-act="apply-overview-range">Apply dates</button></div></section><div class="cards">${card("Sales in period", money(sales), `${report.orders.length} confirmed orders · ${overviewFrom} to ${overviewTo}`, true)}${card("Collections in period", money(report.collected_paisa), "All recorded payment methods")}${card("Previous debt recovered", money(report.previous_recovery_paisa), "Against invoices before their payment date")}${card("New credit issued", money(report.new_credit_paisa), "Period sales less payments on those invoices")}${card("Expenses in period", money(report.expense_paisa), "Recorded expenses")}${card("Customer outstanding", money(report.outstanding_paisa), "As of " + overviewTo)}${card("Overdue outstanding", money(report.overdue_paisa), "As of " + overviewTo)}${card("Stock issued", `${report.stock_issued_boxes} boxes`, `Issued ${overviewFrom} to ${overviewTo}`)}${card("Stock returned", `${report.stock_returned_boxes} boxes`, `Returned ${overviewFrom} to ${overviewTo}`)}${admin() ? card("Unsubmitted closings", unsubmittedClosings, "Active salesmen without a submitted close today") : ""}${admin() ? card("Closings awaiting approval", pendingClosings, "Submitted today") : ""}${p ? card(admin() ? "Net profit (period)" : p.net < 0 ? "Loss in period" : "Profit in period", money(admin() ? Math.max(0, p.net) : Math.abs(p.net)), admin() ? "After cost of goods and operating expenses" : "Restricted management figure") : ""}${admin() && p ? card("Net loss (period)", money(Math.max(0, -p.net)), "Loss after cost of goods and operating expenses") : ""}${admin() ? card("Warehouse cartons", warehouse.cartons, `${warehouse.loose} loose boxes · current warehouse stock`) + card("Warehouse boxes", warehouse.boxes, "Total boxes physically held in warehouse") + card("Estimated market value", money(warehouse.marketValuePaisa), `${warehouse.pricedBoxes} boxes valued at saved retail prices${warehouse.incompleteProducts ? ` · ${warehouse.incompleteProducts} products need pricing` : ""}`) + card("Potential stock profit", money(warehouse.potentialProfitPaisa), "Retail value less saved cost; before operating expenses") : ""}</div><section class="panel"><div class="panel-heading"><h2>Daily activity</h2><span class="muted">Select a date for its DSR</span></div>${table(["Business date", "Sales", "Collection", "Previous recovery", "New credit", "Expenses", "Issued / returned", "Details"], dailyRows, "No activity in this date range")}</section><div class="two-col">${p ? `<section class="panel"><div class="panel-heading"><h2>Revenue & profit</h2><span class="muted">Selected period</span></div><div class="chart"><canvas id="revenue-chart" role="img" aria-label="Revenue, expenses and net profit for selected period"></canvas></div><div id="chart-data" class="muted"></div></section>` : ""}<section class="panel"><div class="panel-heading"><h2>Needs your attention</h2></div><p>${badge(low.length + " low-stock products", "amber")} ${btn("Review stock", "go-stock")}</p><p>${badge(exp.length + " expiring / expired", "red")}</p><hr><h3>Missed targets today</h3>${targets.filter((t) => num(t.day?.shortfall) > 0).map((t) => `<p><b>${esc(t.name)}</b><br><small>${num(t.day.shortfall).toFixed(2)} cartons remaining · ${num(t.day.achieved_cartons).toFixed(2)} achieved</small></p>`).join("") || '<p class="muted">No target shortfalls recorded.</p>'}</section></div><section class="panel"><div class="panel-heading"><h2>Team progress</h2>${btn("View team", "go-staff")}</div>${table(["Salesman", "Today achieved / target", "Month-to-date", "Achievement", ...(admin() || can("pnl") ? ["Projected salary"] : [])], targets.map((t) => [esc(t.name), `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`, `${t.achieved.toFixed(2)} / ${t.monthly_target}`, `${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100, t.percent)}%"></span></div>`, ...(admin() || can("pnl") ? [money(t.total)] : [])]), "Create your first salesman")}</section>${stockOverview()}<section class="panel"><h2>Salesman stock held</h2>${table(["Salesman", "Held boxes", "Issued in period", "Returned in period"], report.stock_by_salesman?.map((row) => [esc(salesmanName(row.salesman_id)), row.closing_boxes, row.issued_boxes, row.returned_boxes]) || [], "No salesman stock issues in this period")}</section>`
   );
 }
 function renderDailyReport() {
@@ -1740,8 +1695,8 @@ function renderStaff() {
           `<span class="profile-avatar" id="team-photo-${esc(t.id)}" style="width:32px;height:32px;font-size:14px;display:inline-flex;vertical-align:middle;margin-right:8px">${esc(String(t.name||"S").slice(0,1).toUpperCase())}</span><b>${esc(t.name)}</b><small>${esc(t.id)} · ${esc(t.phone||"No phone")}</small>`,
           esc(att?.status || "Not recorded"),
           esc(seller?.territory || seller?.area || "Not assigned"),
-          t.commission ? `${num(t.day?.achieved_cartons).toFixed(2)} cartons sold` : `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`,
-          isCommissionSalesman(t.id) ? `${t.achieved.toFixed(2)} cartons sold · commission basis` : `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons · ${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100,t.percent)}%"></span></div>`,
+          `${num(t.day?.achieved_cartons).toFixed(2)} / ${num(t.day?.effective_target).toFixed(2)} cartons`,
+          `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons · ${t.percent.toFixed(1)}%<div class="bar"><span style="width:${Math.min(100,t.percent)}%"></span></div>`,
           `${held.toFixed(2)} boxes`,
           `<div class="actions">${btn("Details", "salesman-profile", t.id)}${(admin()||manager())?btn("Assign area", "assign-area", t.id):""}${(admin()||manager())?btn("Attendance", "mark-attendance", t.id):""}${(admin()||manager())?btn("Message", "notify-salesman", t.id):""}${(admin())?btn("Edit", "edit-staff", t.id)+btn("Post salary", "post-salary", t.id)+btn("Advance salary", "advance-salary", t.id)+btn("Delete", "delete-salesman", t.id, "", "danger"):manager()?btn("Edit", "edit-staff", t.id):""}</div>`
         ];
@@ -1912,7 +1867,7 @@ async function openAdminSalesmanProfile(salesmanId) {
   const visitsHtml = sectionError(visits) || table(["Visited","Customer","Area","Purpose","Notes","GPS"], (visits.data || []).map(r => [esc(new Date(r.visited_at).toLocaleString()), esc(r.customer_label || "—"), esc(r.area || "—"), esc(r.purpose || "—"), esc(r.notes || "—"), r.latitude == null ? "Not shared" : `${num(r.latitude).toFixed(5)}, ${num(r.longitude).toFixed(5)}`]), "No customer visits submitted yet.");
   const state = S(), target = targetRows().find(t => String(t.id) === String(seller.id));
   const targetDays = state.salesman_daily_targets.filter(d => String(d.salesman_id) === String(seller.id) && d.date >= monthStart(today()) && d.date <= today()).sort((a,b)=>a.date.localeCompare(b.date));
-  const targetHtml = isCommissionSalesman(seller.id) ? table(["Date","Cartons sold","Boxes"], targetDays.map(d=>[esc(d.date),num(d.achieved_cartons).toFixed(2),num(d.achieved_boxes)]),"No sales recorded for this month.") : table(["Date","Target (ct)","Achieved (ct)","Boxes","Remaining (ct)"], targetDays.map(d=>[esc(d.date),num(d.effective_target).toFixed(2),num(d.achieved_cartons).toFixed(2),num(d.achieved_boxes),Math.max(0,num(d.effective_target)-num(d.achieved_cartons)).toFixed(2)]),"No daily target records for this month.");
+  const targetHtml = table(["Date","Target (ct)","Achieved (ct)","Boxes","Remaining (ct)"], targetDays.map(d=>[esc(d.date),num(d.effective_target).toFixed(2),num(d.achieved_cartons).toFixed(2),num(d.achieved_boxes),Math.max(0,num(d.effective_target)-num(d.achieved_cartons)).toFixed(2)]),"No daily target records for this month.");
   const eligibleOrders = state.orders.filter(o=>String(o.salesman_id)===String(seller.id)&&o.status==="confirmed"&&!o.deleted_at&&o.date>=monthStart(today())&&o.date<=today());
   const dailySales = new Map(); const productSales = new Map();
   for (const order of eligibleOrders) for (const line of (state.order_items||[]).filter(i=>i.order_id===order.id)) {
@@ -1924,7 +1879,7 @@ async function openAdminSalesmanProfile(salesmanId) {
   const stockBalanceHtml = table(["Product","Current balance (boxes)"],visible(state.products).map(p=>[esc(p.name),heldStock(p.id,seller.id)]).filter(r=>num(r[1])!==0),"No stock is currently held by this salesman.");
   const stockMovementHtml = table(["Date","Product","Movement","Boxes","Reference","Notes"],stockRows,"No stock issue/return movements recorded.");
   const role = state.user_roles.find(r => r.user_id === seller.user_id)?.role || "Not linked";
-  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Date of birth:</b> ${esc(seller.date_of_birth || "Not recorded")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Salary & advance history</h3><div id="salesman-profile-salary-history"><p class="muted">Loading salary and advance details…</p></div></section><section class="panel"><h3>Monthly target progress</h3><div class="cards">${isCommissionSalesman(seller.id) ? card("Cartons sold this month",`${num(target?.achieved).toFixed(2)} cartons`,"Commission basis — no monthly target") : card("Monthly target",`${num(target?.monthly_target).toFixed(2)} cartons`)+card("Achieved",`${num(target?.achieved).toFixed(2)} cartons`)+card("Remaining",`${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)+card("Achievement",`${num(target?.percent).toFixed(1)}%`)}</div>${targetHtml}</section><section class="panel"><h3>Sales quantity breakdown</h3>${salesHtml}</section><section class="panel"><h3>Stock accountability</h3>${stockBalanceHtml}${stockMovementHtml}</section><section class="panel"><h3>Attendance history</h3>${admin() || manager() ? btn("Record / correct attendance", "mark-attendance", seller.id) : ""}${attendanceHtml}</section><section class="panel"><h3>Area assignment history</h3>${sectionError(assignments)||table(["Area","Effective from","Effective until","Instructions"],(assignments.data||[]).map(a=>[esc(a.area_name),esc(a.effective_from),esc(a.effective_to||"Current"),esc(a.instructions||"—")]),"No area assignments yet.")}</section><section class="panel"><h3>Upload employee documents</h3>${seller.user_id ? `<div class="grid">${select("Document type","employee-document-type",[["identity","NIC / identity document"],["education","Educational certificate"],["appointment","Appointment letter"],["contract","Employment contract"],["employment","Other employment document"],["salary_bank","Salary / bank document"],["other","Other important document" ]],"identity")}<div class="field"><label for="employee-document-file">PDF or photo (max 10 MB)</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-manager-document-upload" data-id="${esc(seller.id)}">Upload private document</button><p class="muted">Documents are private and accessible only to authorized management and the linked employee.</p>` : `<p class="notice">Link this employee to a login in Admin → Users & Access before uploading private documents.</p>`}<p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Profile photograph</h3>${seller.user_id ? `<div class="field"><label for="employee-profile-photo">JPG, PNG or WebP up to 5 MB</label><input id="employee-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="employee-manager-photo-upload" data-id="${esc(seller.id)}">Upload / replace profile photo</button>` : `<p class="notice">Link this employee to a login before uploading a private profile photograph.</p>`}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
+  modal(`${seller.name} · Profile`, `<section class="panel"><div class="profile-hero"><div class="profile-avatar">${photo}</div><div><h3>${esc(seller.name)}</h3><p><b>Employee ID:</b> ${esc(seller.id)}</p><p><b>Phone:</b> ${esc(seller.phone || "Not provided")}</p><p><b>Date of birth:</b> ${esc(seller.date_of_birth || "Not recorded")}</p><p><b>Territory / area:</b> ${esc(seller.territory || seller.area || "Not assigned")}</p><p><b>Joining date:</b> ${esc(seller.joining_date || "Not recorded")} · <b>Status:</b> ${seller.active ? "Active" : "Inactive"} · <b>Login role:</b> ${esc(role)}</p></div></div></section><section class="panel"><h3>Salary & advance history</h3><div id="salesman-profile-salary-history"><p class="muted">Loading salary and advance details…</p></div></section><section class="panel"><h3>Monthly target progress</h3><div class="cards">${card("Monthly target",`${num(target?.monthly_target).toFixed(2)} cartons`)}${card("Achieved",`${num(target?.achieved).toFixed(2)} cartons`)}${card("Remaining",`${Math.max(0,num(target?.monthly_target)-num(target?.achieved)).toFixed(2)} cartons`)}${card("Achievement",`${num(target?.percent).toFixed(1)}%`)}</div>${targetHtml}</section><section class="panel"><h3>Sales quantity breakdown</h3>${salesHtml}</section><section class="panel"><h3>Stock accountability</h3>${stockBalanceHtml}${stockMovementHtml}</section><section class="panel"><h3>Attendance history</h3>${admin() || manager() ? btn("Record / correct attendance", "mark-attendance", seller.id) : ""}${attendanceHtml}</section><section class="panel"><h3>Area assignment history</h3>${sectionError(assignments)||table(["Area","Effective from","Effective until","Instructions"],(assignments.data||[]).map(a=>[esc(a.area_name),esc(a.effective_from),esc(a.effective_to||"Current"),esc(a.instructions||"—")]),"No area assignments yet.")}</section><section class="panel"><h3>Upload employee documents</h3>${seller.user_id ? `<div class="grid">${select("Document type","employee-document-type",[["identity","NIC / identity document"],["education","Educational certificate"],["appointment","Appointment letter"],["contract","Employment contract"],["employment","Other employment document"],["salary_bank","Salary / bank document"],["other","Other important document" ]],"identity")}<div class="field"><label for="employee-document-file">PDF or photo (max 10 MB)</label><input id="employee-document-file" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div></div><button class="gold" data-act="employee-manager-document-upload" data-id="${esc(seller.id)}">Upload private document</button><p class="muted">Documents are private and accessible only to authorized management and the linked employee.</p>` : `<p class="notice">Link this employee to a login in Admin → Users & Access before uploading private documents.</p>`}<p class="muted">Private file links expire after one hour.</p>${documentsHtml}</section><section class="panel"><h3>Profile photograph</h3>${seller.user_id ? `<div class="field"><label for="employee-profile-photo">JPG, PNG or WebP up to 5 MB</label><input id="employee-profile-photo" type="file" accept="image/jpeg,image/png,image/webp"></div><button class="gold" data-act="employee-manager-photo-upload" data-id="${esc(seller.id)}">Upload / replace profile photo</button>` : `<p class="notice">Link this employee to a login before uploading a private profile photograph.</p>`}</section><section class="panel"><h3>Customer visits & fieldwork</h3>${visitsHtml}</section>`);
   const salaryHistoryRoot = $("salesman-profile-salary-history");
   if (salaryHistoryRoot) {
     const [salaryResult, advanceResult] = await Promise.all([
@@ -1939,38 +1894,14 @@ async function openAdminSalesmanProfile(salesmanId) {
 }
 
 function filters(category = false) {
-  return `<div class="filters">${field("From", "from", filter.from, "date", 'data-filter="from"')}${field("To", "to", filter.to, "date", 'data-filter="to"')}${category ? select("Category", "category", ["All categories", ...new Set([...S().expenses, ...advanceExpenseRows()].map((e) => e.category))], filter.category || "All categories") : ""}${btn("Apply", "apply-filters")}${btn("This month", "this-month")}${btn("This year", "this-year")}</div>`;
+  return `<div class="filters">${field("From", "from", filter.from, "date", 'data-filter="from"')}${field("To", "to", filter.to, "date", 'data-filter="to"')}${category ? select("Category", "category", ["All categories", ...new Set(S().expenses.map((e) => e.category))], filter.category || "All categories") : ""}${btn("Apply", "apply-filters")}${btn("This month", "this-month")}${btn("This year", "this-year")}</div>`;
 }
 function managerExpenseScope(e) {
   // Managers may view only expenses they personally created. Admin retains the full ledger.
   return String(e.created_by || "") === String(user.id || "");
 }
-// Released salary advances are shown on the Admin Expenses page as display-only rows.
-// They are NOT written to the expenses table: the advance already posts its own cash-book debit,
-// so a real expense row would debit the account twice. Manage advances from "Advance salary".
-function advanceExpenseRows(includeForPnl = false) {
-  if (!admin() && !includeForPnl) return [];
-  return (S().employee_salary_advances || [])
-    .filter(a => a.status === "posted" && !a.deleted_at && num(a.amount_paisa) > 0)
-    .map(a => ({
-      id: "ADV-" + a.id,
-      _advance: true,
-      date: String(a.advance_date || "").slice(0, 10),
-      category: "Salary Advance",
-      description: `Advance salary released to ${a.employee_name || "employee"}${a.employee_type === "manager" ? " (manager)" : ""} — ${a.reason || "no reason recorded"}${a.reference ? "; Ref: " + a.reference : ""}${num(a.recovered_paisa) > 0 ? `; recovered so far ${money(a.recovered_paisa)}` : ""}`,
-      amount_paisa: num(a.amount_paisa),
-      method: "",
-      cashbook_account_key: a.account_key || "",
-      salesman_id: a.salesman_id || null,
-    }));
-}
-// Profit & loss counts salary cost as: salaries (net paid, category "Salaries") + advances released.
-// Advances already recovered were deducted from the net salary, so nothing is counted twice.
-function pnlExpenses() {
-  return [...S().expenses, ...advanceExpenseRows(true)];
-}
 function renderExpenses() {
-  const rows = [...visible(S().expenses), ...advanceExpenseRows()].sort((x, y) => String(y.date).localeCompare(String(x.date))).filter(
+  const rows = visible(S().expenses).filter(
     (e) =>
       (!manager() || (managerExpenseScope(e) && !e.salary_period && !/salary released to/i.test(String(e.description || "")))) &&
       e.date >= filter.from &&
@@ -2009,21 +1940,20 @@ function renderExpenses() {
         esc(e.description),
         money(e.amount_paisa),
         esc(e.method),
-        esc(accountLabel) + (e.cashbook_account_key || e._advance ? "" : ' <span class="badge amber">Not saved</span>'),
+        esc(accountLabel) + (e.cashbook_account_key ? "" : ' <span class="badge amber">Not saved</span>'),
         esc(salesmanName(e.salesman_id)),
-        e._advance ? `<div class="actions">${btn("Manage advances", "advance-salary")}</div>` : `<div class="actions">${!manager() || e.created_by === user.id ? btn("Edit", "edit-expense", e.id) : ""}${e.attachment_path ? btn("Receipt", "receipt", e.id) : ""}${admin() ? btn("Delete", "delete-expense", e.id, "", "danger") : ""}</div>`,
+        `<div class="actions">${!manager() || e.created_by === user.id ? btn("Edit", "edit-expense", e.id) : ""}${e.attachment_path ? btn("Receipt", "receipt", e.id) : ""}${admin() ? btn("Delete", "delete-expense", e.id, "", "danger") : ""}</div>`,
       ];
       }),
     )}</section>`
   );
 }
-const salOf = (r) => Object.entries(r.categories || {}).filter(([k]) => /^salar(y|ies)$/i.test(k.trim())).reduce((n, [, v]) => n + v, 0);
 function renderPnl() {
   const s = S(),
     p = profitLoss(
       s.orders,
       s.order_items,
-      pnlExpenses(),
+      s.expenses,
       s.payments,
       s.invoices,
       filter.from,
@@ -2034,7 +1964,7 @@ function renderPnl() {
     prev = profitLoss(
       s.orders,
       s.order_items,
-      pnlExpenses(),
+      s.expenses,
       s.payments,
       s.invoices,
       addDays(filter.from, -days),
@@ -2061,10 +1991,7 @@ function renderPnl() {
         ["Net revenue", money(p.revenue), money(prev.revenue)],
         ["COGS", money(p.cogs), money(prev.cogs)],
         ["Gross profit", money(p.gross), money(prev.gross)],
-        ["Salaries (net paid)", money(salOf(p)), money(salOf(prev))],
-        ["Salary advances released", money(p.categories["Salary Advance"] || 0), money(prev.categories["Salary Advance"] || 0)],
-        ["Other operating expenses", money(p.expense - (salOf(p)) - (p.categories["Salary Advance"] || 0)), money(prev.expense - (salOf(prev)) - (prev.categories["Salary Advance"] || 0))],
-        ["Total expenses", `<b>${money(p.expense)}</b>`, money(prev.expense)],
+        ["Expenses", money(p.expense), money(prev.expense)],
         [
           "Net profit / loss",
           `<b class="${p.net < 0 ? "text-red" : "text-green"}">${money(p.net)}</b>`,
@@ -2077,7 +2004,7 @@ function renderPnl() {
           money(prev.outstanding),
         ],
       ],
-    )}<p class="muted">Cancelled sales are excluded. Salary cost = salaries paid (after advance deduction) + advances released, so advance recoveries are not counted twice. Cash collected uses payment dates; receivables show current balances.</p></section><section class="panel"><h2>Expenses by category</h2><div class="chart"><canvas id="expense-chart" role="img" aria-label="Expense categories"></canvas></div>${breakdown(p.categories)}</section></div><div class="two-col"><section class="panel"><h2>Sales by channel</h2>${breakdown(p.channels)}<h2 style="margin-top:24px">Sales by salesman</h2>${breakdown(p.salesmen, true)}</section><section class="panel"><h2>Top products by profit</h2><div class="chart"><canvas id="product-chart" role="img" aria-label="Product profit"></canvas></div>${breakdown(
+    )}<p class="muted">Cancelled sales are excluded. Cash collected uses payment dates; receivables show current balances.</p></section><section class="panel"><h2>Expenses by category</h2><div class="chart"><canvas id="expense-chart" role="img" aria-label="Expense categories"></canvas></div>${breakdown(p.categories)}</section></div><div class="two-col"><section class="panel"><h2>Sales by channel</h2>${breakdown(p.channels)}<h2 style="margin-top:24px">Sales by salesman</h2>${breakdown(p.salesmen, true)}</section><section class="panel"><h2>Top products by profit</h2><div class="chart"><canvas id="product-chart" role="img" aria-label="Product profit"></canvas></div>${breakdown(
       Object.fromEntries(
         Object.entries(p.products)
           .sort((a, b) => b[1] - a[1])
@@ -2101,7 +2028,7 @@ function drawCharts() {
         p = profitLoss(
           s.orders,
           s.order_items,
-          pnlExpenses(),
+          s.expenses,
           s.payments,
           s.invoices,
           first,
@@ -2163,7 +2090,7 @@ function drawCharts() {
   const p = profitLoss(
     s.orders,
     s.order_items,
-    pnlExpenses(),
+    s.expenses,
     s.payments,
     s.invoices,
     filter.from,
@@ -2297,11 +2224,7 @@ function payrollCalculationFor(p, month) {
   const endDate = new Date(start + "T12:00:00Z"); endDate.setUTCMonth(endDate.getUTCMonth()+1); endDate.setUTCDate(0);
   const end = endDate.toISOString().slice(0,10);
   const inMonth = d => String(d || "") >= start && String(d || "") <= end;
-  // Week Off rule: paid for salesmen. For managers it is NOT paid in the months listed in
-// MANAGER_WEEKOFF_UNPAID_MONTHS (October 2026). Keep in sync with supabase/manager_weekoff_unpaid_oct2026_v55_87.sql.
-const MANAGER_WEEKOFF_UNPAID_MONTHS = ['2026-10'];
-const weekOffUnits = (p.type === 'manager' && MANAGER_WEEKOFF_UNPAID_MONTHS.includes(month)) ? 0 : 1;
-const statusDays = {present:1, late:1, week_off:weekOffUnits, half_day:.5};
+  const statusDays = {present:1, late:1, half_day:.5, week_off:1};
   const isManager = p.type === "manager";
   const setting = isManager ? (state.manager_payroll_settings||[]).find(x=>String(x.manager_user_id)===String(p.id)) : p.record;
   // Match the backend payroll rule: one attendance credit per calendar date.
@@ -2335,25 +2258,19 @@ const statusDays = {present:1, late:1, week_off:weekOffUnits, half_day:.5};
   const boxesPerCarton = Math.max(1,num(state.settings?.boxes_per_carton)||24);
   const achieved = itemRows.reduce((sum,i)=>sum+num(i.boxes)/Math.max(1,num(i.boxes_per_carton)||boxesPerCarton),0);
   const achievedBoxes = itemRows.reduce((sum,i)=>sum+num(i.boxes),0);
-  const commissionMode = !isManager && isCommissionSalesman(p.record.id);
-  const cb = commissionMode ? commissionBreakdown(p.record.id, month + "-01", month + "-31") : null;
-  const base = commissionMode ? 0 : Math.round(baseMonthly*factor);
-  const allowance = commissionMode ? 0 : Math.round(allowanceMonthly*factor);
-  const incentive = commissionMode ? 0 : Math.round(Math.max(0,achieved-target)*rate);
-  const gross = commissionMode ? (cb?.total || 0) : base+allowance+incentive;
+  const base = Math.round(baseMonthly*factor);
+  const allowance = Math.round(allowanceMonthly*factor);
+  const incentive = Math.round(Math.max(0,achieved-target)*rate);
+  const gross = base+allowance+incentive;
   const advanceRows = (state.employee_salary_advances||[]).filter(a=>a.status==='posted'&&(isManager?String(a.manager_user_id)===String(p.id):String(a.salesman_id)===String(p.record.id)));
   const advanceTotal = advanceRows.reduce((n,a)=>n+Math.max(0,num(a.amount_paisa)),0);
   const advanceRecovered = advanceRows.reduce((n,a)=>n+Math.max(0,num(a.recovered_paisa)),0);
   const outstanding = Math.max(0,advanceTotal-advanceRecovered);
   const expenses = (state.expenses||[]).filter(e=>!e.deleted_at&&String(e.salary_period||'')===month&& (isManager?String(e.manager_user_id)===String(p.id):String(e.salesman_id)===String(p.record.id)));
   const posted = expenses.find(e=>/salary/i.test(String(e.category||'')+' '+String(e.description||''))) || expenses[0] || null;
-  return {commissionMode,commissionRows:cb?.rows||[],commissionRatesMissing:commissionMode&&!cb,p,month,posted,credited,workingDays,factor,baseMonthly,base,allowanceMonthly,allowance,target,rate,achieved,achievedBoxes,boxesPerCarton,incentive,gross,advanceTotal,advanceRecovered,outstanding,net:Math.max(0,gross-outstanding),attendanceRows,orders};
+  return {p,month,posted,credited,workingDays,factor,baseMonthly,base,allowanceMonthly,allowance,target,rate,achieved,achievedBoxes,boxesPerCarton,incentive,gross,advanceTotal,advanceRecovered,outstanding,net:Math.max(0,gross-outstanding),attendanceRows,orders};
 }
 function payrollDetailsModal(r) {
-  if (r.commissionMode) {
-    modal("Commission calculation · " + r.p.name + " · " + r.month, `<section class="panel"><div class="cards">${card("Salary basis","Commission","Per-product rate")}${card("Confirmed cartons sold",r.achieved.toFixed(2),r.month)}${card("Commission earned",`<b>${money(r.gross)}</b>`,"Before advance recovery")}</div>${r.commissionRatesMissing ? '<p class="notice danger">No commission rates are saved for this salesman. Edit the salesman and set a rate per product.</p>' : ""}${table(["Product","Cartons sold","Commission per carton","Commission earned"], r.commissionRows.map(x => [esc(x.name), x.cartons.toFixed(2), money(x.rate), `<b>${money(x.commission)}</b>`]), "No confirmed product sales for this month.")}${table(["Component","Amount"], [["Total advances recorded", money(r.advanceTotal)], ["Advance amounts already recovered", money(r.advanceRecovered)], ["Outstanding advance balance", money(r.outstanding)], ["Estimated net after outstanding advances", `<b>${money(r.posted ? r.posted.amount_paisa : r.net)}</b>`], ["Payment status", r.posted ? "Already released" : "Not released — estimate only"]], "")}<p class="muted">Commission-basis salesmen have no fixed salary, attendance proration, monthly target or carton incentive.</p></section>`);
-    return;
-  }
   const pct = r.target > 0 ? r.achieved/r.target*100 : 0;
   const rows = [
     ["Salary period", r.month],
@@ -3078,10 +2995,6 @@ function closingModal() {
 }
 function targetsModal(id) {
   const staff = S().salesmen.find((x) => x.id === id);
-  if (isCommissionSalesman(id)) {
-    modal("Daily sales · " + staff.name, `<p>Commission basis — no target. Cartons sold per day are shown.</p>${table(["Date","Cartons sold","Boxes","Sales"], S().salesman_daily_targets.filter((d) => d.salesman_id === id && d.date >= monthStart(today())).map((d) => [esc(d.date), num(d.achieved_cartons).toFixed(2), d.achieved_boxes, money(d.sales_amount)]))}`);
-    return;
-  }
   modal(
     "Daily tracking · " + staff.name,
     `<p>Base target follows this salesman’s working days each month. Today's shortfall is provisional until the day closes.</p>${table(
@@ -3159,6 +3072,7 @@ function salarySlipMarkup(slip) {
       <tr><td class="field">Designation</td><td>${val(slip.designation || slip.employee_type || "—")}</td><td class="field">Employee ID</td><td>${val(employeeId)}</td></tr>
       ${commission ? `<tr><td class="field">Area / Route</td><td>${val(b.area_route || slip.area || "")}</td><td class="field">Commission Month</td><td>${val(period)}</td></tr>` : `<tr><td class="field">Salary Month</td><td>${val(period)}</td><td class="field">Date of Payment</td><td>${val(paidDate)}</td></tr>`}
       <tr>${commission?`<td class="field">Date of Payment</td><td>${val(paidDate)}</td>`:`<td class="field">Days Worked</td><td>${val(b.days_worked ?? "")}</td>`}<td class="field">Payment Mode</td><td>${val(mode)}</td></tr>
+      ${commission ? `<tr><td class="field">Days Worked</td><td>${val(b.days_worked ?? "")}</td><td class="field">Attendance Basis</td><td>Credited attendance days</td></tr>` : ""}
     </tbody></table>
     ${commissionSections}
     <table class="payroll-table"><thead><tr><th>EARNINGS</th><th>AMOUNT (PKR)</th><th>DEDUCTIONS</th><th>AMOUNT (PKR)</th></tr></thead><tbody>
@@ -3190,9 +3104,9 @@ async function printAdvanceSalarySlip(advanceId) {
   w.document.write(`<!doctype html><html><head><title>Blesscon Candy Advance Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0;background:#fff}button{margin-top:16px;padding:8px 14px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(slip)}</body></html>`); w.document.close();
 }
 
-async function saveSalarySlipAndNotify({id,employeeUserId,salesmanId,managerUserId,employeeName,employeeType,month,basis="fixed",gross,arrears=0,deduction,net,date,account,reference="",lines=[]}) {
+async function saveSalarySlipAndNotify({id,employeeUserId,salesmanId,managerUserId,employeeName,employeeType,month,basis="fixed",gross,arrears=0,deduction,net,date,account,reference="",lines=[],daysWorked=null}) {
   const slipId=`SLIP-${employeeType}-${salesmanId || managerUserId}-${month}`;
-  const payload={id:slipId,employee_user_id:employeeUserId||null,salesman_id:salesmanId||null,manager_user_id:managerUserId||null,employee_name:employeeName,employee_type:employeeType,salary_period:month,salary_basis:basis,gross_paisa:gross,arrears_paisa:arrears,advance_deduction_paisa:deduction,net_paid_paisa:net,payment_date:date||today(),payment_account_key:account||null,payment_reference:reference||"",breakdown:{lines, payment_mode: /cash/i.test(account||"")?"Cash":/cheque/i.test(reference||"")?"Cheque":/wallet|easypaisa|jazzcash/i.test(account||"")?"Online Wallet":"Bank Transfer", amount_in_words:"", days_worked:null}};
+  const payload={id:slipId,employee_user_id:employeeUserId||null,salesman_id:salesmanId||null,manager_user_id:managerUserId||null,employee_name:employeeName,employee_type:employeeType,salary_period:month,salary_basis:basis,gross_paisa:gross,arrears_paisa:arrears,advance_deduction_paisa:deduction,net_paid_paisa:net,payment_date:date||today(),payment_account_key:account||null,payment_reference:reference||"",breakdown:{lines, payment_mode: /cash/i.test(account||"")?"Cash":/cheque/i.test(reference||"")?"Cheque":/wallet|easypaisa|jazzcash/i.test(account||"")?"Online Wallet":"Bank Transfer", amount_in_words:"", days_worked:daysWorked==null?null:Number(daysWorked)}};
   const saved=await client.from("employee_salary_slips").upsert(payload,{onConflict:"id"});
   if(saved.error) throw Error("Salary was posted but salary slip could not be saved. Do not release again; contact Admin to reconcile: "+saved.error.message);
   if(employeeUserId || salesmanId) {
@@ -4255,11 +4169,6 @@ async function action(act, id, element) {
     case "my-target-details": salesmanTargetDetails(id); break;
     case "my-salary-details": {
       if (user?.role !== "salesman" || own()?.id !== id) throw Error("You can only view your own salary details.");
-      if (isCommissionSalesman(id)) {
-        const cb = commissionBreakdown(id);
-        modal("My commission breakdown · " + today().slice(0,7), `<section class="panel"><div class="cards">${card("Salary basis","Commission","Per-product rate")}${card("Confirmed cartons sold",(cb?.cartons || 0).toFixed(2),"This month")}${card("Commission earned",cb ? money(cb.total) : "Unavailable","Estimate — pending Admin approval")}</div>${table(["Product","Cartons sold","Commission per carton","Commission earned"], (cb?.rows || []).map(x => [esc(x.name), x.cartons.toFixed(2), money(x.rate), `<b>${money(x.commission)}</b>`]), "No confirmed product sales for this month.")}<p class="muted">Fixed salary, monthly target and target incentive do not apply to commission-basis salesmen.</p></section>`);
-        break;
-      }
       const result = await client.rpc("own_salary_snapshot"); if (result.error) throw result.error;
       const pay = (result.data || {});
       modal("My salary breakdown · " + esc(pay.salary_period || today().slice(0,7)), `<section class="panel"><p><b>Status:</b> ${esc(pay.status === "posted" ? "Posted" : "Estimate — pending Admin approval")}</p>${table(["Component","Amount"], [["Attendance credited",`${num(pay.attendance_days).toFixed(1)} / ${num(pay.working_days)} days`],["Salary per attendance day",money(num(pay.base_salary_monthly_paisa)/Math.max(1,num(pay.working_days)))],["Base salary earned after attendance",money(pay.base_salary_paisa||0)],["Allowance earned after attendance",money(pay.allowance_paisa||0)],["Target incentive",money(pay.incentive_paisa||0)],["Net salary after outstanding advances",money(pay.total_paisa ?? pay.estimated_net_after_outstanding_advances_paisa ?? 0)],["Monthly target",`${num(pay.monthly_target).toFixed(2)} cartons`],["Eligible quantity achieved",`${num(pay.achieved_cartons).toFixed(2)} cartons`],["Achievement",`${num(pay.achievement_percent).toFixed(1)}%`]], "Salary calculation unavailable.")}<p class="muted">This is an estimate unless marked Posted. Outstanding salary advances are deducted from the estimated net amount. Check the advance history before releasing salary.</p></section>`); break;
@@ -4370,7 +4279,7 @@ async function action(act, id, element) {
     case "expense-csv": {
       const rows = [
         ["Date", "Category", "Description", "Amount PKR", "Method", "Salesman"],
-        ...[...visible(S().expenses), ...advanceExpenseRows()]
+        ...visible(S().expenses)
           .filter(
             (e) =>
               e.date >= filter.from &&
@@ -4822,12 +4731,7 @@ document.addEventListener("submit", async (e) => {
         const result = await client.from("employee_salary_advances").insert(payload).select("id").single();
         if (result.error) throw result.error;
         await store.refresh();
-        // Show the released advance straight away on the Admin Expenses page.
-        filter.from = monthStart(payload.advance_date);
-        filter.to = payload.advance_date;
-        filter.category = "All categories";
-        page = "expenses";
-        toast("Advance salary recorded and payment account debited. It is now listed in Expenses as Salary Advance.");
+        toast("Advance salary recorded and payment account debited.");
         close(); render(); break;
       }
       case "salary-advance-edit-form": {
@@ -4873,7 +4777,7 @@ document.addEventListener("submit", async (e) => {
         if (!confirm(`Release manager salary to ${managerName} for ${month}?\nGross salary: ${money(grossAmount)}\nAutomatic advance deduction: ${money(deduction)}\nNet amount to pay: ${money(netAmount)}\nAccount: ${account.label}\n${reasons ? "Advance reasons: " + reasons + "\n" : ""}The selected account will be debited only for the net amount.`)) break;
         const salaryId = "MGR-SAL-" + managerId + "-" + month;
         await store.run("master.save", {table:"expenses", record:{id:salaryId,date:f.date||today(),category:"Salaries",description:`Salary released to manager ${managerName} — ${month}; gross ${money(grossAmount)}; automatic advance deduction ${money(deduction)}${reasons ? "; advance reasons: "+reasons : "; no outstanding advance"}${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:netAmount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,manager_user_id:managerId,salary_period:month}});
-        await saveSalarySlipAndNotify({employeeUserId:managerId,managerUserId:managerId,employeeName:managerName,employeeType:"manager",month,gross:grossAmount,deduction,net:netAmount,date:f.date||today(),account:account.label,reference:f.reference||"",lines:[{label:"Gross salary",value:money(grossAmount)},{label:"Automatic advance recovery this month",value:money(deduction)}]});
+        await saveSalarySlipAndNotify({employeeUserId:managerId,managerUserId:managerId,employeeName:managerName,employeeType:"manager",month,gross:grossAmount,deduction,net:netAmount,date:f.date||today(),account:account.label,reference:f.reference||"",daysWorked:managerPayroll.credited,lines:[{label:"Gross salary",value:money(grossAmount)},{label:"Attendance",value:`${managerPayroll.credited}/${managerPayroll.workingDays} days`},{label:"Automatic advance recovery this month",value:money(deduction)}]});
         if (deduction > 0) {
           let remaining = deduction;
           for (const advance of advances) {
@@ -4895,6 +4799,8 @@ document.addEventListener("submit", async (e) => {
         const seller = S().salesmen.find(x => x.id === salesmanId);
         if (!seller) throw Error("Salesman not found.");
         let salaryBasis="fixed"; let commissionLines=[]; let grossAmount=0;
+        const salaryAttendance = payrollCalculationFor({type:"salesman",id:seller.user_id||seller.id,name:seller.name||"Salesman",record:seller},month);
+        const daysWorked = salaryAttendance.credited;
         const basisRes=await client.from("salesman_compensation_settings").select("salary_basis").eq("user_id",seller.user_id||seller.id).maybeSingle();
         if(basisRes.error) throw Error("Could not verify salary basis: "+basisRes.error.message);
         salaryBasis=basisRes.data?.salary_basis||"fixed";
@@ -4904,7 +4810,7 @@ document.addEventListener("submit", async (e) => {
           const orders=S().orders.filter(o=>String(o.salesman_id)===String(salesmanId)&&o.status==="confirmed"&&!o.deleted_at&&String(o.date||"").startsWith(month)); const orderIds=new Set(orders.map(o=>String(o.id))); const rates=new Map((rateRes.data||[]).map(r=>[String(r.product_id),r]));
           for(const it of (itemRes.data||[]).filter(i=>orderIds.has(String(i.order_id)))) { const rate=rates.get(String(it.product_id)); if(!rate) continue; const cartons=num(it.boxes)/Math.max(1,num(it.boxes_per_carton)||num(S().settings?.boxes_per_carton)||24); const earned=Math.round(cartons*num(rate.commission_per_carton_paisa)); grossAmount+=earned; commissionLines.push({label:`${rate.product_name||it.product_id}: ${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,product_name:String(rate.product_name||it.product_id),cartons:cartons.toFixed(2),calculation:`${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,value:money(earned),commission:money(earned)}); }
         } else {
-          const attendancePayroll = payrollCalculationFor({type:"salesman",id:seller.user_id||seller.id,name:seller.name||"Salesman",record:seller},month);
+          const attendancePayroll = salaryAttendance;
           grossAmount = Math.max(0, Math.round(num(attendancePayroll.gross)));
           commissionLines=[{label:`Attendance-adjusted base salary (${attendancePayroll.credited}/${attendancePayroll.workingDays} days)`,value:money(attendancePayroll.base)},{label:"Attendance-adjusted allowance",value:money(attendancePayroll.allowance)},{label:"Confirmed carton incentive",value:money(attendancePayroll.incentive)}];
         }
@@ -4924,7 +4830,7 @@ document.addEventListener("submit", async (e) => {
         const prior = S().expenses.find(e=>e.salesman_id===salesmanId && e.salary_period===month && !e.deleted_at);
         if (prior) throw Error("Salary already posted for " + month);
         await store.run("master.save", {table:"expenses", record:{id:"SAL-"+salesmanId+"-"+month,date:f.date||today(),category:"Salaries",description:`Salary released to ${seller.name} — ${month}; gross ${money(grossAmount)}; automatic advance deduction ${money(deduction)}${reasons ? "; advance reasons: "+reasons : "; no outstanding advance"}; base + incentive (${achieved.toFixed(2)} cartons)${f.reference ? "; Ref: "+String(f.reference).trim() : ""}`,amount_paisa:amount,method:/jazzcash/i.test(account.label)?"JazzCash":/easypaisa/i.test(account.label)?"Easypaisa":/cash/i.test(account.label)?"Cash":/mcb/i.test(account.label)?"MCB Bank":/al habib/i.test(account.label)?"Al Habib Bank":"Bank Account",cashbook_account_key:account.account_key,salesman_id:salesmanId,salary_period:month}});
-        await saveSalarySlipAndNotify({employeeUserId:seller.user_id||null,salesmanId,employeeName:seller.name,employeeType:"salesman",month,basis:salaryBasis,gross:grossAmount,deduction,net:amount,date:f.date||today(),account:account.label,reference:f.reference||"",lines:commissionLines});
+        await saveSalarySlipAndNotify({employeeUserId:seller.user_id||null,salesmanId,employeeName:seller.name,employeeType:"salesman",month,basis:salaryBasis,gross:grossAmount,deduction,net:amount,date:f.date||today(),account:account.label,reference:f.reference||"",daysWorked,lines:[...commissionLines,{label:"Attendance",value:`${daysWorked}/${salaryAttendance.workingDays} days`}]});
         if (deduction > 0) {
           let remaining = deduction;
           for (const advance of advances) {

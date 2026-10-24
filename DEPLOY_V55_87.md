@@ -1,7 +1,9 @@
-# BCBM v55.87 — Deploy
+# Deploy BCBM v55.87 — Days worked on salary slip
 
-1. Upload the contents of this folder over the existing files, then hard-refresh (Ctrl+Shift+R) or reopen the installed app.
-2. In Supabase → SQL Editor, run `supabase/manager_weekoff_unpaid_oct2026_v55_87.sql` (back up first). This makes the manager's own salary view match Admin. It must show `true` at the end.
-3. Check October 2026 in Admin → Salary calculations: manager shows 15 days (Week Off not counted), Arsalan still 17.
+1. Back up the currently deployed folder.
+2. Extract `BCBM_v55_87_Salary_Slip_Days_Worked.zip` and upload the contents of `bcbm_v568_working`, replacing the old app files.
+3. Hard-refresh with Ctrl+Shift+R (or close/reopen the installed app).
+4. Release a salary only after verifying attendance and payroll values. The new salary slip will show Days Worked from the credited attendance calculation, alongside the configured working-day denominator in the detail line.
+5. Existing slips released before this update are not automatically recalculated. Do not re-release a salary to update a slip; reconcile the existing record separately.
 
-To change the rule for other months, edit `MANAGER_WEEKOFF_UNPAID_MONTHS` in `js/app.js` and the `'2026-10'` check in the SQL.
+Live Supabase and print output were not available for end-to-end verification.
