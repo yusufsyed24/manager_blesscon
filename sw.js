@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-69-salary-slip-templates-central-accounts-20261024";
+const CACHE = "blesscon-static-v55-70-exact-salary-slip-template-20261024";
 const ASSETS = [
   "./",
   "./index.html",

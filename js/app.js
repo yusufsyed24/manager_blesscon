@@ -3071,49 +3071,62 @@ function salarySlipMarkup(slip) {
   const advance = String(slip.salary_basis || "").toLowerCase() === "advance";
   const lines = Array.isArray(b.lines) ? b.lines : [];
   const amount = v => money(Number(v || 0));
+  const val = v => esc(v === undefined || v === null || v === "" ? "" : String(v));
   const slipNo = slip.id || "—";
-  const lineRows = lines.map(x => `<tr><td>${esc(x.label || "—")}</td><td style="text-align:right">${esc(String(x.value ?? "—"))}</td></tr>`).join("");
-  const details = commission ? `
-    <h3>SALES & COMMISSION DETAILS</h3>
-    ${table(["Product / detail","Cartons / calculation","Commission (PKR)"], lines.map(x=>[esc(x.product_name || x.label || "Commission"),esc(x.cartons ?? x.calculation ?? "—"),esc(String(x.value ?? x.commission ?? "—"))]),"No commission lines recorded.")}
-    <h3>TARGET ACHIEVEMENT</h3><p>Monthly carton target: Not applicable for commission-basis employees.</p>
-    <h3>EARNINGS & DEDUCTIONS</h3>${table(["Earnings / deductions","Amount (PKR)"],[
-      ["Total Commission",amount(slip.gross_paisa)],["Advance Recovery (this month)",amount(slip.advance_deduction_paisa)],["Other deductions",amount(b.other_deductions_paisa||0)],["NET PAYABLE",amount(slip.net_paid_paisa)]
-    ])}
-  ` : advance ? `
-    <h3>ADVANCE SALARY DETAILS</h3>${table(["Detail","Amount / value"],[
-      ["Advance given on",esc(slip.payment_date||"—")],["Advance amount",amount(slip.net_paid_paisa ?? slip.gross_paisa)],["Recovered so far",esc(b.recovered_to_date||"PKR 0.00")],["Balance remaining",esc(b.outstanding_advance||"—")],["Reason / remarks",esc(b.reason||"—")]
-    ])}
-    <h3>ADVANCE PAYMENT</h3>${table(["Payment detail","Value"],[["Amount paid",amount(slip.net_paid_paisa ?? slip.gross_paisa)],["Payment mode",esc(slip.payment_mode||"—")],["Paid by",esc(slip.payment_account_key||"—")]])}
-  ` : `
-    <h3>EARNINGS & DEDUCTIONS</h3>${table(["Earnings / deductions","Amount (PKR)"],[
-      ["Basic Salary",amount(b.basic_salary_paisa ?? slip.gross_paisa)],["House / Transport Allowance",amount(b.allowance_paisa||0)],["Commission / Incentive",amount(b.commission_paisa||0)],["Overtime",amount(b.overtime_paisa||0)],["TOTAL EARNINGS",amount(slip.gross_paisa)],["Advance Recovery (this month)",amount(slip.advance_deduction_paisa)],["Absent / Leave Deduction",amount(b.absence_deduction_paisa||0)],["Late Arrival Deduction",amount(b.late_deduction_paisa||0)],["Other Deduction",amount(b.other_deductions_paisa||0)],["TOTAL DEDUCTIONS",amount(Number(slip.advance_deduction_paisa||0)+Number(b.absence_deduction_paisa||0)+Number(b.late_deduction_paisa||0)+Number(b.other_deductions_paisa||0))],["NET PAYABLE",amount(slip.net_paid_paisa)]
-    ])}
-  `;
-  return `<div style="font-family:Arial,sans-serif;color:#222;padding:28px;max-width:900px;margin:auto">
-    <header style="display:flex;align-items:center;gap:18px;border-bottom:3px solid #b68b35;padding-bottom:16px;margin-bottom:20px">
-      <img src="assets/logo.jpeg" alt="Blesscon Candy" style="width:90px;max-height:90px;object-fit:contain">
-      <div><h1 style="margin:0;color:#6f4b12">BLESSCON CANDY</h1><h2>${commission?"COMMISSION SLIP":advance?"SALARY & ADVANCE PAYMENT STATEMENT":"SALARY SLIP"}</h2><p>www.blessconcandy.com • blessconcandy@gmail.com</p></div>
-    </header>
-    <h2 style="text-align:center">${commission?"SALESMAN COMMISSION & ADVANCE STATEMENT":advance?"SALARY & ADVANCE PAYMENT STATEMENT":"SALARY SLIP"}</h2>
-    ${table(["Employee details","Value"],[
-      ["Employee Name",esc(slip.employee_name||"—")],["Slip No.",esc(slipNo)],["Designation",esc(slip.employee_type||"—")],["Employee ID",esc(slip.salesman_id||slip.manager_user_id||"—")],["Salary Month / Commission Month",esc(slip.salary_period||"—")],["Date of Payment",esc(slip.payment_date||"—")],["Payment Mode",esc(b.payment_mode||"—")],...(commission?[["Area / Route",esc(b.area_route||"—")]]:[]),...(!advance?[["Days Worked",esc(b.days_worked??"—")]]:[])
-    ])}
-    ${details}
-    <h3>PAYMENT SUMMARY</h3>${table(["Description","Amount / detail"],[
-      ["Net Payable",amount(slip.net_paid_paisa)],["Amount in words",esc(b.amount_in_words||"Please verify amount before signing")],["Paid by",esc(slip.payment_account_key||"—")],["Payment reference",esc(slip.payment_reference||"—")],["Reason / Remarks",esc(b.reason||"—")]
-    ])}
-    <p style="margin-top:36px;display:flex;justify-content:space-between;border-top:1px solid #bbb;padding-top:18px"><span>Employee Signature</span><span>Authorized Signatory / Accounts</span></p>
-    <p style="font-size:11px;border-top:1px solid #ddd;padding-top:12px">${commission?"Commission is calculated on confirmed sales only.": "This salary slip is confidential."} Please verify the details and report any difference within 3 working days of receipt.</p>
-    <p style="text-align:center;color:#6f4b12">Blesscon Candy • www.blessconcandy.com • blessconcandy@gmail.com</p>
-    <button onclick="window.print()" class="gold" style="padding:10px 18px">Print / Save PDF</button></div>`;
+  const employeeId = slip.employee_id || slip.salesman_id || slip.manager_user_id || "—";
+  const period = slip.salary_period || "—";
+  const paidDate = slip.payment_date || "—";
+  const mode = b.payment_mode || slip.payment_mode || "—";
+  const signature = commission ? "Salesman Signature" : "Employee Signature";
+  const detailRows = (items) => items.map((x,i)=>`<tr class="data-row"><td>${x[0]}</td><td>${x[1]||""}</td></tr>`).join("");
+  const advanceDetails = `<section class="advance-block"><div class="section-title orange">★ &nbsp; ADVANCE SALARY DETAILS</div><table class="advance-table"><thead><tr><th>ADVANCE GIVEN ON (DATE)</th><th>ADVANCE AMOUNT</th><th>RECOVERED SO FAR</th><th>BALANCE REMAINING</th></tr></thead><tbody><tr><td>${val(b.advance_date || b.advance_given_on || "")}</td><td>${val(b.advance_amount ? amount(b.advance_amount) : "")}</td><td>${val(b.recovered_to_date || "")}</td><td>${val(b.outstanding_advance || "")}</td></tr></tbody></table>${commission ? "" : `<div class="reason"><b>Reason / Remarks:</b> &nbsp;${val(b.reason || "")}</div>`}</section>`;
+  const net = `<section class="net-box"><div><strong>NET PAYABLE</strong><small>Total Earnings − Total Deductions</small></div><div class="net-value">PKR &nbsp; <span>${amount(slip.net_paid_paisa ?? slip.gross_paisa)}</span></div></section>`;
+  const payment = `<div class="amount-words"><b>Amount in words:</b> &nbsp;${val(b.amount_in_words || "")} <span>only</span></div><div class="paid-by"><b>Paid by:</b> &nbsp; ☐ Cash &nbsp;&nbsp; ☐ Bank Transfer &nbsp;&nbsp; ☐ Cheque &nbsp;&nbsp; ☐ Online Wallet</div>`;
+  const earnings = commission ? [
+    ["Total Commission", amount(slip.gross_paisa)], ["Advance Recovery (this month)", amount(slip.advance_deduction_paisa)], ["Target Bonus", amount(b.target_bonus_paisa || 0)], ["Shortage / Damage Deduction", amount(b.shortage_damage_deduction_paisa || 0)], ["Fuel / Travel Allowance", amount(b.travel_allowance_paisa || 0)], ["Absent / Leave Deduction", amount(b.absence_deduction_paisa || 0)], ["Other Incentive", amount(b.other_incentive_paisa || 0)], ["Other Deduction", amount(b.other_deductions_paisa || 0)]
+  ] : [
+    ["Basic Salary", amount(b.basic_salary_paisa ?? slip.gross_paisa)], ["House / Transport Allowance", amount(b.allowance_paisa || 0)], ["Commission / Incentive", amount(b.commission_paisa || 0)], ["Overtime", amount(b.overtime_paisa || 0)], ["TOTAL EARNINGS", amount(slip.gross_paisa)], ["Advance Recovery (this month)", amount(slip.advance_deduction_paisa)], ["Absent / Leave Deduction", amount(b.absence_deduction_paisa || 0)], ["Late Arrival Deduction", amount(b.late_deduction_paisa || 0)], ["Other Deduction", amount(b.other_deductions_paisa || 0)]
+  ];
+  const deductions = commission ? ["Advance Recovery (this month)","Shortage / Damage Deduction","Absent / Leave Deduction","Other Deduction"] : ["Advance Recovery (this month)","Absent / Leave Deduction","Late Arrival Deduction","Other Deduction"];
+  const earnVals = commission ? [amount(slip.gross_paisa),amount(b.target_bonus_paisa||0),amount(b.travel_allowance_paisa||0),amount(b.other_incentive_paisa||0),amount(slip.gross_paisa)] : [amount(b.basic_salary_paisa ?? slip.gross_paisa),amount(b.allowance_paisa||0),amount(b.commission_paisa||0),amount(b.overtime_paisa||0),amount(slip.gross_paisa)];
+  const deductVals = commission ? [amount(slip.advance_deduction_paisa),amount(b.shortage_damage_deduction_paisa||0),amount(b.absence_deduction_paisa||0),amount(b.other_deductions_paisa||0),amount(Number(slip.advance_deduction_paisa||0)+Number(b.shortage_damage_deduction_paisa||0)+Number(b.absence_deduction_paisa||0)+Number(b.other_deductions_paisa||0))] : [amount(slip.advance_deduction_paisa),amount(b.absence_deduction_paisa||0),amount(b.late_deduction_paisa||0),amount(b.other_deductions_paisa||0),amount(Number(slip.advance_deduction_paisa||0)+Number(b.absence_deduction_paisa||0)+Number(b.late_deduction_paisa||0)+Number(b.other_deductions_paisa||0))];
+  const pairedRows = [0,1,2,3].map(i=>`<tr><td>${commission ? ["Total Commission","Target Bonus","Fuel / Travel Allowance","Other Incentive"][i] : ["Basic Salary","House / Transport Allowance","Commission / Incentive","Overtime"][i]}</td><td class="money-cell">${earnVals[i]}</td><td>${deductions[i]}</td><td class="money-cell">${deductVals[i]}</td></tr>`).join("");
+  const salesRows = ["Fruity Galas","Cone Candies (Pan Masala / Sweet Eggs / Sweet Saunf)","Mix Pan Masala Cone","Other Products"].map((name,i)=>{
+    const row = lines.find(x => String(x.product_name||x.label||"").toLowerCase().includes(name.toLowerCase().split(" ")[0])) || lines[i];
+    return `<tr><td>${name}</td><td>${val(row?.cartons ?? "")}</td><td>${val(row?.sale_value ?? row?.sales_value ?? "")}</td><td>${val(row?.rate ?? row?.rate_percent ?? "")}</td><td>${val(row?.commission ?? row?.value ?? "")}</td></tr>`;
+  }).join("");
+  const commissionSections = commission ? `<section class="commission-details"><div class="section-title navy">★ &nbsp; SALES & COMMISSION DETAILS</div><table class="sales-table"><thead><tr><th>PRODUCT</th><th>CARTONS SOLD</th><th>SALE VALUE (PKR)</th><th>RATE / %</th><th>COMMISSION (PKR)</th></tr></thead><tbody>${salesRows}<tr class="total-row"><td>TOTAL</td><td>${val(b.total_cartons ?? "")}</td><td>${val(b.total_sales_value ?? "")}</td><td></td><td>${amount(slip.gross_paisa)}</td></tr></tbody></table></section><section class="target-block"><div class="section-title green">★ &nbsp; TARGET ACHIEVEMENT</div><table class="target-table"><thead><tr><th>MONTHLY TARGET (CARTONS)</th><th>CARTONS ACHIEVED</th><th>ACHIEVEMENT %</th><th>TARGET BONUS (PKR)</th></tr></thead><tbody><tr><td>Not applicable</td><td>${val(b.cartons_achieved ?? "")}</td><td>${val(b.achievement_percent ?? "")}</td><td>${amount(b.target_bonus_paisa||0)}</td></tr></tbody></table></section>` : "";
+  const headerTitle = commission ? "COMMISSION SLIP" : advance ? "SALARY SLIP" : "SALARY SLIP";
+  const subtitle = commission ? "SALESMAN COMMISSION & ADVANCE STATEMENT" : "SALARY & ADVANCE PAYMENT STATEMENT";
+  return `<div class="bc-slip ${commission?"commission-slip":"fixed-slip"}">
+    <style>
+    @page{size:A4;margin:10mm}*{box-sizing:border-box}.bc-slip{font-family:Arial,sans-serif;color:#17245f;width:100%;max-width:760px;margin:0 auto;font-size:10px;line-height:1.25}.bc-slip table{width:100%;border-collapse:collapse;margin:0}.bc-slip th,.bc-slip td{padding:6px 7px;text-align:left;vertical-align:middle;border:0}.slip-banner{height:112px;background:#17256f;border-top:6px solid transparent;border-image:linear-gradient(90deg,#e73583,#ff8a00,#ffc400,#44b74c,#149bd7,#e73545) 1;border-bottom:4px solid #f4bd00;color:white;display:flex;align-items:center;padding:12px 28px;gap:28px;margin-bottom:12px}.slip-banner img{width:115px;height:85px;object-fit:contain}.slip-banner h1{font-size:28px;letter-spacing:4px;margin:0 0 5px;color:#fff}.slip-banner h2{font-size:11px;letter-spacing:2px;color:#ffc400;margin:0 0 6px}.slip-banner p{font-size:10px;color:#fff;margin:0}.employee-grid td{height:29px;border-bottom:1px dotted #aaa}.employee-grid .field{background:#fbe3ed;color:#17256f;font-weight:bold;width:16%}.employee-grid .value{width:34%}.employee-grid{margin-bottom:18px!important}.section-title{color:white;font-weight:bold;letter-spacing:1.5px;padding:7px 10px;font-size:11px}.navy{background:#17256f}.orange{background:#ff7f16}.green{background:#48b649}.payroll-table thead th{background:#17256f;color:white;font-weight:bold}.payroll-table thead th:nth-child(3){background:#e73583}.payroll-table td{height:26px;border-bottom:1px solid #ddd}.payroll-table .money-cell{text-align:right}.payroll-table .total-row td:nth-child(1),.payroll-table .total-row td:nth-child(2){background:#e2efff;font-weight:bold}.payroll-table .total-row td:nth-child(3),.payroll-table .total-row td:nth-child(4){background:#fbe3ed;font-weight:bold}.advance-block{margin-top:18px}.advance-table th{background:#f4bd00;color:#17256f;text-align:center;font-size:9px}.advance-table td{background:#fff2c7;height:40px;border-bottom:1px solid #e6d9aa}.reason{background:#fff2c7;padding:7px 9px;color:#17256f}.net-box{background:#17256f;color:white;display:flex;justify-content:space-between;align-items:center;padding:15px;margin-top:16px}.net-box strong{display:block;color:#ffc400;font-size:20px;letter-spacing:4px}.net-box small{display:block;color:#d9def6;font-size:9px;margin-top:3px}.net-value{font-size:17px;font-weight:bold}.net-value span{display:inline-block;border-bottom:2px solid #ffc400;min-width:230px;padding:0 4px 4px}.amount-words,.paid-by{margin-top:8px;font-size:10px}.amount-words span{color:#888}.signature-row{display:flex;justify-content:space-between;margin:65px 0 12px;text-align:center;font-weight:bold}.signature-row div{width:32%;border-top:1px solid #17256f;padding-top:6px}.fineprint{text-align:center;color:#777;font-style:italic;font-size:9px;margin:8px 0 0}.slip-footer{margin-top:100px;border-top:6px solid transparent;border-image:linear-gradient(90deg,#e73583,#ff8a00,#ffc400,#44b74c,#149bd7,#e73545) 1;text-align:center;color:#777;font-size:9px;padding-top:7px}.sales-table th{background:#17256f;color:#fff;text-align:center;font-size:9px}.sales-table th:first-child{text-align:left}.sales-table td{border-bottom:1px solid #ddd;height:27px}.sales-table td:not(:first-child){text-align:center}.sales-table .total-row td{background:#e2efff;font-weight:bold}.target-block{margin-top:7px}.target-table th{background:#e8f7e8;color:#fff;background:#48b649;text-align:center;font-size:9px}.target-table td{height:42px;background:#e8f7e8;border-bottom:1px solid #cfe6cf;text-align:center}@media print{.bc-slip{max-width:none}.no-print{display:none}}
+    </style>
+    <header class="slip-banner"><img src="assets/logo.jpeg" alt="Blesscon Candy"><div><h1>${headerTitle}</h1><h2>${subtitle}</h2><p>www.blessconcandy.com &nbsp; • &nbsp; blessconcandy@gmail.com</p></div></header>
+    <table class="employee-grid"><tbody>
+      <tr><td class="field">Employee Name</td><td class="value">${val(slip.employee_name || "—")}</td><td class="field">Slip No.</td><td class="value">${val(slipNo)}</td></tr>
+      <tr><td class="field">Designation</td><td>${val(slip.designation || slip.employee_type || "—")}</td><td class="field">Employee ID</td><td>${val(employeeId)}</td></tr>
+      ${commission ? `<tr><td class="field">Area / Route</td><td>${val(b.area_route || slip.area || "")}</td><td class="field">Commission Month</td><td>${val(period)}</td></tr>` : `<tr><td class="field">Salary Month</td><td>${val(period)}</td><td class="field">Date of Payment</td><td>${val(paidDate)}</td></tr>`}
+      <tr>${commission?`<td class="field">Date of Payment</td><td>${val(paidDate)}</td>`:`<td class="field">Days Worked</td><td>${val(b.days_worked ?? "")}</td>`}<td class="field">Payment Mode</td><td>${val(mode)}</td></tr>
+    </tbody></table>
+    ${commissionSections}
+    <table class="payroll-table"><thead><tr><th>EARNINGS</th><th>AMOUNT (PKR)</th><th>DEDUCTIONS</th><th>AMOUNT (PKR)</th></tr></thead><tbody>
+      ${pairedRows}
+      <tr class="total-row"><td>TOTAL EARNINGS</td><td class="money-cell">${amount(slip.gross_paisa)}</td><td>TOTAL DEDUCTIONS</td><td class="money-cell">${amount(Number(slip.advance_deduction_paisa||0)+Number(b.absence_deduction_paisa||0)+Number(b.late_deduction_paisa||0)+Number(b.other_deductions_paisa||0)+Number(b.shortage_damage_deduction_paisa||0))}</td></tr>
+    </tbody></table>
+    ${advanceDetails}${net}${payment}
+    <div class="signature-row"><div>${signature}</div><div>Authorized Signatory / Accounts</div></div>
+    <p class="fineprint">${commission?"Commission is calculated on confirmed sales only. Please verify the details and report any difference within 3 working days of receipt.":"This salary slip is confidential. Please verify the details and report any difference within 3 working days of receipt."}</p>
+    <footer class="slip-footer">Blesscon Candy &nbsp; • &nbsp; www.blessconcandy.com &nbsp; • &nbsp; blessconcandy@gmail.com</footer>
+    <button class="no-print" onclick="window.print()">Print / Save PDF</button>
+  </div>`;
 }
 async function printSalarySlip(slipId) {
   if (!client) throw Error("Salary slips require a connected session.");
   const {data,error}=await client.from("employee_salary_slips").select("*").eq("id",slipId).single();
   if(error) throw error;
   const w=window.open("","_blank"); if(!w) throw Error("Allow pop-ups to print the salary slip.");
-  w.document.write(`<!doctype html><html><head><title>Blesscon Candy Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border:1px solid #ddd;text-align:left}th{background:#f5f0e6}button{margin-top:20px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(data)}</body></html>`); w.document.close();
+  w.document.write(`<!doctype html><html><head><title>Blesscon Candy Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0;background:#fff}button{margin-top:16px;padding:8px 14px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(data)}</body></html>`); w.document.close();
 }
 async function printAdvanceSalarySlip(advanceId) {
   if (!client) throw Error("Advance slips require a connected session.");
@@ -3123,7 +3136,7 @@ async function printAdvanceSalarySlip(advanceId) {
   const month=String(a.advance_date||a.created_at||today()).slice(0,7);
   const slip={id:`ADV-${a.id}`,salary_period:month,employee_name:a.employee_name||"Employee",employee_type:a.employee_type||"employee",salary_basis:"advance",gross_paisa:Number(a.amount_paisa||0),arrears_paisa:0,advance_deduction_paisa:0,net_paid_paisa:Number(a.amount_paisa||0),payment_date:a.advance_date||String(a.created_at||today()).slice(0,10),payment_account_key:a.account_key||"—",payment_reference:a.reference||"",breakdown:{reason:a.reason||"—",recovered_to_date:money(a.recovered_paisa||0),outstanding_advance:money(Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0))),payment_mode:a.payment_mode||"—",lines:[["Document type","Released salary advance"],["Reason",a.reason||"—"],["Amount recovered to date",money(a.recovered_paisa||0)],["Outstanding advance balance",money(Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0)))] ]}};
   const w=window.open("","_blank"); if(!w) throw Error("Allow pop-ups to view the advance salary slip.");
-  w.document.write(`<!doctype html><html><head><title>Blesscon Candy Advance Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border:1px solid #ddd;text-align:left}th{background:#f5f0e6}button{margin-top:20px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(slip).replace("SALARY SLIP","ADVANCE SALARY SLIP")}</body></html>`); w.document.close();
+  w.document.write(`<!doctype html><html><head><title>Blesscon Candy Advance Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0;background:#fff}button{margin-top:16px;padding:8px 14px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(slip).replace("SALARY SLIP","ADVANCE SALARY SLIP")}</body></html>`); w.document.close();
 }
 
 async function saveSalarySlipAndNotify({id,employeeUserId,salesmanId,managerUserId,employeeName,employeeType,month,basis="fixed",gross,arrears=0,deduction,net,date,account,reference="",lines=[]}) {
