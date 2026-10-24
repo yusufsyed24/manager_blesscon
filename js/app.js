@@ -423,31 +423,9 @@ function salesmanDayBody(sid, day) {
     table(["Product", "Opening", "Assigned", "Returned", "Sold", "In hand"], body, "No stock was assigned to you and nothing was sold on this day.");
 }
 function applyArsalanOctoberPayrollCorrection(snapshot, employeeName) {
-  const pay = snapshot && typeof snapshot === "object" ? { ...snapshot } : {};
-  const name = String(employeeName || "").trim().toLowerCase().replace(/\s+/g, " ");
-  if (!name.includes("arsalan") || String(pay.salary_period || "") !== "2026-10" || pay.status === "posted") return pay;
-  // Match the agreed Admin payroll basis on Arsalan's own salary screens as well.
-  // This is a display/calculation correction only; it does not insert attendance rows.
-  const monthlyBase = 4500000; // PKR 45,000 in paisa
-  const workingDays = 30;
-  const creditedDays = 17;
-  const baseEarned = Math.round(monthlyBase * creditedDays / workingDays);
-  const monthlyAllowance = Math.max(0, num(pay.allowance_monthly_paisa ?? pay.allowance_base_monthly_paisa ?? 0));
-  const allowanceEarned = Math.round(monthlyAllowance * creditedDays / workingDays);
-  const incentive = Math.max(0, num(pay.incentive_paisa));
-  const gross = baseEarned + allowanceEarned + incentive;
-  const outstanding = Math.max(0, num(pay.advance_outstanding_paisa ?? (num(pay.advance_total_paisa) - num(pay.advance_recovered_paisa))));
-  pay.attendance_days = creditedDays;
-  pay.working_days = workingDays;
-  pay.base_salary_monthly_paisa = monthlyBase;
-  pay.base_salary_paisa = baseEarned;
-  pay.allowance_paisa = allowanceEarned;
-  pay.gross_paisa = gross;
-  pay.advance_outstanding_paisa = outstanding;
-  pay.estimated_net_after_outstanding_advances_paisa = Math.max(0, gross - outstanding);
-  pay.total_paisa = pay.estimated_net_after_outstanding_advances_paisa;
-  pay.arsalan_payroll_correction = true;
-  return pay;
+  // Kept as a compatibility wrapper for existing screens; payroll must never
+  // substitute a hard-coded employee-specific attendance count or salary.
+  return snapshot && typeof snapshot === "object" ? { ...snapshot } : {};
 }
 
 async function hydrateOwnSalarySlips(employeeType, employeeId) {
@@ -2259,11 +2237,6 @@ function payrollCalculationFor(p, month) {
   let attendanceRows = isManager
     ? (state.manager_attendance_records||[]).filter(a=>String(a.manager_user_id)===String(p.id)&&inMonth(a.attendance_date))
     : (state.attendance_records||[]).filter(a=>String(a.salesman_id)===String(p.record.id)&&inMonth(a.attendance_date));
-  // Keep the manager joining-date boundary consistent with own_manager_salary_snapshot().
-  const normalizedManagerName = String(p.name || p.record?.display_name || '').trim().toLowerCase().replace(/\s+/g,' ');
-  if (isManager && normalizedManagerName === 'babar ali khan' && month === '2026-10') {
-    attendanceRows = attendanceRows.filter(a=>String(a.attendance_date||'') >= '2026-10-10');
-  }
   const attendanceByDate = new Map();
   for (const row of attendanceRows) {
     const date = String(row.attendance_date || '');
@@ -2276,17 +2249,9 @@ function payrollCalculationFor(p, month) {
   attendanceRows = [...attendanceByDate.values()];
   let credited = attendanceRows.reduce((n,a)=>n+(a.units ?? statusDays[String(a.status||'').toLowerCase()] ?? 0),0);
   const employeeName = String(p.name || p.record?.name || p.record?.display_name || p.record?.full_name || '').trim().toLowerCase().replace(/\s+/g,' ');
-  // Payroll correction confirmed by the business owner: Arsalan's October 2026 salary
-  // must use 17 credited days. The UI currently receives only 16 qualifying attendance
-  // dates, so apply a transparent one-day payroll credit rather than calculating 16 days.
-  // This does not create or alter an attendance record in the database.
-  const arsalanOctoberPayrollAdjustment = employeeName.includes('arsalan') && month === '2026-10' && credited < 17;
-  if (arsalanOctoberPayrollAdjustment) credited = 17;
-  // Arsalan's agreed payroll basis is PKR 45,000 / 30 calendar days = PKR 1,500 per credited day.
-  // Keep this override in the shared frontend calculator so Admin payroll, salary detail/release
-  // previews, and any other view using payrollCalculationFor all calculate the same amount.
+  // Salary is based only on recorded attendance; never grant name/month-specific attendance credits.
   const configuredWorkingDays = num(isManager ? setting?.working_days : setting?.payroll_working_days);
-  const workingDays = Math.max(1, employeeName.includes('arsalan') ? 30 : (configuredWorkingDays || 26));
+  const workingDays = Math.max(1, configuredWorkingDays || 26);
   const factor = Math.min(1, credited / workingDays);
   const baseMonthly = Math.max(0,num(isManager ? setting?.base_salary_paisa : setting?.base_salary_paisa));
   const allowanceMonthly = Math.max(0,num(isManager ? setting?.allowance_paisa : setting?.payroll_allowance_paisa));
@@ -2308,7 +2273,7 @@ function payrollCalculationFor(p, month) {
   const outstanding = Math.max(0,advanceTotal-advanceRecovered);
   const expenses = (state.expenses||[]).filter(e=>!e.deleted_at&&String(e.salary_period||'')===month&& (isManager?String(e.manager_user_id)===String(p.id):String(e.salesman_id)===String(p.record.id)));
   const posted = expenses.find(e=>/salary/i.test(String(e.category||'')+' '+String(e.description||''))) || expenses[0] || null;
-  return {p,month,posted,credited,workingDays,factor,baseMonthly,base,allowanceMonthly,allowance,target,rate,achieved,achievedBoxes,boxesPerCarton,incentive,gross,advanceTotal,advanceRecovered,outstanding,net:Math.max(0,gross-outstanding),attendanceRows,orders,arsalanOctoberPayrollAdjustment};
+  return {p,month,posted,credited,workingDays,factor,baseMonthly,base,allowanceMonthly,allowance,target,rate,achieved,achievedBoxes,boxesPerCarton,incentive,gross,advanceTotal,advanceRecovered,outstanding,net:Math.max(0,gross-outstanding),attendanceRows,orders};
 }
 function payrollDetailsModal(r) {
   const pct = r.target > 0 ? r.achieved/r.target*100 : 0;
@@ -2334,7 +2299,7 @@ function payrollDetailsModal(r) {
     ["Estimated net after outstanding advances", `<b>${money(r.posted ? r.posted.amount_paisa : r.net)}</b>`],
     ["Payment status", r.posted ? "Already released" : "Not released — estimate only"],
   ];
-  modal("Salary calculation · " + r.p.name + " · " + r.month, `<section class="panel"><p class="muted">This month-specific breakdown uses the same attendance-proration, paid Week Off, target and per-carton incentive rules shown in the employee salary estimate. Manager direct cartons are separate from the team target. ${r.arsalanOctoberPayrollAdjustment ? 'Payroll adjustment: one additional credited day has been applied to Arsalan for October 2026 to match the confirmed 17-day calculation; attendance records themselves were not changed.' : ''}</p>${table(["Component","Calculation"],rows,"Salary calculation unavailable.")}</section>`);
+  modal("Salary calculation · " + r.p.name + " · " + r.month, `<section class="panel"><p class="muted">This month-specific breakdown uses the same attendance-proration, paid Week Off, target and per-carton incentive rules shown in the employee salary estimate. Manager direct cartons are separate from the team target.</p>${table(["Component","Calculation"],rows,"Salary calculation unavailable.")}</section>`);
 }
 function renderPayroll() {
   if (!admin()) return head("Salary & payroll", "Admin-only monthly salary review.") + '<section class="panel"><p class="notice danger">Only Admin can access payroll.</p></section>';
@@ -3207,16 +3172,14 @@ async function postManagerSalary(managerId, month = today().slice(0, 7)) {
   const defaultAccount = accounts.find(a=>/cash in hand/i.test(a.label))?.account_key || accounts[0].account_key;
   const reasons = advances.map(a=>`${a.reason} (${money(a.outstanding)} outstanding)`).join("; ");
   const payrollCalc = payrollCalculationFor({type:"manager",id:managerId,name:managerName,record:managerProfile}, month);
-  modal("Release manager salary · " + managerName, `<form id="manager-salary-post-form" data-manager="${esc(managerId)}" data-month="${esc(month)}"><section class="panel"><p><b>Manager:</b> ${esc(managerName)}</p><p><b>Salary period:</b> ${esc(month)}</p><p class="muted">Enter the manager's gross monthly salary. All posted outstanding advances for this manager will be automatically deducted oldest first when salary is released. The deduction is recorded against each advance, and only the net salary is paid.</p>${field("Gross salary (PKR)", "gross_amount", (payrollCalc.gross/100).toFixed(2), "number", 'min="0.01" step="0.01" required')}${table(["Salary calculation","Amount"], [["Outstanding advances",money(outstandingAdvance)],["Automatic advance deduction this salary",`<span id="manager-salary-deduction-preview">Calculated after entering salary</span>`],["Net salary to release",`<b id="manager-salary-net-preview">Calculated after entering salary</b>`]], "No outstanding salary advances.")}${advances.length ? `<p><b>Advance reasons:</b> ${esc(reasons)}</p>` : `<p class="muted">No outstanding salary advances for this manager.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
+  modal("Release manager salary · " + managerName, `<form id="manager-salary-post-form" data-manager="${esc(managerId)}" data-month="${esc(month)}"><section class="panel"><p><b>Manager:</b> ${esc(managerName)}</p><p><b>Salary period:</b> ${esc(month)}</p><p class="muted">Gross salary is calculated from recorded attendance and the manager's saved salary settings. It cannot be manually overridden here. Outstanding advances are deducted oldest first.</p><p><b>Credited attendance:</b> ${payrollCalc.credited.toFixed(1)} / ${payrollCalc.workingDays} days</p>${field("Attendance-adjusted gross salary (PKR)", "gross_amount", (payrollCalc.gross/100).toFixed(2), "number", 'min="0" step="0.01" readonly required')}${table(["Salary calculation","Amount"], [["Outstanding advances",money(outstandingAdvance)],["Automatic advance deduction this salary",`<span id="manager-salary-deduction-preview">Calculated after entering salary</span>`],["Net salary to release",`<b id="manager-salary-net-preview">Calculated after entering salary</b>`]], "No outstanding salary advances.")}${advances.length ? `<p><b>Advance reasons:</b> ${esc(reasons)}</p>` : `<p class="muted">No outstanding salary advances for this manager.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
   const form = document.getElementById("manager-salary-post-form");
-  form?.querySelector('[name="gross_amount"]')?.addEventListener("input", e => {
-    const gross = Math.max(0, Math.round(Number(e.target.value || 0) * 100));
-    const deduction = Math.min(gross, outstandingAdvance);
-    const deductionNode = document.getElementById("manager-salary-deduction-preview");
-    const netNode = document.getElementById("manager-salary-net-preview");
-    if (deductionNode) deductionNode.textContent = money(deduction);
-    if (netNode) netNode.textContent = money(Math.max(0, gross - deduction));
-  });
+  const fixedGross = Math.max(0, Math.round(num(payrollCalc.gross)));
+  const fixedDeduction = Math.min(fixedGross, outstandingAdvance);
+  const deductionNode = document.getElementById("manager-salary-deduction-preview");
+  const netNode = document.getElementById("manager-salary-net-preview");
+  if (deductionNode) deductionNode.textContent = money(fixedDeduction);
+  if (netNode) netNode.textContent = money(Math.max(0, fixedGross-fixedDeduction));
 }
 
 async function postSalary(id, month = today().slice(0, 7), automatic = false) {
@@ -4754,11 +4717,13 @@ document.addEventListener("submit", async (e) => {
       case "manager-salary-post-form": {
         if (!admin()) throw Error("Only Admin can release manager salary.");
         const managerId = form.dataset.manager, month = form.dataset.month;
+        await store.refresh();
         const profile = (S().profiles || []).find(p => String(p.id) === String(managerId));
         if (!profile || (S().user_roles || []).find(r => String(r.user_id) === String(managerId))?.role !== "manager") throw Error("Manager account not found.");
         const managerName = profile.display_name || profile.email || profile.id;
-        const grossAmount = Math.round(Number(f.gross_amount) * 100);
-        if (!Number.isSafeInteger(grossAmount) || grossAmount <= 0) throw Error("Gross salary must be greater than zero.");
+        const managerPayroll = payrollCalculationFor({type:"manager",id:managerId,name:managerName,record:profile}, month);
+        const grossAmount = Math.max(0, Math.round(num(managerPayroll.gross)));
+        if (!Number.isSafeInteger(grossAmount) || grossAmount <= 0) throw Error(`Attendance-adjusted gross salary is ${money(grossAmount)}. Verify attendance and saved salary settings before releasing; no salary was posted.`);
         const prior = await client.from("expenses").select("id").eq("manager_user_id", managerId).eq("salary_period", month).is("deleted_at", null).maybeSingle();
         if (prior.error) throw prior.error;
         if (prior.data) throw Error("Manager salary is already posted for " + month + ".");
@@ -4792,6 +4757,7 @@ document.addEventListener("submit", async (e) => {
       case "salary-post-form": {
         if (!admin()) throw Error("Only Admin can release salary.");
         const salesmanId = form.dataset.salesman, month = form.dataset.month;
+        await store.refresh();
         const seller = S().salesmen.find(x => x.id === salesmanId);
         if (!seller) throw Error("Salesman not found.");
         let salaryBasis="fixed"; let commissionLines=[]; let grossAmount=0;
@@ -4803,7 +4769,11 @@ document.addEventListener("submit", async (e) => {
           if(rateRes.error||itemRes.error) throw Error("Could not calculate commission: "+(rateRes.error?.message||itemRes.error?.message));
           const orders=S().orders.filter(o=>String(o.salesman_id)===String(salesmanId)&&o.status==="confirmed"&&!o.deleted_at&&String(o.date||"").startsWith(month)); const orderIds=new Set(orders.map(o=>String(o.id))); const rates=new Map((rateRes.data||[]).map(r=>[String(r.product_id),r]));
           for(const it of (itemRes.data||[]).filter(i=>orderIds.has(String(i.order_id)))) { const rate=rates.get(String(it.product_id)); if(!rate) continue; const cartons=num(it.boxes)/Math.max(1,num(it.boxes_per_carton)||num(S().settings?.boxes_per_carton)||24); const earned=Math.round(cartons*num(rate.commission_per_carton_paisa)); grossAmount+=earned; commissionLines.push({label:`${rate.product_name||it.product_id}: ${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,product_name:String(rate.product_name||it.product_id),cartons:cartons.toFixed(2),calculation:`${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,value:money(earned),commission:money(earned)}); }
-        } else { grossAmount=salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total; commissionLines=[{label:"Fixed salary and configured incentives",value:money(grossAmount)}]; }
+        } else {
+          const attendancePayroll = payrollCalculationFor({type:"salesman",id:seller.user_id||seller.id,name:seller.name||"Salesman",record:seller},month);
+          grossAmount = Math.max(0, Math.round(num(attendancePayroll.gross)));
+          commissionLines=[{label:`Attendance-adjusted base salary (${attendancePayroll.credited}/${attendancePayroll.workingDays} days)`,value:money(attendancePayroll.base)},{label:"Attendance-adjusted allowance",value:money(attendancePayroll.allowance)},{label:"Confirmed carton incentive",value:money(attendancePayroll.incentive)}];
+        }
         const advanceResult = await client.from("employee_salary_advances").select("id,amount_paisa,recovered_paisa,reason,advance_date").eq("salesman_id", salesmanId).eq("status", "posted").order("advance_date", {ascending:true});
         if (advanceResult.error) throw Error("Could not load salary advances: " + advanceResult.error.message);
         const advances = (advanceResult.data || []).map(a=>({...a,outstanding:Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0))})).filter(a=>a.outstanding>0);
