@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-64-admin-edit-salary-basis-20261024";
+const CACHE = "blesscon-static-v55-65-salary-basis-conditional-fields-20261024";
 const ASSETS = [
   "./",
   "./index.html",
