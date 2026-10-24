@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-62-monthly-advance-slips-20261024";
+const CACHE = "blesscon-static-v55-63-commission-basis-visible-20261024";
 const ASSETS = [
   "./",
   "./index.html",

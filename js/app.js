@@ -3277,6 +3277,7 @@ async function userModal(id) {
       ${field("Phone", "employee_phone", "", "tel")}
       ${field("Date of birth", "date_of_birth", "", "date")}
       ${field("Joining date", "joining_date", today(), "date", 'min="2000-01-01" required')}
+      <div class="field" style="grid-column:1/-1;padding:12px;border:1px solid var(--gold,#c9a227);border-radius:8px"><label for="salary_basis"><strong>Salary payment method</strong></label><select id="salary_basis" name="salary_basis"><option value="fixed" selected>Fixed salary (base salary, allowance and applicable incentives)</option><option value="commission">Commission basis (per-carton commission only)</option></select><p class="muted">Choose Commission basis for salesmen paid by product/carton. This does not use fixed base salary or fixed-salary incentives.</p></div>
       ${field("Base monthly salary (Rs.)", "base_salary", num(S().settings.base_salary_paisa || 4500000)/100, "number", 'min="0" step="0.01" required')}
       ${field("Monthly allowance (Rs.)", "payroll_allowance", "0", "number", 'min="0" step="0.01" required')}
       ${field("Incentive per carton above target (Rs.)", "payroll_incentive", "0", "number", 'min="0" step="0.01" required')}
@@ -3285,7 +3286,6 @@ async function userModal(id) {
       ${select("Salesman status", "employee_active", [["true","Active"],["false","Inactive"]], "true")}
       ${select("Assign salesman to manager (optional)", "manager_user_id", [["","Unassigned"], ...S().profiles.filter(profile => S().user_roles.some(role => role.user_id === profile.id && role.role === "manager") && profile.active !== false).map(profile => [profile.id, profile.display_name || profile.email || "Manager"])], defaultManager)}
       ${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", "")}
-      ${select("Salary basis", "salary_basis", [["fixed","Fixed salary"],["commission","Commission basis"]], "fixed")}
       <div class="field"><label for="new-salesman-photo">Profile photo (optional, JPG/PNG/WebP, max 5 MB)</label><input id="new-salesman-photo" name="profile_photo" type="file" accept="image/jpeg,image/png,image/webp"></div>
       <div class="field"><label for="new-salesman-nic">NIC / identity document (optional, PDF/JPG/PNG/WebP, max 10 MB)</label><input id="new-salesman-nic" name="identity_document" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div>
       </div><section id="commission-products-config" class="panel" style="display:none"><h3>Commission per carton by product</h3><p class="muted">Only confirmed personal sales count.</p><div class="grid">${(S().products || []).filter(p => p.active !== false && !p.deleted_at).map(p => field(`${p.name} — commission per carton (Rs.)`, `commission_${String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`, "0", "number", 'min="0" step="0.01"')).join("") || '<p class="muted">No active products found.</p>'}</div></section></section>
