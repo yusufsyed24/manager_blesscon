@@ -1494,7 +1494,7 @@ function renderCashBook() {
     const actorName = actor?.name || actor?.full_name || actor?.email || (e.created_by && e.created_by !== user?.id ? "User" : e.created_by ? (user?.name || "You") : "—");
     return [esc(e.business_date), esc(description), esc(accountLabel(e.account_key)), `<span class="${num(e.amount_paisa)<0?"negative":"positive"}">${num(e.amount_paisa)<0?"−":"+"}${money(Math.abs(num(e.amount_paisa)))}</span>`, money(next), esc(e.entry_type.replaceAll("_"," ")) + (e.pending_sync ? ` ${badge("Pending sync","amber")}` : ""), esc(relatedParty), esc(actorName)];
   }).reverse();
-  const closings = (s.cashbook_daily_closings || []).filter(c => c.business_date === date && (mgmt() || allowedAccounts.some(a=>a.account_key===c.account_key)));
+  const closings = (s.cashbook_daily_closings || []).filter(c => c.business_date === date && (mgmt() ? !allowedAccounts.find(a=>a.account_key===c.account_key)?.salesman_id : allowedAccounts.some(a=>a.account_key===c.account_key)));
   const allCloseAccounts = allowedAccounts.filter(a => a.account_type !== "receivable" && (mgmt() ? !a.salesman_id : (a.salesman_id && a.salesman_id === own()?.id)));
   const closeAccounts = allCloseAccounts.filter(a=>!(s.cashbook_daily_closings||[]).some(c=>c.business_date===date && c.account_key===a.account_key && ["submitted","approved"].includes(c.status)));
   const prevDate = addDays(date,-1);
@@ -5047,7 +5047,7 @@ document.addEventListener("submit", async (e) => {
           await store.run("cashbook.account.save", { account_key:f.account_key.trim().toLowerCase(), label:f.label.trim(), account_type:f.account_type, payment_method:f.payment_method, opening_balance_paisa:paisa(f.opening_balance) });
           toast("Account saved.");
         } else if (kind === "close") {
-          const accounts = cashbookData().accounts.filter(a=>a.active && a.account_type!=="receivable" && (mgmt() || a.salesman_id===own()?.id) && !(S().cashbook_daily_closings||[]).some(c=>c.business_date===f.date && c.account_key===a.account_key && c.status==="approved"));
+          const accounts = cashbookData().accounts.filter(a=>a.active && a.account_type!=="receivable" && (mgmt() ? !a.salesman_id : a.salesman_id===own()?.id) && !(S().cashbook_daily_closings||[]).some(c=>c.business_date===f.date && c.account_key===a.account_key && c.status==="approved"));
           const actuals = accounts.map(a=>({account_key:a.account_key,actual_balance_paisa:paisa(f["actual_"+a.account_key])}));
           await store.run("cashbook.close.submit",{date:f.date,notes:f.notes||"",actuals});
           toast("Daily closing submitted for management review.");
