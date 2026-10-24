@@ -2224,7 +2224,11 @@ function payrollCalculationFor(p, month) {
   const endDate = new Date(start + "T12:00:00Z"); endDate.setUTCMonth(endDate.getUTCMonth()+1); endDate.setUTCDate(0);
   const end = endDate.toISOString().slice(0,10);
   const inMonth = d => String(d || "") >= start && String(d || "") <= end;
-  const statusDays = {present:1, late:1, week_off:1, half_day:.5}; // Must match the database payroll rule: Week Off is a paid day.
+  // Week Off rule: paid for salesmen. For managers it is NOT paid in the months listed in
+// MANAGER_WEEKOFF_UNPAID_MONTHS (October 2026). Keep in sync with supabase/manager_weekoff_unpaid_oct2026_v55_87.sql.
+const MANAGER_WEEKOFF_UNPAID_MONTHS = ['2026-10'];
+const weekOffUnits = (p.type === 'manager' && MANAGER_WEEKOFF_UNPAID_MONTHS.includes(month)) ? 0 : 1;
+const statusDays = {present:1, late:1, week_off:weekOffUnits, half_day:.5};
   const isManager = p.type === "manager";
   const setting = isManager ? (state.manager_payroll_settings||[]).find(x=>String(x.manager_user_id)===String(p.id)) : p.record;
   // Match the backend payroll rule: one attendance credit per calendar date.
