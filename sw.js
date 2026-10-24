@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-74-auto-advance-recovery-organization-20261024";
+const CACHE = "blesscon-static-v55-85-admin-weekoff-unpaid-20261024";
 const ASSETS = [
   "./",
   "./index.html",
