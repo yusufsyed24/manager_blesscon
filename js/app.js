@@ -1894,14 +1894,33 @@ async function openAdminSalesmanProfile(salesmanId) {
 }
 
 function filters(category = false) {
-  return `<div class="filters">${field("From", "from", filter.from, "date", 'data-filter="from"')}${field("To", "to", filter.to, "date", 'data-filter="to"')}${category ? select("Category", "category", ["All categories", ...new Set(S().expenses.map((e) => e.category))], filter.category || "All categories") : ""}${btn("Apply", "apply-filters")}${btn("This month", "this-month")}${btn("This year", "this-year")}</div>`;
+  return `<div class="filters">${field("From", "from", filter.from, "date", 'data-filter="from"')}${field("To", "to", filter.to, "date", 'data-filter="to"')}${category ? select("Category", "category", ["All categories", ...new Set([...S().expenses, ...advanceExpenseRows()].map((e) => e.category))], filter.category || "All categories") : ""}${btn("Apply", "apply-filters")}${btn("This month", "this-month")}${btn("This year", "this-year")}</div>`;
 }
 function managerExpenseScope(e) {
   // Managers may view only expenses they personally created. Admin retains the full ledger.
   return String(e.created_by || "") === String(user.id || "");
 }
+// Released salary advances are shown on the Admin Expenses page as display-only rows.
+// They are NOT written to the expenses table: the advance already posts its own cash-book debit,
+// so a real expense row would debit the account twice. Manage advances from "Advance salary".
+function advanceExpenseRows() {
+  if (!admin()) return [];
+  return (S().employee_salary_advances || [])
+    .filter(a => a.status === "posted" && !a.deleted_at && num(a.amount_paisa) > 0)
+    .map(a => ({
+      id: "ADV-" + a.id,
+      _advance: true,
+      date: String(a.advance_date || "").slice(0, 10),
+      category: "Salary Advance",
+      description: `Advance salary released to ${a.employee_name || "employee"}${a.employee_type === "manager" ? " (manager)" : ""} — ${a.reason || "no reason recorded"}${a.reference ? "; Ref: " + a.reference : ""}${num(a.recovered_paisa) > 0 ? `; recovered so far ${money(a.recovered_paisa)}` : ""}`,
+      amount_paisa: num(a.amount_paisa),
+      method: "",
+      cashbook_account_key: a.account_key || "",
+      salesman_id: a.salesman_id || null,
+    }));
+}
 function renderExpenses() {
-  const rows = visible(S().expenses).filter(
+  const rows = [...visible(S().expenses), ...advanceExpenseRows()].sort((x, y) => String(y.date).localeCompare(String(x.date))).filter(
     (e) =>
       (!manager() || (managerExpenseScope(e) && !e.salary_period && !/salary released to/i.test(String(e.description || "")))) &&
       e.date >= filter.from &&
@@ -1940,9 +1959,9 @@ function renderExpenses() {
         esc(e.description),
         money(e.amount_paisa),
         esc(e.method),
-        esc(accountLabel) + (e.cashbook_account_key ? "" : ' <span class="badge amber">Not saved</span>'),
+        esc(accountLabel) + (e.cashbook_account_key || e._advance ? "" : ' <span class="badge amber">Not saved</span>'),
         esc(salesmanName(e.salesman_id)),
-        `<div class="actions">${!manager() || e.created_by === user.id ? btn("Edit", "edit-expense", e.id) : ""}${e.attachment_path ? btn("Receipt", "receipt", e.id) : ""}${admin() ? btn("Delete", "delete-expense", e.id, "", "danger") : ""}</div>`,
+        e._advance ? `<div class="actions">${btn("Manage advances", "advance-salary")}</div>` : `<div class="actions">${!manager() || e.created_by === user.id ? btn("Edit", "edit-expense", e.id) : ""}${e.attachment_path ? btn("Receipt", "receipt", e.id) : ""}${admin() ? btn("Delete", "delete-expense", e.id, "", "danger") : ""}</div>`,
       ];
       }),
     )}</section>`
@@ -4282,7 +4301,7 @@ async function action(act, id, element) {
     case "expense-csv": {
       const rows = [
         ["Date", "Category", "Description", "Amount PKR", "Method", "Salesman"],
-        ...visible(S().expenses)
+        ...[...visible(S().expenses), ...advanceExpenseRows()]
           .filter(
             (e) =>
               e.date >= filter.from &&
@@ -4734,7 +4753,12 @@ document.addEventListener("submit", async (e) => {
         const result = await client.from("employee_salary_advances").insert(payload).select("id").single();
         if (result.error) throw result.error;
         await store.refresh();
-        toast("Advance salary recorded and payment account debited.");
+        // Show the released advance straight away on the Admin Expenses page.
+        filter.from = monthStart(payload.advance_date);
+        filter.to = payload.advance_date;
+        filter.category = "All categories";
+        page = "expenses";
+        toast("Advance salary recorded and payment account debited. It is now listed in Expenses as Salary Advance.");
         close(); render(); break;
       }
       case "salary-advance-edit-form": {
