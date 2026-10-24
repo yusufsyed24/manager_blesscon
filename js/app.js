@@ -2763,7 +2763,7 @@ async function saveMaster(form) {
       date_of_birth: f.date_of_birth || null,
       joining_date: f.joining_date,
       ...(admin() ? { base_salary_paisa: paisa(f.base_salary), payroll_allowance_paisa: paisa(f.payroll_allowance), payroll_incentive_per_carton_paisa: paisa(f.payroll_incentive), payroll_working_days: Math.max(1, Math.min(31, Math.round(num(f.payroll_working_days) || 26))) } : {}),
-      monthly_target: num(f.monthly_target),
+      monthly_target: f.salary_basis === "commission" ? (num(f.monthly_target) || num(old?.monthly_target) || num(S().settings.monthly_target) || 130) : num(f.monthly_target),
       active: f.active === "true",
       ...(admin() ? { user_id: f.user_id || null } : {}),
       manager_user_id: manager() ? user.id : (f.manager_user_id || null),
@@ -2772,7 +2772,7 @@ async function saveMaster(form) {
   if (kind === "staff") {
     if (!r.id || !/^[A-Za-z0-9._:-]{1,180}$/.test(r.id)) throw Error("Employee ID is required and may contain letters, numbers, dot, underscore, colon or hyphen.");
     if (S().salesmen.some(seller => String(seller.id).toLowerCase() === String(r.id).toLowerCase() && String(seller.id) !== String(old?.id || ""))) throw Error("This employee ID is already in use.");
-    if (!Number.isFinite(r.monthly_target) || r.monthly_target <= 0) throw Error("Monthly target must be greater than zero.");
+    if (f.salary_basis !== "commission" && (!Number.isFinite(r.monthly_target) || r.monthly_target <= 0)) throw Error("Monthly target must be greater than zero.");
     if (!r.name) throw Error("Employee name is required.");
     if (manager() && r.manager_user_id !== user.id) throw Error("Managers may assign employees only to their own account.");
   }
@@ -3347,11 +3347,16 @@ async function userModal(id) {
     const salesmanFields = $("salesman-profile-fields");
     const managerFields = $("manager-profile-fields");
     const commissionPanel = $("commission-products-config");
+    const createMonthlyTarget = createForm?.elements?.namedItem("monthly_target");
     const toggleRoleFields = () => {
       const isSalesman = roleSelect?.value === "salesman";
+      const isCommission = isSalesman && basisSelect?.value === "commission";
       if (salesmanFields) salesmanFields.style.display = isSalesman ? "block" : "none";
       if (managerFields) managerFields.style.display = isSalesman ? "none" : "block";
-      if (commissionPanel) commissionPanel.style.display = isSalesman && basisSelect?.value === "commission" ? "block" : "none";
+      if (commissionPanel) commissionPanel.style.display = isCommission ? "block" : "none";
+      const targetWrap = createMonthlyTarget?.closest(".field");
+      if (targetWrap) targetWrap.style.display = isCommission ? "none" : "";
+      if (createMonthlyTarget) { createMonthlyTarget.disabled = isCommission || !isSalesman; createMonthlyTarget.required = isSalesman && !isCommission; }
       for (const el of salesmanFields?.querySelectorAll("input,select,textarea") || []) {
         if (["display_name","email","temporary_password","role"].includes(el.name)) continue;
         el.disabled = !isSalesman;
@@ -5117,10 +5122,10 @@ document.addEventListener("submit", async (e) => {
               id: employeeId, name: payload.display_name, phone: String(f.employee_phone || "").trim(), date_of_birth: f.date_of_birth || null,
               joining_date: f.joining_date || today(), base_salary_paisa: paisa(f.base_salary), payroll_allowance_paisa: paisa(f.payroll_allowance),
               payroll_incentive_per_carton_paisa: paisa(f.payroll_incentive), payroll_working_days: Math.max(1, Math.min(31, Math.round(num(f.payroll_working_days) || 26))),
-              monthly_target: num(f.monthly_target), payroll_monthly_target: num(f.monthly_target), active: f.employee_active !== "false", user_id: createdUserId,
+              monthly_target: f.salary_basis === "commission" ? (num(f.monthly_target) || num(S().settings.monthly_target) || 130) : num(f.monthly_target), payroll_monthly_target: f.salary_basis === "commission" ? (num(f.monthly_target) || num(S().settings.monthly_target) || 130) : num(f.monthly_target), active: f.employee_active !== "false", user_id: createdUserId,
               manager_user_id: f.manager_user_id || null, off_days: dates(String(f.off_days || "")),
             };
-            if (!(seller.monthly_target > 0)) throw Error("Monthly target must be greater than zero.");
+            if (f.salary_basis !== "commission" && !(seller.monthly_target > 0)) throw Error("Monthly target must be greater than zero.");
             const savedSeller = await store.run("master.save", { table: "salesmen", record: seller, expected_version: undefined });
             if (savedSeller?.error || savedSeller?.queued) throw Error(savedSeller?.error || "Salesman profile is queued offline and not yet confirmed by Supabase.");
             await store.refresh();

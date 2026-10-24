@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-67-commission-target-exemption-20261024";
+const CACHE = "blesscon-static-v55-68-agent-salary-basis-connected-20261024";
 const ASSETS = [
   "./",
   "./index.html",
