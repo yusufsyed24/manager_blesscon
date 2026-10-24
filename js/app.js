@@ -475,6 +475,8 @@ async function hydrateSalesmanSalary(seller) {
   const basisResult = await client.from("salesman_compensation_settings").select("salary_basis").eq("user_id", seller.user_id || seller.id).maybeSingle();
   if (!el.isConnected) return;
   if (!basisResult.error && basisResult.data?.salary_basis === "commission") {
+    // Commission-basis employees are exempt from fixed-salary monthly carton targets/incentives.
+    // Earnings are calculated from confirmed personal cartons × product commission rates.
     const [rateResult, itemResult] = await Promise.all([
       client.from("salesman_product_commissions").select("product_id,product_name,commission_per_carton_paisa").eq("user_id", seller.user_id || seller.id),
       client.from("order_items").select("order_id,product_id,boxes,boxes_per_carton")
@@ -2672,10 +2674,14 @@ function masterForm(kind, id) {
   );
   if (kind === "staff" && admin() && existing) {
     const form = $("master-form"), basis = form?.elements?.namedItem("salary_basis"), panel = $("edit-commission-products"), fixedPanel = $("edit-fixed-salary-fields");
+    const monthlyTargetField = form?.elements?.namedItem("monthly_target");
     const setCommissionVisibility = () => {
       const commission = basis?.value === "commission";
       if (panel) panel.style.display = commission ? "block" : "none";
       if (fixedPanel) fixedPanel.style.display = commission ? "none" : "block";
+      const targetWrap = monthlyTargetField?.closest(".field");
+      if (targetWrap) targetWrap.style.display = commission ? "none" : "";
+      if (monthlyTargetField) { monthlyTargetField.disabled = commission; monthlyTargetField.required = !commission; }
       for (const input of fixedPanel?.querySelectorAll("input,select,textarea") || []) { input.disabled = commission; input.required = !commission; }
       for (const input of panel?.querySelectorAll("input,select,textarea") || []) { input.disabled = !commission; input.required = commission; }
     };

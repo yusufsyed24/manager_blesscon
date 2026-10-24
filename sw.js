@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-66-stable-salary-selector-20261024";
+const CACHE = "blesscon-static-v55-67-commission-target-exemption-20261024";
 const ASSETS = [
   "./",
   "./index.html",
