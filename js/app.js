@@ -3186,8 +3186,35 @@ async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const s = S().salesmen.find((x) => x.id === id);
   if (!s) throw Error("Salesman not found.");
   const payrollCalc = payrollCalculationFor({type:"salesman",id:s.user_id||s.id,name:s.name||"Salesman",record:s}, month);
+  let salaryBasis = "fixed", commissionGross = 0, commissionRows = [], commissionCartons = 0;
+  const basisCheck = await client.from("salesman_compensation_settings").select("salary_basis").eq("user_id", s.user_id || s.id).maybeSingle();
+  if (basisCheck.error) throw Error("Could not verify salary basis: " + basisCheck.error.message);
+  salaryBasis = basisCheck.data?.salary_basis || "fixed";
+  if (salaryBasis === "commission") {
+    const [rateResult, itemResult] = await Promise.all([
+      client.from("salesman_product_commissions").select("product_id,product_name,commission_per_carton_paisa").eq("user_id", s.user_id || s.id),
+      client.from("order_items").select("order_id,product_id,boxes,boxes_per_carton")
+    ]);
+    if (rateResult.error || itemResult.error) throw Error("Could not calculate commission: " + (rateResult.error?.message || itemResult.error?.message));
+    const rates = new Map((rateResult.data || []).map(r => [String(r.product_id), r]));
+    const orders = S().orders.filter(o => String(o.salesman_id) === String(s.id) && o.status === "confirmed" && !o.deleted_at && String(o.date || "").startsWith(month));
+    const orderIds = new Set(orders.map(o => String(o.id)));
+    const totals = new Map();
+    for (const item of (itemResult.data || []).filter(i => orderIds.has(String(i.order_id)))) {
+      const rate = rates.get(String(item.product_id));
+      if (!rate) continue;
+      const boxesPerCarton = Math.max(1, num(item.boxes_per_carton) || num(S().settings?.boxes_per_carton) || 24);
+      const cartons = num(item.boxes) / boxesPerCarton;
+      const earned = Math.round(cartons * num(rate.commission_per_carton_paisa));
+      const key = String(item.product_id), previous = totals.get(key) || {name: rate.product_name || key, cartons: 0, rate: num(rate.commission_per_carton_paisa), earned: 0};
+      previous.cartons += cartons; previous.earned += earned; totals.set(key, previous);
+    }
+    commissionRows = [...totals.values()];
+    commissionCartons = commissionRows.reduce((n, row) => n + row.cartons, 0);
+    commissionGross = commissionRows.reduce((n, row) => n + row.earned, 0);
+  }
   const achieved = payrollCalc.achieved;
-  const pay = { total: payrollCalc.gross, incentive: payrollCalc.incentive, percent: payrollCalc.target>0 ? payrollCalc.achieved/payrollCalc.target*100 : 0 };
+  const pay = { total: salaryBasis === "commission" ? commissionGross : payrollCalc.gross, incentive: payrollCalc.incentive, percent: payrollCalc.target>0 ? payrollCalc.achieved/payrollCalc.target*100 : 0 };
   const old = S().expenses.find(e => e.salesman_id === id && e.salary_period === month);
   if (old && !old.deleted_at) {
     if (automatic) return;
@@ -3204,7 +3231,7 @@ async function postSalary(id, month = today().slice(0, 7), automatic = false) {
   const netPay = Math.max(0, Number(pay.total || 0) - advanceDeduction);
   const advanceReasons = advances.map(a => `${a.reason} (${money(a.outstanding)} outstanding)`).join("; ");
   if (!automatic) {
-    modal("Release salary · " + s.name, `<form id="salary-post-form" data-salesman="${esc(id)}" data-month="${esc(month)}"><section class="panel"><p><b>Salary period:</b> ${esc(month)}</p>${table(["Salary calculation","Amount"], [["Gross salary",money(pay.total)], ["Outstanding advances",money(outstandingAdvance)], ["Automatic advance deduction this salary",money(advanceDeduction)], ["Net salary to release",`<b>${money(netPay)}</b>`]], "Salary calculation unavailable.")}<p class="muted">Outstanding advances will be deducted oldest first. The salary record will include the advance deduction and reasons, and recovered amounts will not be deducted again.</p>${advances.length ? `<p><b>Advance reasons:</b> ${esc(advanceReasons)}</p>` : `<p class="muted">No outstanding salary advances for this employee.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
+    modal("Release salary · " + s.name, `<form id="salary-post-form" data-salesman="${esc(id)}" data-month="${esc(month)}"><section class="panel"><p><b>Salary period:</b> ${esc(month)}</p>${salaryBasis === "commission" ? `<p><b>Salary basis:</b> Commission per carton</p><p><b>Confirmed cartons sold:</b> ${commissionCartons.toFixed(2)}</p>${table(["Product","Cartons sold","Commission per carton","Commission earned"], commissionRows.map(r=>[esc(r.name),r.cartons.toFixed(2),money(r.rate),`<b>${money(r.earned)}</b>`]), "No confirmed personal sales with configured commission rates. Gross commission is Rs. 0.")}` : `<p><b>Credited attendance:</b> ${payrollCalc.credited.toFixed(1)} / ${payrollCalc.workingDays} days</p>`}${table(["Salary calculation","Amount"], [[salaryBasis === "commission" ? "Total commission earned" : "Gross salary",money(pay.total)], ["Outstanding advances",money(outstandingAdvance)], ["Automatic advance deduction this salary",money(advanceDeduction)], ["Net salary to release",`<b>${money(netPay)}</b>`]], "Salary calculation unavailable.")}<p class="muted">${salaryBasis === "commission" ? "Commission uses confirmed personal sales only and each product's saved per-carton rate. Fixed salary and attendance proration do not apply." : "Outstanding advances will be deducted oldest first. The salary record will include the advance deduction and reasons, and recovered amounts will not be deducted again."}</p>${advances.length ? `<p><b>Advance reasons:</b> ${esc(advanceReasons)}</p>` : `<p class="muted">No outstanding salary advances for this employee.</p>`}${select("Pay salary from account", "cashbook_account_key", accounts.map(a=>[a.account_key,a.label]), defaultAccount, "required")}${field("Payment date", "date", today(), "date", "required")}${field("Payment reference (optional)", "reference", "")}</section><button class="gold" type="submit">Confirm net salary payment</button></form>`);
     return;
   }
   if (netPay <= 0) {
