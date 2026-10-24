@@ -1,8 +1,5 @@
-# v55.85 — Admin payroll week-off attendance fix
+# BCBM v55.85 — Attendance save and October payroll consistency
 
-- Fixed the shared Admin payroll calculation in `js/app.js`: `week_off` no longer earns a paid attendance day.
-- Paid attendance credits: `present = 1`, `late = 1`, `half_day = 0.5`; all other statuses, including `week_off`, count as 0.
-- Existing per-date de-duplication is retained.
-- Bumped the service-worker cache name so browsers can install the updated frontend assets.
-
-This changes the frontend calculation only. It does not edit attendance records or alter already-posted salary expenses. Static source checks are not a live Cloudflare/Supabase test.
+- Adds an idempotent Supabase migration for the missing `attendance_records.remarks` column and requests a PostgREST schema-cache reload, fixing the manager/admin attendance form error.
+- Includes the previously prepared Arsalan October 2026 attendance correction migration, which sets 5 Oct and 18 Oct to Present after checking for one unique active Arsalan identity.
+- Attendance and salary data live in Supabase; uploading the static app alone does not change those records. Apply the SQL migrations and verify the payroll before releasing salary.
