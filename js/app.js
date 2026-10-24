@@ -513,7 +513,7 @@ async function hydrateSalesmanSalary(seller) {
   const pay = applyArsalanOctoberPayrollCorrection(r.data || {}, seller.name || seller.display_name);
   const boxesPerCarton = Math.max(1, num(S().settings?.boxes_per_carton) || 24);
   const targetBoxes = Math.round(num(pay.monthly_target) * boxesPerCarton);
-  const advanceResult = await client.from("employee_salary_advances").select("advance_date,amount_paisa,recovered_paisa,reason,status").eq("salesman_id", seller.id).order("advance_date", {ascending:false}).limit(30);
+  const advanceResult = await client.from("employee_salary_advances").select("id,advance_date,amount_paisa,recovered_paisa,reason,status").eq("salesman_id", seller.id).order("advance_date", {ascending:false}).limit(30);
   const advances = advanceResult.error ? [] : (advanceResult.data || []);
   const outstandingAdvance = advances.filter(a=>a.status === "posted").reduce((n,a)=>n+Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa)),0);
   el.innerHTML = `<div class="cards">${card("Attendance credited", `${num(pay.attendance_days).toFixed(1)} days`, `${num(pay.working_days)} working days`)}${card("Salary per attendance day", money(num(pay.base_salary_monthly_paisa) / Math.max(1,num(pay.working_days))), "Monthly base salary ÷ working days")}${card("Base salary earned", money(pay.base_salary_paisa || 0), "Calculated from attendance")}${card("Boxes sold this month", Math.round(boxes) + " boxes", `${num(pay.achieved_cartons).toFixed(2)} carton-equivalent sold`)}${card("Monthly target", `${num(pay.monthly_target).toFixed(2)} cartons`, `${targetBoxes} boxes at ${boxesPerCarton} boxes/carton · ${num(pay.achievement_percent).toFixed(1)}% achieved`)}${card("Estimated salary", money(pay.total_paisa ?? pay.estimated_net_after_outstanding_advances_paisa ?? 0), pay.status === "posted" ? "Posted for " + esc(pay.salary_period) : "Estimate after outstanding advances for " + esc(pay.salary_period))}${card("Salary advance outstanding", money(outstandingAdvance), advances.some(a=>a.status === "posted") ? "Advance taken; remaining balance" : "No outstanding advance")}</div>` +
@@ -1477,7 +1477,7 @@ function renderCashBook() {
     return [esc(e.business_date), esc(description), esc(accountLabel(e.account_key)), `<span class="${num(e.amount_paisa)<0?"negative":"positive"}">${num(e.amount_paisa)<0?"−":"+"}${money(Math.abs(num(e.amount_paisa)))}</span>`, money(next), esc(e.entry_type.replaceAll("_"," ")) + (e.pending_sync ? ` ${badge("Pending sync","amber")}` : ""), esc(relatedParty), esc(actorName)];
   }).reverse();
   const closings = (s.cashbook_daily_closings || []).filter(c => c.business_date === date && (mgmt() || allowedAccounts.some(a=>a.account_key===c.account_key)));
-  const allCloseAccounts = allowedAccounts.filter(a => a.account_type !== "receivable" && (mgmt() || (a.salesman_id && a.salesman_id === own()?.id)));
+  const allCloseAccounts = allowedAccounts.filter(a => a.account_type !== "receivable" && (mgmt() ? !a.salesman_id : (a.salesman_id && a.salesman_id === own()?.id)));
   const closeAccounts = allCloseAccounts.filter(a=>!(s.cashbook_daily_closings||[]).some(c=>c.business_date===date && c.account_key===a.account_key && ["submitted","approved"].includes(c.status)));
   const prevDate = addDays(date,-1);
   const priorApproved = (s.cashbook_daily_closings || []).filter(c=>c.business_date===prevDate && c.status==="approved");
@@ -3067,15 +3067,46 @@ function targetsModal(id) {
 }
 function salarySlipMarkup(slip) {
   const b = slip.breakdown || {};
-  const rows = [
-    ["Salary month", slip.salary_period], ["Employee", slip.employee_name],
-    ["Employee type / basis", `${slip.employee_type} / ${slip.salary_basis || "fixed"}`],
-    ["Gross earnings", money(slip.gross_paisa)], ["Previous-month arrears", money(slip.arrears_paisa || 0)],
-    ["Advance deduction", money(slip.advance_deduction_paisa || 0)], ["Net amount paid", money(slip.net_paid_paisa)],
-    ["Payment date", slip.payment_date], ["Payment account", slip.payment_account_key || "—"],
-    ["Reference", slip.payment_reference || "—"], ...(Array.isArray(b.lines) ? b.lines.map(x=>[x.label, x.value]) : [])
-  ];
-  return `<div style="font-family:Arial,sans-serif;color:#222;padding:28px;max-width:780px;margin:auto"><header style="display:flex;align-items:center;gap:18px;border-bottom:3px solid #b68b35;padding-bottom:16px;margin-bottom:20px"><img src="assets/logo.jpeg" alt="Blesscon Candy" style="width:90px;max-height:90px;object-fit:contain"><div><h1 style="margin:0;color:#6f4b12">BLESSCON CANDY</h1><p style="margin:5px 0">Salary Slip · ${esc(slip.salary_period)}</p><small>${esc(S().settings?.address || "")}</small></div></header><h2 style="text-align:center">SALARY SLIP</h2>${table(["Description","Amount / detail"],rows.map(r=>[esc(r[0]),esc(String(r[1]??"—"))]),"")}<p style="margin-top:30px;border-top:1px solid #bbb;padding-top:14px">This is a system-generated salary slip from Blesscon Candy Business Manager.</p><button onclick="window.print()" class="gold" style="padding:10px 18px">Print / Save PDF</button></div>`;
+  const commission = String(slip.salary_basis || "").toLowerCase() === "commission";
+  const advance = String(slip.salary_basis || "").toLowerCase() === "advance";
+  const lines = Array.isArray(b.lines) ? b.lines : [];
+  const amount = v => money(Number(v || 0));
+  const slipNo = slip.id || "—";
+  const lineRows = lines.map(x => `<tr><td>${esc(x.label || "—")}</td><td style="text-align:right">${esc(String(x.value ?? "—"))}</td></tr>`).join("");
+  const details = commission ? `
+    <h3>SALES & COMMISSION DETAILS</h3>
+    ${table(["Product / detail","Cartons / calculation","Commission (PKR)"], lines.map(x=>[esc(x.product_name || x.label || "Commission"),esc(x.cartons ?? x.calculation ?? "—"),esc(String(x.value ?? x.commission ?? "—"))]),"No commission lines recorded.")}
+    <h3>TARGET ACHIEVEMENT</h3><p>Monthly carton target: Not applicable for commission-basis employees.</p>
+    <h3>EARNINGS & DEDUCTIONS</h3>${table(["Earnings / deductions","Amount (PKR)"],[
+      ["Total Commission",amount(slip.gross_paisa)],["Advance Recovery (this month)",amount(slip.advance_deduction_paisa)],["Other deductions",amount(b.other_deductions_paisa||0)],["NET PAYABLE",amount(slip.net_paid_paisa)]
+    ])}
+  ` : advance ? `
+    <h3>ADVANCE SALARY DETAILS</h3>${table(["Detail","Amount / value"],[
+      ["Advance given on",esc(slip.payment_date||"—")],["Advance amount",amount(slip.net_paid_paisa ?? slip.gross_paisa)],["Recovered so far",esc(b.recovered_to_date||"PKR 0.00")],["Balance remaining",esc(b.outstanding_advance||"—")],["Reason / remarks",esc(b.reason||"—")]
+    ])}
+    <h3>ADVANCE PAYMENT</h3>${table(["Payment detail","Value"],[["Amount paid",amount(slip.net_paid_paisa ?? slip.gross_paisa)],["Payment mode",esc(slip.payment_mode||"—")],["Paid by",esc(slip.payment_account_key||"—")]])}
+  ` : `
+    <h3>EARNINGS & DEDUCTIONS</h3>${table(["Earnings / deductions","Amount (PKR)"],[
+      ["Basic Salary",amount(b.basic_salary_paisa ?? slip.gross_paisa)],["House / Transport Allowance",amount(b.allowance_paisa||0)],["Commission / Incentive",amount(b.commission_paisa||0)],["Overtime",amount(b.overtime_paisa||0)],["TOTAL EARNINGS",amount(slip.gross_paisa)],["Advance Recovery (this month)",amount(slip.advance_deduction_paisa)],["Absent / Leave Deduction",amount(b.absence_deduction_paisa||0)],["Late Arrival Deduction",amount(b.late_deduction_paisa||0)],["Other Deduction",amount(b.other_deductions_paisa||0)],["TOTAL DEDUCTIONS",amount(Number(slip.advance_deduction_paisa||0)+Number(b.absence_deduction_paisa||0)+Number(b.late_deduction_paisa||0)+Number(b.other_deductions_paisa||0))],["NET PAYABLE",amount(slip.net_paid_paisa)]
+    ])}
+  `;
+  return `<div style="font-family:Arial,sans-serif;color:#222;padding:28px;max-width:900px;margin:auto">
+    <header style="display:flex;align-items:center;gap:18px;border-bottom:3px solid #b68b35;padding-bottom:16px;margin-bottom:20px">
+      <img src="assets/logo.jpeg" alt="Blesscon Candy" style="width:90px;max-height:90px;object-fit:contain">
+      <div><h1 style="margin:0;color:#6f4b12">BLESSCON CANDY</h1><h2>${commission?"COMMISSION SLIP":advance?"SALARY & ADVANCE PAYMENT STATEMENT":"SALARY SLIP"}</h2><p>www.blessconcandy.com • blessconcandy@gmail.com</p></div>
+    </header>
+    <h2 style="text-align:center">${commission?"SALESMAN COMMISSION & ADVANCE STATEMENT":advance?"SALARY & ADVANCE PAYMENT STATEMENT":"SALARY SLIP"}</h2>
+    ${table(["Employee details","Value"],[
+      ["Employee Name",esc(slip.employee_name||"—")],["Slip No.",esc(slipNo)],["Designation",esc(slip.employee_type||"—")],["Employee ID",esc(slip.salesman_id||slip.manager_user_id||"—")],["Salary Month / Commission Month",esc(slip.salary_period||"—")],["Date of Payment",esc(slip.payment_date||"—")],["Payment Mode",esc(b.payment_mode||"—")],...(commission?[["Area / Route",esc(b.area_route||"—")]]:[]),...(!advance?[["Days Worked",esc(b.days_worked??"—")]]:[])
+    ])}
+    ${details}
+    <h3>PAYMENT SUMMARY</h3>${table(["Description","Amount / detail"],[
+      ["Net Payable",amount(slip.net_paid_paisa)],["Amount in words",esc(b.amount_in_words||"Please verify amount before signing")],["Paid by",esc(slip.payment_account_key||"—")],["Payment reference",esc(slip.payment_reference||"—")],["Reason / Remarks",esc(b.reason||"—")]
+    ])}
+    <p style="margin-top:36px;display:flex;justify-content:space-between;border-top:1px solid #bbb;padding-top:18px"><span>Employee Signature</span><span>Authorized Signatory / Accounts</span></p>
+    <p style="font-size:11px;border-top:1px solid #ddd;padding-top:12px">${commission?"Commission is calculated on confirmed sales only.": "This salary slip is confidential."} Please verify the details and report any difference within 3 working days of receipt.</p>
+    <p style="text-align:center;color:#6f4b12">Blesscon Candy • www.blessconcandy.com • blessconcandy@gmail.com</p>
+    <button onclick="window.print()" class="gold" style="padding:10px 18px">Print / Save PDF</button></div>`;
 }
 async function printSalarySlip(slipId) {
   if (!client) throw Error("Salary slips require a connected session.");
@@ -3090,14 +3121,14 @@ async function printAdvanceSalarySlip(advanceId) {
   if(error) throw error;
   if(String(a.status||"posted").toLowerCase()!=="posted") throw Error("Only released/posted salary advances have a printable slip.");
   const month=String(a.advance_date||a.created_at||today()).slice(0,7);
-  const slip={salary_period:month,employee_name:a.employee_name||"Employee",employee_type:a.employee_type||"employee",salary_basis:"advance",gross_paisa:Number(a.amount_paisa||0),arrears_paisa:0,advance_deduction_paisa:0,net_paid_paisa:Number(a.amount_paisa||0),payment_date:a.advance_date||String(a.created_at||today()).slice(0,10),payment_account_key:a.account_key||"—",payment_reference:a.reference||"",breakdown:{lines:[["Document type","Released salary advance"],["Reason",a.reason||"—"],["Amount recovered to date",money(a.recovered_paisa||0)],["Outstanding advance balance",money(Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0)))] ]}};
+  const slip={id:`ADV-${a.id}`,salary_period:month,employee_name:a.employee_name||"Employee",employee_type:a.employee_type||"employee",salary_basis:"advance",gross_paisa:Number(a.amount_paisa||0),arrears_paisa:0,advance_deduction_paisa:0,net_paid_paisa:Number(a.amount_paisa||0),payment_date:a.advance_date||String(a.created_at||today()).slice(0,10),payment_account_key:a.account_key||"—",payment_reference:a.reference||"",breakdown:{reason:a.reason||"—",recovered_to_date:money(a.recovered_paisa||0),outstanding_advance:money(Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0))),payment_mode:a.payment_mode||"—",lines:[["Document type","Released salary advance"],["Reason",a.reason||"—"],["Amount recovered to date",money(a.recovered_paisa||0)],["Outstanding advance balance",money(Math.max(0,Number(a.amount_paisa||0)-Number(a.recovered_paisa||0)))] ]}};
   const w=window.open("","_blank"); if(!w) throw Error("Allow pop-ups to view the advance salary slip.");
   w.document.write(`<!doctype html><html><head><title>Blesscon Candy Advance Salary Slip</title><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border:1px solid #ddd;text-align:left}th{background:#f5f0e6}button{margin-top:20px}@media print{button{display:none}}</style></head><body>${salarySlipMarkup(slip).replace("SALARY SLIP","ADVANCE SALARY SLIP")}</body></html>`); w.document.close();
 }
 
 async function saveSalarySlipAndNotify({id,employeeUserId,salesmanId,managerUserId,employeeName,employeeType,month,basis="fixed",gross,arrears=0,deduction,net,date,account,reference="",lines=[]}) {
   const slipId=`SLIP-${employeeType}-${salesmanId || managerUserId}-${month}`;
-  const payload={id:slipId,employee_user_id:employeeUserId||null,salesman_id:salesmanId||null,manager_user_id:managerUserId||null,employee_name:employeeName,employee_type:employeeType,salary_period:month,salary_basis:basis,gross_paisa:gross,arrears_paisa:arrears,advance_deduction_paisa:deduction,net_paid_paisa:net,payment_date:date||today(),payment_account_key:account||null,payment_reference:reference||"",breakdown:{lines}};
+  const payload={id:slipId,employee_user_id:employeeUserId||null,salesman_id:salesmanId||null,manager_user_id:managerUserId||null,employee_name:employeeName,employee_type:employeeType,salary_period:month,salary_basis:basis,gross_paisa:gross,arrears_paisa:arrears,advance_deduction_paisa:deduction,net_paid_paisa:net,payment_date:date||today(),payment_account_key:account||null,payment_reference:reference||"",breakdown:{lines, payment_mode: /cash/i.test(account||"")?"Cash":/cheque/i.test(reference||"")?"Cheque":/wallet|easypaisa|jazzcash/i.test(account||"")?"Online Wallet":"Bank Transfer", amount_in_words:"", days_worked:null}};
   const saved=await client.from("employee_salary_slips").upsert(payload,{onConflict:"id"});
   if(saved.error) throw Error("Salary was posted but salary slip could not be saved. Do not release again; contact Admin to reconcile: "+saved.error.message);
   if(employeeUserId || salesmanId) {
@@ -4754,7 +4785,7 @@ document.addEventListener("submit", async (e) => {
           const [rateRes,itemRes]=await Promise.all([client.from("salesman_product_commissions").select("product_id,product_name,commission_per_carton_paisa").eq("user_id",seller.user_id||seller.id),client.from("order_items").select("order_id,product_id,boxes,boxes_per_carton")]);
           if(rateRes.error||itemRes.error) throw Error("Could not calculate commission: "+(rateRes.error?.message||itemRes.error?.message));
           const orders=S().orders.filter(o=>String(o.salesman_id)===String(salesmanId)&&o.status==="confirmed"&&!o.deleted_at&&String(o.date||"").startsWith(month)); const orderIds=new Set(orders.map(o=>String(o.id))); const rates=new Map((rateRes.data||[]).map(r=>[String(r.product_id),r]));
-          for(const it of (itemRes.data||[]).filter(i=>orderIds.has(String(i.order_id)))) { const rate=rates.get(String(it.product_id)); if(!rate) continue; const cartons=num(it.boxes)/Math.max(1,num(it.boxes_per_carton)||num(S().settings?.boxes_per_carton)||24); const earned=Math.round(cartons*num(rate.commission_per_carton_paisa)); grossAmount+=earned; commissionLines.push({label:`${rate.product_name||it.product_id}: ${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,value:money(earned)}); }
+          for(const it of (itemRes.data||[]).filter(i=>orderIds.has(String(i.order_id)))) { const rate=rates.get(String(it.product_id)); if(!rate) continue; const cartons=num(it.boxes)/Math.max(1,num(it.boxes_per_carton)||num(S().settings?.boxes_per_carton)||24); const earned=Math.round(cartons*num(rate.commission_per_carton_paisa)); grossAmount+=earned; commissionLines.push({label:`${rate.product_name||it.product_id}: ${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,product_name:String(rate.product_name||it.product_id),cartons:cartons.toFixed(2),calculation:`${cartons.toFixed(2)} cartons × ${money(rate.commission_per_carton_paisa)}`,value:money(earned),commission:money(earned)}); }
         } else { grossAmount=salary(seller, S().salesman_daily_targets.filter(d => d.salesman_id === salesmanId && d.date.startsWith(month)).reduce((a,d)=>a+num(d.achieved_cartons),0), S().settings).total; commissionLines=[{label:"Fixed salary and configured incentives",value:money(grossAmount)}]; }
         const advanceResult = await client.from("employee_salary_advances").select("id,amount_paisa,recovered_paisa,reason,advance_date").eq("salesman_id", salesmanId).eq("status", "posted").order("advance_date", {ascending:true});
         if (advanceResult.error) throw Error("Could not load salary advances: " + advanceResult.error.message);
