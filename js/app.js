@@ -2224,7 +2224,7 @@ function payrollCalculationFor(p, month) {
   const endDate = new Date(start + "T12:00:00Z"); endDate.setUTCMonth(endDate.getUTCMonth()+1); endDate.setUTCDate(0);
   const end = endDate.toISOString().slice(0,10);
   const inMonth = d => String(d || "") >= start && String(d || "") <= end;
-  const statusDays = {present:1, late:1, half_day:.5};
+  const statusDays = {present:1, late:1, week_off:1, half_day:.5}; // Must match the database payroll rule: Week Off is a paid day.
   const isManager = p.type === "manager";
   const setting = isManager ? (state.manager_payroll_settings||[]).find(x=>String(x.manager_user_id)===String(p.id)) : p.record;
   // Match the backend payroll rule: one attendance credit per calendar date.
