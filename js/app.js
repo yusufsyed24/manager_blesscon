@@ -2641,8 +2641,8 @@ function masterForm(kind, id) {
     const monthlyTargetField = form?.elements?.namedItem("monthly_target");
     const setCommissionVisibility = () => {
       const commission = basis?.value === "commission";
-      if (panel) panel.style.display = commission ? "block" : "none";
-      if (fixedPanel) fixedPanel.style.display = commission ? "none" : "block";
+      if (panel) { panel.hidden = !commission; panel.style.setProperty("display", commission ? "block" : "none", "important"); panel.setAttribute("aria-hidden", commission ? "false" : "true"); }
+      if (fixedPanel) { fixedPanel.hidden = commission; fixedPanel.style.setProperty("display", commission ? "none" : "block", "important"); fixedPanel.setAttribute("aria-hidden", commission ? "true" : "false"); }
       const targetWrap = monthlyTargetField?.closest(".field");
       if (targetWrap) targetWrap.style.display = commission ? "none" : "";
       if (monthlyTargetField) { monthlyTargetField.disabled = commission; monthlyTargetField.required = !commission; }
@@ -3386,13 +3386,28 @@ async function userModal(id) {
       const isCommission = isSalesman && basisSelect?.value === "commission";
       if (salesmanFields) salesmanFields.style.display = isSalesman ? "block" : "none";
       if (managerFields) managerFields.style.display = isSalesman ? "none" : "block";
-      if (commissionPanel) commissionPanel.style.display = isCommission ? "block" : "none";
+      // Toggle both visibility and control state. A hidden panel alone is not enough:
+      // hidden required inputs can still block submission or leave stale values enabled.
+      if (commissionPanel) {
+        commissionPanel.hidden = !isCommission;
+        commissionPanel.style.setProperty("display", isCommission ? "block" : "none", "important");
+        commissionPanel.setAttribute("aria-hidden", isCommission ? "false" : "true");
+      }
       const targetWrap = createMonthlyTarget?.closest(".field");
       if (targetWrap) targetWrap.style.display = isCommission ? "none" : "";
       if (createMonthlyTarget) { createMonthlyTarget.disabled = isCommission || !isSalesman; createMonthlyTarget.required = isSalesman && !isCommission; }
+      const fixedSalaryNames = new Set(["base_salary", "payroll_allowance", "payroll_incentive", "payroll_working_days"]);
       for (const el of salesmanFields?.querySelectorAll("input,select,textarea") || []) {
         if (["display_name","email","temporary_password","role"].includes(el.name)) continue;
-        el.disabled = !isSalesman;
+        const isCommissionRate = el.name.startsWith("commission_");
+        const isFixedSalary = fixedSalaryNames.has(el.name);
+        if (isCommissionRate) { el.disabled = !isSalesman || !isCommission; el.required = false; }
+        else if (isFixedSalary) {
+          const wrap = el.closest(".field");
+          if (wrap) wrap.style.display = isCommission ? "none" : "";
+          el.disabled = !isSalesman || isCommission;
+          el.required = isSalesman && !isCommission;
+        } else el.disabled = !isSalesman;
       }
       for (const el of managerFields?.querySelectorAll("input,select,textarea") || []) el.disabled = isSalesman;
     };
