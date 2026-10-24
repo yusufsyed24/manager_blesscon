@@ -367,7 +367,7 @@ async function hydrateManagerFieldwork() {
       client.from("employee_salary_advances").select("advance_date,amount_paisa,recovered_paisa,reason,status").eq("manager_user_id", user.id).order("advance_date", {ascending:false}).limit(50)
     ]);
     const managerPayResult = await client.rpc("own_manager_salary_snapshot");
-    const managerPay = managerPayResult.error ? null : applyArsalanOctoberPayrollCorrection(managerPayResult.data, profile.data?.display_name || user?.name);
+    const managerPay = managerPayResult.error ? null : (managerPayResult.data || {});
     salaryRoot.innerHTML = (managerPay ? `<h3>Current salary estimate · ${esc(managerPay.salary_period || "")}</h3>${table(["Component","Amount / calculation"], [["Attendance credited", `${num(managerPay.attendance_days).toFixed(1)} of ${num(managerPay.working_days)} working days`],["Attendance factor", `${num(managerPay.working_days)>0 ? (num(managerPay.attendance_days)/num(managerPay.working_days)*100).toFixed(1) : "0.0"}%`],["Attendance-adjusted base salary",money(managerPay.base_salary_paisa)],["Attendance-adjusted allowance",money(managerPay.allowance_paisa)],["Confirmed own cartons", `${num(managerPay.achieved_cartons).toFixed(2)} cartons`],["Monthly target",`${num(managerPay.monthly_target).toFixed(2)} cartons`],["Cartons above target",`${Math.max(0,num(managerPay.achieved_cartons)-num(managerPay.monthly_target)).toFixed(2)} cartons`],["Incentive rate per extra carton",money(managerPay.incentive_per_carton_paisa)],["Carton incentive",money(managerPay.incentive_paisa)],["Gross estimate",`<b>${money(managerPay.gross_paisa)}</b>`],["Total advances",money(managerPay.advance_total_paisa)],["Advance recovered",money(managerPay.advance_recovered_paisa)],["Outstanding advances",money(managerPay.advance_outstanding_paisa)],["Estimated net after outstanding advances",`<b>${money(managerPay.estimated_net_after_outstanding_advances_paisa)}</b>`]], "Salary estimate unavailable.")}` : `<p class="notice">Current salary estimate unavailable${managerPayResult.error ? ": "+esc(managerPayResult.error.message) : ""}. Apply the payroll migration.</p>`) + (salaryRows.error ? `<p class="notice">Salary history could not load: ${esc(salaryRows.error.message)}</p>` : `<h3>Salary payments</h3>${table(["Date","Period","Gross / payment details","Net paid"], (salaryRows.data||[]).filter(x=>/salary/i.test(x.category||"") || x.salary_period).map(x=>[esc(x.date),esc(x.salary_period||"—"),esc(x.description||"Salary"),money(x.amount_paisa)]), "No posted salary payments found.")}`) + (advanceRows.error ? `<p class="notice">Advance history could not load: ${esc(advanceRows.error.message)}</p>` : `<h3>Salary advances</h3>${table(["Date","Advance","Recovered","Outstanding","Reason","Status"],(advanceRows.data||[]).map(a=>[esc(a.advance_date),money(a.amount_paisa),money(a.recovered_paisa||0),money(Math.max(0,num(a.amount_paisa)-num(a.recovered_paisa))),esc(a.reason||"—"),esc(a.status||"posted")]),"No salary advances recorded.")}`);
   }
   const [attendance, documents, visits, team, teamAttendance] = await Promise.all([
@@ -421,11 +421,6 @@ function salesmanDayBody(sid, day) {
   if (rows.length) body.push(["<b>Total</b>", ...cells(tot).map((v) => `<b>${v}</b>`)]);
   return `<div class="cards">${card("Stock assigned that day", tot.issued + " boxes", esc(d))}${card("Sold that day", tot.soldBoxes + " boxes", esc(d))}${card("Stock in hand at end of day", tot.closing + " boxes", esc(d))}</div>` +
     table(["Product", "Opening", "Assigned", "Returned", "Sold", "In hand"], body, "No stock was assigned to you and nothing was sold on this day.");
-}
-function applyArsalanOctoberPayrollCorrection(snapshot, employeeName) {
-  // Kept as a compatibility wrapper for existing screens; payroll must never
-  // substitute a hard-coded employee-specific attendance count or salary.
-  return snapshot && typeof snapshot === "object" ? { ...snapshot } : {};
 }
 
 async function hydrateOwnSalarySlips(employeeType, employeeId) {
@@ -488,7 +483,7 @@ async function hydrateSalesmanSalary(seller) {
   const r = await client.rpc("own_salary_snapshot");
   if (!el.isConnected) return;
   if (r.error) { el.innerHTML = `<p class="notice danger">Salary could not be loaded: ${esc(r.error.message)}. Contact Admin.</p>`; return; }
-  const pay = applyArsalanOctoberPayrollCorrection(r.data || {}, seller.name || seller.display_name);
+  const pay = (r.data || {});
   const boxesPerCarton = Math.max(1, num(S().settings?.boxes_per_carton) || 24);
   const targetBoxes = Math.round(num(pay.monthly_target) * boxesPerCarton);
   const advanceResult = await client.from("employee_salary_advances").select("id,advance_date,amount_paisa,recovered_paisa,reason,status").eq("salesman_id", seller.id).order("advance_date", {ascending:false}).limit(30);
@@ -4159,7 +4154,7 @@ async function action(act, id, element) {
     case "my-salary-details": {
       if (user?.role !== "salesman" || own()?.id !== id) throw Error("You can only view your own salary details.");
       const result = await client.rpc("own_salary_snapshot"); if (result.error) throw result.error;
-      const pay = applyArsalanOctoberPayrollCorrection(result.data || {}, own()?.name || own()?.display_name);
+      const pay = (result.data || {});
       modal("My salary breakdown · " + esc(pay.salary_period || today().slice(0,7)), `<section class="panel"><p><b>Status:</b> ${esc(pay.status === "posted" ? "Posted" : "Estimate — pending Admin approval")}</p>${table(["Component","Amount"], [["Attendance credited",`${num(pay.attendance_days).toFixed(1)} / ${num(pay.working_days)} days`],["Salary per attendance day",money(num(pay.base_salary_monthly_paisa)/Math.max(1,num(pay.working_days)))],["Base salary earned after attendance",money(pay.base_salary_paisa||0)],["Allowance earned after attendance",money(pay.allowance_paisa||0)],["Target incentive",money(pay.incentive_paisa||0)],["Net salary after outstanding advances",money(pay.total_paisa ?? pay.estimated_net_after_outstanding_advances_paisa ?? 0)],["Monthly target",`${num(pay.monthly_target).toFixed(2)} cartons`],["Eligible quantity achieved",`${num(pay.achieved_cartons).toFixed(2)} cartons`],["Achievement",`${num(pay.achievement_percent).toFixed(1)}%`]], "Salary calculation unavailable.")}<p class="muted">This is an estimate unless marked Posted. Outstanding salary advances are deducted from the estimated net amount. Check the advance history before releasing salary.</p></section>`); break;
     }
     case "notify-salesman": notificationModal(id); break;
