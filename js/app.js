@@ -2648,7 +2648,7 @@ function masterForm(kind, id) {
   if (kind === "staff") {
     const managers = s.profiles.filter(p => s.user_roles.some(role => role.user_id === p.id && role.role === "manager") && p.active !== false);
     const assignedManager = manager() ? user.id : (r.manager_user_id || "");
-    html = `<div class="grid">${field("Employee ID", "id", r.id || "", "text", existing ? "readonly" : "required")}${field("Full name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Date of birth", "date_of_birth", r.date_of_birth || "", "date")}${field("Joining date", "joining_date", r.joining_date || today(), "date", 'min="2000-01-01" required')}<p class="notice">Area assignments are managed through the effective-dated Assign area workflow so historical assignments are preserved.</p>${admin() ? field("Base salary (Rs.)", "base_salary", num(r.base_salary_paisa ?? s.settings.base_salary_paisa) / 100, "number", 'min="0" step="0.01" required') : ""}${admin() ? field("Monthly allowance (Rs.)", "payroll_allowance", num(r.payroll_allowance_paisa ?? 0) / 100, "number", 'min="0" step="0.01" required') : ""}${admin() ? field("Incentive per carton above target (Rs.)", "payroll_incentive", num(r.payroll_incentive_per_carton_paisa ?? 0) / 100, "number", 'min="0" step="0.01" required') : ""}${admin() ? field("Working days per month", "payroll_working_days", num(r.payroll_working_days ?? 26) || 26, "number", 'min="1" max="31" step="1" required') : ""}${field("Monthly target (cartons)", "monthly_target", r.monthly_target || s.settings.monthly_target, "number", 'min="1" step="0.01" required')}${select("Status", "active", [["true", "Active"],["false", "Inactive"]], r.active === false ? "false" : "true")}${admin() ? select("Link login account", "user_id", [["", "No login linked"], ...s.profiles.filter(p => !s.salesmen.some(sm => sm.user_id===p.id && sm.id!==r.id)).map(p => [p.id, `${p.display_name || p.email} (${s.user_roles.find(role=>role.user_id===p.id)?.role || "user"})`])], r.user_id || "") : ""}${manager() ? `<input type="hidden" name="manager_user_id" value="${esc(user.id)}"><p class="notice">This salesman will be assigned to your manager account.</p>` : select("Assigned manager", "manager_user_id", [["", "Unassigned"], ...managers.map(p => [p.id, p.display_name || p.email])], assignedManager)}${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", (r.off_days || []).join("\n"))}</div><p class="muted">Managers create the employee record and assign it to their team. Admin links the login from Users & Access. Private photo, NIC and education uploads are part of the employee record workflow.</p>`;
+    html = `<div class="grid">${field("Employee ID", "id", r.id || "", "text", existing ? "readonly" : "required")}${field("Full name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Date of birth", "date_of_birth", r.date_of_birth || "", "date")}${field("Joining date", "joining_date", r.joining_date || today(), "date", 'min="2000-01-01" required')}<p class="notice">Area assignments are managed through the effective-dated Assign area workflow so historical assignments are preserved.</p>${admin() ? field("Base salary (Rs.)", "base_salary", num(r.base_salary_paisa ?? s.settings.base_salary_paisa) / 100, "number", 'min="0" step="0.01" required') : ""}${admin() ? field("Monthly allowance (Rs.)", "payroll_allowance", num(r.payroll_allowance_paisa ?? 0) / 100, "number", 'min="0" step="0.01" required') : ""}${admin() ? field("Incentive per carton above target (Rs.)", "payroll_incentive", num(r.payroll_incentive_per_carton_paisa ?? 0) / 100, "number", 'min="0" step="0.01" required') : ""}${admin() ? field("Working days per month", "payroll_working_days", num(r.payroll_working_days ?? 26) || 26, "number", 'min="1" max="31" step="1" required') : ""}${admin() ? `<div class="field" style="grid-column:1/-1;padding:12px;border:1px solid var(--gold,#c9a227);border-radius:8px"><label for="edit_salary_basis"><strong>Salary payment method</strong></label><select id="edit_salary_basis" name="salary_basis"><option value="fixed">Fixed salary</option><option value="commission">Commission basis (per-carton commission only)</option></select><p class="muted">Choose the employee's actual pay basis. Commission basis excludes base salary, allowance and fixed-salary incentives.</p></div><section id="edit-commission-products" class="panel" style="grid-column:1/-1;display:none"><h3>Commission per carton by product (Rs.)</h3><p class="muted">Only confirmed personal sales are used for commission calculation.</p><div class="grid">${(s.products || []).filter(p => p.active !== false && !p.deleted_at).map(p => field(`${p.name} — commission per carton (Rs.)`, `edit_commission_${String(p.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`, "0", "number", 'min="0" step="0.01"')).join("") || '<p class="muted">No active products found.</p>'}</div></section>` : ""}${field("Monthly target (cartons)", "monthly_target", r.monthly_target || s.settings.monthly_target, "number", 'min="1" step="0.01" required')}${select("Status", "active", [["true", "Active"],["false", "Inactive"]], r.active === false ? "false" : "true")}${admin() ? select("Link login account", "user_id", [["", "No login linked"], ...s.profiles.filter(p => !s.salesmen.some(sm => sm.user_id===p.id && sm.id!==r.id)).map(p => [p.id, `${p.display_name || p.email} (${s.user_roles.find(role=>role.user_id===p.id)?.role || "user"})`])], r.user_id || "") : ""}${manager() ? `<input type="hidden" name="manager_user_id" value="${esc(user.id)}"><p class="notice">This salesman will be assigned to your manager account.</p>` : select("Assigned manager", "manager_user_id", [["", "Unassigned"], ...managers.map(p => [p.id, p.display_name || p.email])], assignedManager)}${area("Personal holidays / off dates (YYYY-MM-DD, one per line)", "off_days", (r.off_days || []).join("\n"))}</div><p class="muted">Managers create the employee record and assign it to their team. Admin links the login from Users & Access. Private photo, NIC and education uploads are part of the employee record workflow.</p>`;
   }
   if (kind === "customer")
     html = `<div class="grid">${field("Customer name", "name", r.name || "", "text", "required")}${field("Phone", "phone", r.phone || "", "tel")}${field("Email", "email", r.email || "", "email")}${field("Address", "address", r.address || "")}${select("Assigned salesman", "salesman_id", [["", "Unassigned"], ...visible(s.salesmen).map((x) => [x.id, x.name])], r.salesman_id || own()?.id || "")}</div>`;
@@ -2670,6 +2670,25 @@ function masterForm(kind, id) {
     (existing ? "Edit " : "New ") + kind,
     `<form id="master-form" data-kind="${kind}" data-id="${esc(id || "")}" novalidate>${html}<div id="master-form-error" role="alert" class="notice danger" style="display:none" aria-live="polite"></div><div class="actions" style="margin-top:22px"><button type="submit" class="gold">Save ${kind}</button></div></form>`,
   );
+  if (kind === "staff" && admin() && existing) {
+    const form = $("master-form"), basis = form?.elements?.namedItem("salary_basis"), panel = $("edit-commission-products");
+    const setCommissionVisibility = () => { if (panel) panel.style.display = basis?.value === "commission" ? "block" : "none"; };
+    basis?.addEventListener("change", setCommissionVisibility);
+    (async () => {
+      if (!client || !r.user_id) { if (basis) basis.value = "fixed"; setCommissionVisibility(); return; }
+      const [basisRes, ratesRes] = await Promise.all([
+        client.from("salesman_compensation_settings").select("salary_basis").eq("user_id", r.user_id).maybeSingle(),
+        client.from("salesman_product_commissions").select("product_id,commission_per_carton_paisa").eq("user_id", r.user_id)
+      ]);
+      if (basisRes.error || ratesRes.error) { toast("Could not load saved salary basis/commission rates. Check payroll migration and permissions.", "error"); return; }
+      if (basis) basis.value = basisRes.data?.salary_basis === "commission" ? "commission" : "fixed";
+      for (const rate of (ratesRes.data || [])) {
+        const input = form.querySelector(`[name="edit_commission_${String(rate.product_id).replace(/[^a-zA-Z0-9_-]/g,"_")}"]`);
+        if (input) input.value = (Number(rate.commission_per_carton_paisa || 0) / 100).toFixed(2);
+      }
+      setCommissionVisibility();
+    })().catch(err => toast("Could not load compensation settings: " + err.message, "error"));
+  }
   if (kind === "product") {
     const form = $("master-form"), toggle = form?.querySelector('[name="product_override"]');
     const setTierFields = () => {
@@ -2817,6 +2836,18 @@ async function saveMaster(form) {
     await store.run("product.save", { record:r, expected_version:old?.version, tiers:f.product_override === "on" ? overrides : [] });
   } else {
     await store.run("master.save", { table: tableName, record: r, expected_version: old?.version });
+    if (kind === "staff" && admin() && old) {
+      const employeeUserId = f.user_id || old.user_id;
+      if (!employeeUserId) throw Error("Link this salesman to a login account in Users & Access before saving salary basis.");
+      const basis = f.salary_basis === "commission" ? "commission" : "fixed";
+      const { error: basisError } = await client.from("salesman_compensation_settings").upsert({ user_id: employeeUserId, salesman_id: r.id, salary_basis: basis, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+      if (basisError) throw Error("Employee details saved, but salary basis could not be saved: " + basisError.message);
+      if (basis === "commission") {
+        const products = (S().products || []).filter(product => product.active !== false && !product.deleted_at);
+        const rates = products.map(product => ({ user_id: employeeUserId, salesman_id: r.id, product_id: String(product.id), product_name: String(product.name || ""), commission_per_carton_paisa: Math.round(Math.max(0, Number(f[`edit_commission_${String(product.id).replace(/[^a-zA-Z0-9_-]/g,"_")}`] || 0)) * 100), updated_at: new Date().toISOString() }));
+        if (rates.length) { const { error: ratesError } = await client.from("salesman_product_commissions").upsert(rates, { onConflict: "user_id,product_id" }); if (ratesError) throw Error("Salary basis saved, but commission rates could not be saved: " + ratesError.message); }
+      }
+    }
   }
   close();
   render();
