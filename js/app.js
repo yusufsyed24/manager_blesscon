@@ -4820,11 +4820,19 @@ document.addEventListener("submit", async (e) => {
           ? (S().salesmen || []).find(x => String(x.id) === employeeId)?.name
           : (await client.from("profiles").select("display_name").eq("id", employeeId).maybeSingle()).data?.display_name;
         if (!employeeName) throw Error("Could not verify the selected employee. Refresh and try again.");
+        // Safeguards: block accidental repeats and double-clicks. An advance debits a real account.
+        if (window.__advanceSubmitting) break;
+        const advanceDate = f.advance_date || today();
+        const recent = await client.from("employee_salary_advances").select("id,created_at").eq(employeeType === "salesman" ? "salesman_id" : "manager_user_id", employeeId).eq("amount_paisa", amount).eq("account_key", account.account_key).eq("status", "posted").gte("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString()).limit(1);
+        if (!recent.error && (recent.data || []).length) throw Error(`An identical advance of ${money(amount)} to ${employeeName} from ${account.label} was already released in the last 24 hours. Check "Release advance salary" history before releasing again.`);
         if (!confirm(`Release ${money(amount)} as an advance to ${employeeName} from ${account.label}?\nReason: ${reason}\nThis will debit the selected account.`)) break;
+        window.__advanceSubmitting = true;
         const payload = { employee_type: employeeType, employee_name: employeeName, advance_date: f.advance_date || today(), amount_paisa: amount, reason, account_key: account.account_key, reference: String(f.reference || "").trim() || null, created_by: user.id };
         if (employeeType === "salesman") payload.salesman_id = employeeId;
         else payload.manager_user_id = employeeId;
-        const result = await client.from("employee_salary_advances").insert(payload).select("id").single();
+        let result;
+        try { result = await client.from("employee_salary_advances").insert(payload).select("id").single(); }
+        finally { window.__advanceSubmitting = false; }
         if (result.error) throw result.error;
         await store.refresh();
         // Show the released advance straight away on the Admin Expenses page.
