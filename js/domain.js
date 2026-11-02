@@ -241,15 +241,6 @@ export function targetChain(
   }
   return rows;
 }
-// An order counts as manager-direct (excluded from the team target) when it has no
-// salesman, or was sold by / created for the given manager.
-const isManagerDirectOrder = (order, managerUserId = "", managerSalesmanId = "") =>
-  !order.salesman_id ||
-  (managerUserId && order.sold_by_user_id === managerUserId) ||
-  (managerUserId &&
-    order.created_by === managerUserId &&
-    managerSalesmanId &&
-    order.salesman_id === managerSalesmanId);
 export function targetPerformance(
   orders,
   items,
@@ -273,8 +264,14 @@ export function targetPerformance(
           sum + Number(item.boxes || 0) / (Number(item.boxes_per_carton) || 1),
         0,
       );
-  const managerOrders = periodOrders.filter((order) =>
-    isManagerDirectOrder(order, managerUserId, managerSalesmanId),
+  const managerOrders = periodOrders.filter(
+    (order) =>
+      !order.salesman_id ||
+      (managerUserId && order.sold_by_user_id === managerUserId) ||
+      (managerUserId &&
+        order.created_by === managerUserId &&
+        managerSalesmanId &&
+        order.salesman_id === managerSalesmanId),
   );
   const managerDirectCartons = managerOrders.reduce(
     (sum, order) => sum + cartonsFor(order),
@@ -290,43 +287,6 @@ export function targetPerformance(
     manager_direct_cartons: managerDirectCartons,
     salesman_cartons: salesmanCartons,
   };
-}
-// Month-by-month version of targetPerformance (same rules) built in one pass, so the
-// Overview can show every month's achievement without re-scanning all items per month.
-// Returns Map("YYYY-MM" -> { achieved_cartons, salesman_cartons, manager_direct_cartons }).
-export function targetHistory(
-  orders,
-  items,
-  managerUserId = "",
-  managerSalesmanId = "",
-) {
-  const cartonsByOrder = new Map();
-  for (const item of items) {
-    cartonsByOrder.set(
-      item.order_id,
-      (cartonsByOrder.get(item.order_id) || 0) +
-        Number(item.boxes || 0) / (Number(item.boxes_per_carton) || 1),
-    );
-  }
-  const months = new Map();
-  for (const order of orders) {
-    if (order.status !== "confirmed" || order.deleted_at || !order.date) continue;
-    const key = String(order.date).slice(0, 7);
-    const row = months.get(key) || {
-      achieved_cartons: 0,
-      salesman_cartons: 0,
-      manager_direct_cartons: 0,
-    };
-    const cartons = cartonsByOrder.get(order.id) || 0;
-    if (isManagerDirectOrder(order, managerUserId, managerSalesmanId))
-      row.manager_direct_cartons += cartons;
-    else {
-      row.salesman_cartons += cartons;
-      row.achieved_cartons += cartons;
-    }
-    months.set(key, row);
-  }
-  return months;
 }
 export function salary(salesman, achieved, settings = DEFAULTS) {
   const percent = (achieved / salesman.monthly_target) * 100;

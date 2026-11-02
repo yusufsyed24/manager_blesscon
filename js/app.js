@@ -43,6 +43,8 @@ let store,
   filter = { from: monthStart(today()), to: today(), category: "", search: "" },
   overviewFrom = monthStart(today()),
   overviewTo = today(),
+  targetMonth = today().slice(0, 7),
+  stockMonth = today().slice(0, 7),
   stockIssueLineCount = 1,
   stockReturnLineCount = 1,
   reportDate = today(),
@@ -788,9 +790,9 @@ function renderMyProfile() {
     <section class="panel"><h2>Customer visit / area check-in</h2><p class="muted">Record a business visit and optionally attach GPS coordinates with your permission.</p><div class="grid">${field("Customer name or ID", "visit-customer", "")}${field("Area visited", "visit-area", seller.territory || seller.area || "")}${select("Visit purpose", "visit-purpose", ["Sales visit","Recovery","Order follow-up","Relationship visit","Other"], "Sales visit")}${area("Visit notes / outcome", "visit-notes", "")}</div><div class="actions">${btn("Save visit (without GPS)", "visit-save", sid)}${btn("Save visit with my location", "visit-save-location", sid, "", "gold")}</div><p class="muted">Location permission is optional.</p><div id="my-visit-history"><p class="muted">Loading your visit history…</p></div></section>`;
 }
 
-function targetRows() {
+function targetRows(from = monthStart(today()), to = today()) {
   const s = S(),
-    start = monthStart(today());
+    start = from;
   return visible(s.salesmen)
     .filter((salesman) => {
       const linkedRole = s.user_roles.find(
@@ -803,7 +805,7 @@ function targetRows() {
     })
     .map((x) => {
       const days = s.salesman_daily_targets.filter(
-        (d) => d.salesman_id === x.id && d.date >= start && d.date <= today(),
+        (d) => d.salesman_id === x.id && d.date >= start && d.date <= to,
       );
       const rawDay = days.find((d) => d.date === today());
       // Carry-forward must never push today's target above the monthly target.
@@ -877,27 +879,29 @@ function renderDashboard() {
       overviewTo,
     ) : null;
   const sales = report.sales_paisa,
-    targets = targetRows(),
-    companyTargetProgress = targetPerformance(
-      s.orders,
-      s.order_items,
-      monthStart(today()),
-      today(),
-      user.id,
-      own()?.id || "",
-    ),
+    targetMonthStart = `${targetMonth}-01`,
+    targetMonthEnd = new Date(Number(targetMonth.slice(0,4)), Number(targetMonth.slice(5,7)), 0).toISOString().slice(0,10),
+    targets = targetRows(targetMonthStart, targetMonthEnd),
+    previousMonthDate = new Date(Number(targetMonth.slice(0,4)), Number(targetMonth.slice(5,7))-2, 1),
+    previousMonth = `${previousMonthDate.getFullYear()}-${String(previousMonthDate.getMonth()+1).padStart(2,"0")}`,
+    previousMonthStart = `${previousMonth}-01`,
+    previousMonthEnd = new Date(Number(previousMonth.slice(0,4)), Number(previousMonth.slice(5,7)), 0).toISOString().slice(0,10),
+    targetMonthProgress = targetPerformance(s.orders, s.order_items, targetMonthStart, targetMonthEnd, user.id, own()?.id || ""),
+    previousMonthProgress = targetPerformance(s.orders, s.order_items, previousMonthStart, previousMonthEnd, user.id, own()?.id || ""),
+    companyTargetProgress = targetMonthProgress,
     companyMonthlyTarget = num(s.settings.company_monthly_target) || 2000,
+    previousPending = Math.max(0, companyMonthlyTarget - previousMonthProgress.achieved_cartons),
     companySold = companyTargetProgress.achieved_cartons,
     salesmanSold = companyTargetProgress.salesman_cartons,
     managerExtra = companyTargetProgress.manager_direct_cartons,
-    companyPct = (companySold / companyMonthlyTarget) * 100,
+    companyPct = (companySold / (companyMonthlyTarget + previousPending)) * 100,
     directOrders = s.orders.filter(
       (o) =>
         o.status === "confirmed" &&
         !o.deleted_at &&
         !o.salesman_id &&
-        o.date >= monthStart(today()) &&
-        o.date <= today(),
+        o.date >= targetMonthStart &&
+        o.date <= targetMonthEnd,
     ),
     cartonsOf = (o) =>
       s.order_items
@@ -912,7 +916,7 @@ function renderDashboard() {
     myCartons = myDirect.reduce((a, o) => a + cartonsOf(o), 0),
     myValue = myDirect.reduce((a, o) => a + num(o.total_paisa), 0),
     companyPanel = mgmt()
-      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · additional manager sales, excluded from the team target`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => isCommissionSalesman(t.id) ? [esc(t.name), `${t.achieved.toFixed(2)} cartons sold`, badge("Commission basis", "green")] : [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
+      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(targetMonthStart + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Monthly target history · historical target uses the currently configured monthly target</span></div><div class="filters"><div class="field"><label for="f-target-month">Target month</label><input id="f-target-month" type="month" value="${esc(targetMonth)}"></div><button data-act="apply-target-month">Apply month</button></div><div class="cards">${card("Previous month pending", `${previousPending.toFixed(2)} cartons`, `${previousMonth}: ${previousMonthProgress.achieved_cartons.toFixed(2)} achieved of ${companyMonthlyTarget.toFixed(2)} target`)}${card("Current month target", `${companyMonthlyTarget.toFixed(2)} cartons`, `Selected month: ${targetMonth}`)}${card("Total target including carry-forward", `${(companyMonthlyTarget + previousPending).toFixed(2)} cartons`, `${previousPending.toFixed(2)} carried forward + ${companyMonthlyTarget.toFixed(2)} current target`)}${card("Company achievement", `${companySold.toFixed(2)} / ${(companyMonthlyTarget + previousPending).toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget + previousPending - companySold).toFixed(2)} cartons pending · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · additional manager sales, excluded from the team target`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => isCommissionSalesman(t.id) ? [esc(t.name), `${t.achieved.toFixed(2)} cartons sold`, badge("Commission basis", "green")] : [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
       : "",
     todaysClosings = s.daily_closings.filter(
       (closing) =>
@@ -1221,35 +1225,24 @@ function stockFamilyName(name) {
   return words.length > 2 ? words.slice(0, 2).join(" ") : normalized;
 }
 function stockOverview() {
-  const products = [...visible(S().products)].sort((a, b) =>
-    String(a.name).localeCompare(String(b.name)),
-  );
+  if (!admin()) return "";
+  const monthEndDate = new Date(Number(stockMonth.slice(0,4)), Number(stockMonth.slice(5,7)), 0).toISOString().slice(0,10);
+  const products = [...S().products].filter(p => !p.deleted_at || String(p.deleted_at).slice(0,10) > monthEndDate).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
   const families = new Map();
-  let totalBoxes = 0,
-    totalCartons = 0,
-    totalLoose = 0;
+  let totalBoxes=0,totalCartons=0,totalLoose=0;
   for (const product of products) {
-    const boxes = balance(product.id, admin() ? null : own()?.id);
-    const per = num(product.boxes_per_carton) || 1;
-    const cartons = Math.floor(boxes / per);
-    const loose = boxes % per;
-    const family = stockFamilyName(product.name) || "Other products";
-    const key = family.toLocaleLowerCase();
-    const group = families.get(key) || { name: family, products: [], cartons: 0, loose: 0, boxes: 0 };
-    group.products.push({ product, boxes, per, cartons, loose });
-    group.cartons += cartons;
-    group.loose += loose;
-    group.boxes += boxes;
-    families.set(key, group);
-    totalBoxes += boxes;
-    totalCartons += cartons;
-    totalLoose += loose;
+    const currentWarehouse=Number(S().stock.find(x=>x.product_id===product.id)?.boxes||0);
+    const afterEndWarehouseDelta=(S().stock_movements||[]).filter(m=>m.product_id===product.id&&m.date>monthEndDate).reduce((n,m)=>n+num(m.boxes),0)
+      -(S().salesman_stock_movements||[]).filter(m=>m.product_id===product.id&&m.date>monthEndDate).reduce((n,m)=>n+num(m.boxes),0);
+    const boxes=currentWarehouse-afterEndWarehouseDelta, per=num(product.boxes_per_carton)||1;
+    const cartons=Math.floor(boxes/per),loose=boxes%per,family=stockFamilyName(product.name)||"Other products",key=family.toLocaleLowerCase();
+    const group=families.get(key)||{name:family,products:[],cartons:0,loose:0,boxes:0};
+    group.products.push({product,boxes,per,cartons,loose});group.cartons+=cartons;group.loose+=loose;group.boxes+=boxes;
+    families.set(key,group);totalBoxes+=boxes;totalCartons+=cartons;totalLoose+=loose;
   }
-  const cards = [...families.values()]
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((group) => `<article class="stock-family-card"><header class="stock-family-heading"><div><h3>${esc(group.name)}</h3><small>${group.products.length} product${group.products.length === 1 ? "" : "s"}</small></div><b class="stock-family-units">${group.boxes.toLocaleString()} boxes</b></header><div class="stock-family-totals"><div><b>${group.cartons.toLocaleString()}</b><span>cartons</span></div><div><b>${group.loose.toLocaleString()}</b><span>loose boxes</span></div><div><b>${group.boxes.toLocaleString()}</b><span>total boxes</span></div></div><div class="stock-family-products">${group.products.map(({ product, boxes, per, cartons, loose }) => `<div class="stock-family-product"><div><b>${esc(product.name)}</b><small>${per} boxes / carton</small></div><div><b>${cartons} ct · ${loose} loose</b><small>${boxes.toLocaleString()} boxes</small></div></div>`).join("")}</div></article>`)
-    .join("");
-  return `<section class="panel"><div class="panel-heading"><h2>Stock by candy</h2><span class="muted">${products.length} products · ${totalCartons} cartons · ${totalLoose} loose boxes · ${totalBoxes} boxes</span></div>${cards ? `<div class="stock-family-grid">${cards}</div>` : '<div class="empty"><h3>No products yet</h3></div>'}</section>`;
+  const cards=[...families.values()].sort((a,b)=>a.name.localeCompare(b.name)).map(group=>
+    `<article class="stock-family-card"><header class="stock-family-heading"><div><h3>${esc(group.name)}</h3><small>${group.products.length} product${group.products.length===1?"":"s"}</small></div><b class="stock-family-units">${group.boxes.toLocaleString()} boxes</b></header><div class="stock-family-totals"><div><b>${group.cartons.toLocaleString()}</b><span>cartons</span></div><div><b>${group.loose.toLocaleString()}</b><span>loose boxes</span></div><div><b>${group.boxes.toLocaleString()}</b><span>total boxes</span></div></div><div class="stock-family-products">${group.products.map(({product,boxes,per,cartons,loose})=>`<div class="stock-family-product"><div><b>${esc(product.name)}</b><small>${per} boxes / carton</small></div><div><b>${cartons} ct · ${loose} loose</b><small>${boxes.toLocaleString()} boxes</small></div></div>`).join("")}</div></article>`).join("");
+  return `<section class="panel"><div class="panel-heading"><h2>Stock by candy</h2><span class="muted">Warehouse balance as at ${monthEndDate}</span></div><div class="filters"><div class="field"><label for="f-stock-month">Stock month</label><input id="f-stock-month" type="month" value="${esc(stockMonth)}"></div><button data-act="apply-stock-month">Apply month</button></div><p class="muted">${products.length} products · ${totalCartons} cartons · ${totalLoose} loose boxes · ${totalBoxes} boxes</p>${cards?`<div class="stock-family-grid">${cards}</div>`:'<div class="empty"><h3>No products yet</h3></div>'}</section>`;
 }
 function renderDocs(quote) {
   const s = S(),
@@ -3639,6 +3632,18 @@ async function docAction(act) {
 async function action(act, id, element) {
   if (act.startsWith("doc-")) return docAction(act);
   switch (act) {
+    case "apply-target-month": {
+      if (!mgmt()) throw Error("Only management can view target history.");
+      const value=$("f-target-month")?.value;
+      if (!/^\d{4}-\d{2}$/.test(value||"")) throw Error("Select a valid target month.");
+      targetMonth=value;render();break;
+    }
+    case "apply-stock-month": {
+      if (!admin()) throw Error("Only an administrator can view stock history.");
+      const value=$("f-stock-month")?.value;
+      if (!/^\d{4}-\d{2}$/.test(value||"")) throw Error("Select a valid stock month.");
+      stockMonth=value;render();break;
+    }
     case "menu":
       $("sidebar").classList.toggle("open");
       break;

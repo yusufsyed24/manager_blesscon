@@ -1,4 +1,4 @@
-const CACHE = "blesscon-static-v55-32-expense-salary-visibility-20261022";
+const CACHE = "blesscon-static-v55-95-advance-guard-20261024";
 const ASSETS = [
   "./",
   "./index.html",
