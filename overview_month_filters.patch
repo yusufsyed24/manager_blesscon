@@ -1,0 +1,238 @@
+--- domain.js.orig	2026-11-02 17:30:28.670232127 +0000
++++ manager_blesscon/js/domain.js	2026-11-02 17:30:28.744916052 +0000
+@@ -241,6 +241,15 @@
+   }
+   return rows;
+ }
++// An order counts as manager-direct (excluded from the team target) when it has no
++// salesman, or was sold by / created for the given manager.
++const isManagerDirectOrder = (order, managerUserId = "", managerSalesmanId = "") =>
++  !order.salesman_id ||
++  (managerUserId && order.sold_by_user_id === managerUserId) ||
++  (managerUserId &&
++    order.created_by === managerUserId &&
++    managerSalesmanId &&
++    order.salesman_id === managerSalesmanId);
+ export function targetPerformance(
+   orders,
+   items,
+@@ -264,14 +273,8 @@
+           sum + Number(item.boxes || 0) / (Number(item.boxes_per_carton) || 1),
+         0,
+       );
+-  const managerOrders = periodOrders.filter(
+-    (order) =>
+-      !order.salesman_id ||
+-      (managerUserId && order.sold_by_user_id === managerUserId) ||
+-      (managerUserId &&
+-        order.created_by === managerUserId &&
+-        managerSalesmanId &&
+-        order.salesman_id === managerSalesmanId),
++  const managerOrders = periodOrders.filter((order) =>
++    isManagerDirectOrder(order, managerUserId, managerSalesmanId),
+   );
+   const managerDirectCartons = managerOrders.reduce(
+     (sum, order) => sum + cartonsFor(order),
+@@ -288,6 +291,43 @@
+     salesman_cartons: salesmanCartons,
+   };
+ }
++// Month-by-month version of targetPerformance (same rules) built in one pass, so the
++// Overview can show every month's achievement without re-scanning all items per month.
++// Returns Map("YYYY-MM" -> { achieved_cartons, salesman_cartons, manager_direct_cartons }).
++export function targetHistory(
++  orders,
++  items,
++  managerUserId = "",
++  managerSalesmanId = "",
++) {
++  const cartonsByOrder = new Map();
++  for (const item of items) {
++    cartonsByOrder.set(
++      item.order_id,
++      (cartonsByOrder.get(item.order_id) || 0) +
++        Number(item.boxes || 0) / (Number(item.boxes_per_carton) || 1),
++    );
++  }
++  const months = new Map();
++  for (const order of orders) {
++    if (order.status !== "confirmed" || order.deleted_at || !order.date) continue;
++    const key = String(order.date).slice(0, 7);
++    const row = months.get(key) || {
++      achieved_cartons: 0,
++      salesman_cartons: 0,
++      manager_direct_cartons: 0,
++    };
++    const cartons = cartonsByOrder.get(order.id) || 0;
++    if (isManagerDirectOrder(order, managerUserId, managerSalesmanId))
++      row.manager_direct_cartons += cartons;
++    else {
++      row.salesman_cartons += cartons;
++      row.achieved_cartons += cartons;
++    }
++    months.set(key, row);
++  }
++  return months;
++}
+ export function salary(salesman, achieved, settings = DEFAULTS) {
+   const percent = (achieved / salesman.monthly_target) * 100;
+   const slab = [...settings.incentives]
+--- app.js.orig	2026-11-02 17:30:28.668427044 +0000
++++ manager_blesscon/js/app.js	2026-11-02 17:30:50.806348395 +0000
+@@ -14,6 +14,7 @@
+   profitLoss,
+   expiryStatus,
+   targetPerformance,
++  targetHistory,
+ } from "./domain.js";
+ import { Store, empty, TABLES, managerClosingFigures, managerTeamIds } from "./store.js";
+ import { readFile } from "./importer.js";
+@@ -43,6 +44,8 @@
+   filter = { from: monthStart(today()), to: today(), category: "", search: "" },
+   overviewFrom = monthStart(today()),
+   overviewTo = today(),
++  overviewTargetMonth = today().slice(0, 7),
++  overviewStockMonth = today().slice(0, 7),
+   stockIssueLineCount = 1,
+   stockReturnLineCount = 1,
+   reportDate = today(),
+@@ -209,6 +212,30 @@
+     return movements.reduce((sum, movement) => sum + Number(movement.boxes), 0);
+   return Number(S().stock.find((x) => x.product_id === id)?.boxes || 0);
+ };
++const monthLabel = (ym) =>
++  new Date(ym + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
++const shiftMonth = (ym, delta) => {
++  const d = new Date(ym + "-01T12:00:00Z");
++  d.setUTCMonth(d.getUTCMonth() + delta);
++  return d.toISOString().slice(0, 7);
++};
++// Stock per product as it stood at the end of `asOf` (YYYY-MM-DD), rebuilt from the
++// dated movement ledgers. Warehouse = all stock movements less everything issued to
++// salesmen (same rule as the live stock balance); a salesman = their own movements.
++const stockAsOf = (asOf, salesmanId = null) => {
++  const totals = new Map();
++  const add = (id, n) => totals.set(id, (totals.get(id) || 0) + n);
++  for (const m of S().salesman_stock_movements || []) {
++    if (!m.date || m.date > asOf) continue;
++    if (salesmanId) {
++      if (m.salesman_id === salesmanId) add(m.product_id, Number(m.boxes));
++    } else add(m.product_id, -Number(m.boxes));
++  }
++  if (!salesmanId)
++    for (const m of S().stock_movements || [])
++      if (m.date && m.date <= asOf) add(m.product_id, Number(m.boxes));
++  return totals;
++};
+ // Net stock currently held by a salesman: issues add stock, sales and returns
+ // reduce it. Keep this separate from warehouse balance and always scope by seller.
+ const heldStock = (productId, salesmanId) => {
+@@ -878,14 +905,24 @@
+     ) : null;
+   const sales = report.sales_paisa,
+     targets = targetRows(),
++    nowMonth = today().slice(0, 7),
++    targetMonth = /^\d{4}-\d{2}$/.test(overviewTargetMonth) && overviewTargetMonth <= nowMonth ? overviewTargetMonth : nowMonth,
++    targetFrom = targetMonth + "-01",
++    targetTo = targetMonth === nowMonth ? today() : monthEnd(targetFrom),
+     companyTargetProgress = targetPerformance(
+       s.orders,
+       s.order_items,
+-      monthStart(today()),
+-      today(),
++      targetFrom,
++      targetTo,
+       user.id,
+       own()?.id || "",
+     ),
++    targetByMonth = mgmt() ? targetHistory(s.orders, s.order_items, user.id, own()?.id || "") : new Map(),
++    firstTargetMonth = [...targetByMonth.keys()].sort()[0] || nowMonth,
++    prevMonth = shiftMonth(targetMonth, -1),
++    prevTracked = prevMonth >= firstTargetMonth,
++    prevAchieved = targetByMonth.get(prevMonth)?.achieved_cartons || 0,
++    prevPending = prevTracked ? Math.max(0, (num(s.settings.company_monthly_target) || 2000) - prevAchieved) : 0,
+     companyMonthlyTarget = num(s.settings.company_monthly_target) || 2000,
+     companySold = companyTargetProgress.achieved_cartons,
+     salesmanSold = companyTargetProgress.salesman_cartons,
+@@ -896,8 +933,8 @@
+         o.status === "confirmed" &&
+         !o.deleted_at &&
+         !o.salesman_id &&
+-        o.date >= monthStart(today()) &&
+-        o.date <= today(),
++        o.date >= targetFrom &&
++        o.date <= targetTo,
+     ),
+     cartonsOf = (o) =>
+       s.order_items
+@@ -912,7 +949,7 @@
+     myCartons = myDirect.reduce((a, o) => a + cartonsOf(o), 0),
+     myValue = myDirect.reduce((a, o) => a + num(o.total_paisa), 0),
+     companyPanel = mgmt()
+-      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${new Date(monthStart(today()) + "T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</h2><span class="muted">Month to date</span></div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · additional manager sales, excluded from the team target`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => isCommissionSalesman(t.id) ? [esc(t.name), `${t.achieved.toFixed(2)} cartons sold`, badge("Commission basis", "green")] : [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}</section>`
++      ? `<section class="panel company-target"><div class="panel-heading"><h2>Company target · ${monthLabel(targetMonth)}</h2><span class="muted">${targetMonth === nowMonth ? "Month to date" : "Full month"}</span></div><div class="filters"><div class="field"><label for="f-target-month">Month</label><input id="f-target-month" type="month" value="${esc(targetMonth)}" max="${esc(nowMonth)}"></div><button data-act="apply-target-month">View month</button>${targetMonth !== nowMonth ? '<button data-act="reset-target-month">Back to current month</button>' : ""}</div><div class="cards">${card("Company monthly target", `${companySold.toFixed(2)} / ${companyMonthlyTarget.toFixed(2)} cartons`, `${companyPct.toFixed(1)}% achieved · ${Math.max(0, companyMonthlyTarget - companySold).toFixed(2)} cartons remaining · salesmen ${salesmanSold.toFixed(2)} + manager ${managerExtra.toFixed(2)}${companySold >= companyMonthlyTarget ? " · TARGET CLOSED" : ""}<br>${prevTracked ? (prevPending > 0 ? `<b>${esc(monthLabel(prevMonth))}: ${prevPending.toFixed(2)} cartons were pending</b> (${prevAchieved.toFixed(2)} of ${companyMonthlyTarget.toFixed(2)} achieved) · ${targetMonth === nowMonth ? "this month's" : "that month's"} target ${companyMonthlyTarget.toFixed(2)} · together ${(companyMonthlyTarget + prevPending).toFixed(2)} cartons to clear, ${Math.max(0, companyMonthlyTarget + prevPending - companySold).toFixed(2)} still to go` : `${esc(monthLabel(prevMonth))}: target fully achieved, nothing carried forward`) : "No earlier month on record"}`, true)}${card(manager() ? "Your achievement (your sales)" : "Manager direct sales", `${myCartons.toFixed(2)} cartons`, `${myDirect.length} orders · ${money(myValue)} · additional manager sales, excluded from the team target`, manager())}${card("Salesman sales", `${salesmanSold.toFixed(2)} cartons`, "Sum of all salesman achievements this month")}</div><div class="bar" role="img" aria-label="Company target ${companyPct.toFixed(1)} percent achieved"><span style="width:${Math.min(100, companyPct)}%"></span></div>${manager() ? `<h3 style="margin-top:18px">Your sales this month</h3>${table(["Order", "Date", "Customer", "Cartons", "Value"], myDirect.map((o) => [esc(o.number), esc(o.date), esc(customerName(o.customer_id)), cartonsOf(o).toFixed(2), money(num(o.total_paisa))]), "No sales of your own yet this month")}` : ""}<h3 style="margin-top:18px">Salesman contribution</h3>${table(["Salesman", "Achieved / target", "Status"], targets.filter((t) => t.active).map((t) => isCommissionSalesman(t.id) ? [esc(t.name), `${t.achieved.toFixed(2)} cartons sold`, badge("Commission basis", "green")] : [esc(t.name), `${t.achieved.toFixed(2)} / ${t.monthly_target} cartons`, t.achieved >= t.monthly_target ? badge("Target closed", "green") : badge(`${(t.monthly_target - t.achieved).toFixed(2)} cartons to go`, "amber")]), "No active salesmen")}<h3 style="margin-top:18px">Target by month</h3>${table(["Month", "Target", "Achieved", "Pending", "Achievement", "Status"], (() => { const rows = []; for (let m = nowMonth; m >= firstTargetMonth; m = shiftMonth(m, -1)) { const got = targetByMonth.get(m)?.achieved_cartons || 0, pending = Math.max(0, companyMonthlyTarget - got), name = m === targetMonth ? `<b>${esc(monthLabel(m))}</b>` : esc(monthLabel(m)); rows.push([name, companyMonthlyTarget.toFixed(2) + " ct", got.toFixed(2) + " ct", pending.toFixed(2) + " ct", ((got / companyMonthlyTarget) * 100).toFixed(1) + "%", m === nowMonth ? badge("In progress", "amber") : pending > 0 ? badge("Pending", "red") : badge("Achieved", "green")]); } return rows; })(), "No sales recorded yet")}<p class="muted">Months are measured against the company monthly target currently saved in Settings, counting salesman sales only.</p></section>`
+       : "",
+     todaysClosings = s.daily_closings.filter(
+       (closing) =>
+@@ -1224,12 +1261,17 @@
+   const products = [...visible(S().products)].sort((a, b) =>
+     String(a.name).localeCompare(String(b.name)),
+   );
++  const nowMonth = today().slice(0, 7),
++    stockMonth = /^\d{4}-\d{2}$/.test(overviewStockMonth) && overviewStockMonth <= nowMonth ? overviewStockMonth : nowMonth,
++    historical = stockMonth !== nowMonth,
++    asOf = historical ? monthEnd(stockMonth + "-01") : "",
++    historicalStock = historical ? stockAsOf(asOf, admin() ? null : own()?.id) : null;
+   const families = new Map();
+   let totalBoxes = 0,
+     totalCartons = 0,
+     totalLoose = 0;
+   for (const product of products) {
+-    const boxes = balance(product.id, admin() ? null : own()?.id);
++    const boxes = historical ? historicalStock.get(product.id) || 0 : balance(product.id, admin() ? null : own()?.id);
+     const per = num(product.boxes_per_carton) || 1;
+     const cartons = Math.floor(boxes / per);
+     const loose = boxes % per;
+@@ -1249,7 +1291,7 @@
+     .sort((a, b) => a.name.localeCompare(b.name))
+     .map((group) => `<article class="stock-family-card"><header class="stock-family-heading"><div><h3>${esc(group.name)}</h3><small>${group.products.length} product${group.products.length === 1 ? "" : "s"}</small></div><b class="stock-family-units">${group.boxes.toLocaleString()} boxes</b></header><div class="stock-family-totals"><div><b>${group.cartons.toLocaleString()}</b><span>cartons</span></div><div><b>${group.loose.toLocaleString()}</b><span>loose boxes</span></div><div><b>${group.boxes.toLocaleString()}</b><span>total boxes</span></div></div><div class="stock-family-products">${group.products.map(({ product, boxes, per, cartons, loose }) => `<div class="stock-family-product"><div><b>${esc(product.name)}</b><small>${per} boxes / carton</small></div><div><b>${cartons} ct · ${loose} loose</b><small>${boxes.toLocaleString()} boxes</small></div></div>`).join("")}</div></article>`)
+     .join("");
+-  return `<section class="panel"><div class="panel-heading"><h2>Stock by candy</h2><span class="muted">${products.length} products · ${totalCartons} cartons · ${totalLoose} loose boxes · ${totalBoxes} boxes</span></div>${cards ? `<div class="stock-family-grid">${cards}</div>` : '<div class="empty"><h3>No products yet</h3></div>'}</section>`;
++  return `<section class="panel"><div class="panel-heading"><h2>Stock by candy</h2><span class="muted">${historical ? `Closing stock at end of ${esc(monthLabel(stockMonth))} · ` : "Current stock · "}${products.length} products · ${totalCartons} cartons · ${totalLoose} loose boxes · ${totalBoxes} boxes</span></div><div class="filters"><div class="field"><label for="f-stock-month">Month</label><input id="f-stock-month" type="month" value="${esc(stockMonth)}" max="${esc(nowMonth)}"></div><button data-act="apply-stock-month">View month</button>${historical ? '<button data-act="reset-stock-month">Back to current stock</button>' : ""}</div>${cards ? `<div class="stock-family-grid">${cards}</div>` : '<div class="empty"><h3>No products yet</h3></div>'}</section>`;
+ }
+ function renderDocs(quote) {
+   const s = S(),
+@@ -4357,6 +4399,25 @@
+       render();
+       break;
+     }
++    case "apply-target-month":
++    case "apply-stock-month": {
++      const isTarget = act === "apply-target-month";
++      const value = $(isTarget ? "f-target-month" : "f-stock-month")?.value || "";
++      if (!/^\d{4}-\d{2}$/.test(value)) throw Error("Choose a month");
++      if (value > today().slice(0, 7)) throw Error("Choose a month up to the current month");
++      if (isTarget) overviewTargetMonth = value;
++      else overviewStockMonth = value;
++      render();
++      break;
++    }
++    case "reset-target-month":
++      overviewTargetMonth = today().slice(0, 7);
++      render();
++      break;
++    case "reset-stock-month":
++      overviewStockMonth = today().slice(0, 7);
++      render();
++      break;
+     case "overview-day":
+       reportDate = id;
+       page = "dsr";
+--- sw.js.orig	2026-11-02 17:30:28.671762832 +0000
++++ manager_blesscon/sw.js	2026-11-02 17:31:07.137423557 +0000
+@@ -1,4 +1,4 @@
+-const CACHE = "blesscon-static-v55-95-advance-guard-20261024";
++const CACHE = "blesscon-static-v55-96-month-filters-20261102";
+ const ASSETS = [
+   "./",
+   "./index.html",
