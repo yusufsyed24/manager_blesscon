@@ -327,6 +327,7 @@ export function importWorkbook(wb, XLSX, current = {}) {
         );
         continue;
       }
+      const isRani = /^Rani Candy/i.test(str(r.name));
       const p = {
         id,
         name: str(r.name),
@@ -337,6 +338,17 @@ export function importWorkbook(wb, XLSX, current = {}) {
         wholesale_paisa: rs(r.wh1, undefined),
         active: true,
       };
+      // A blank wholesale rate on a non-Rani product must not block the whole import.
+      // Use the retail rate as a visible placeholder and warn so it can be corrected.
+      if (p.wholesale_paisa === undefined && !isRani && p.retail_paisa !== undefined) {
+        p.wholesale_paisa = p.retail_paisa;
+        warnings.push(
+          "Price Codes row " + r._row + ": wholesale rate blank for " + id +
+            "; retail rate Rs. " + p.retail_paisa / 100 + " used. Update it in Products if wholesale differs.",
+        );
+      }
+      if (p.retail_paisa === 0)
+        warnings.push("Price Codes row " + r._row + ": retail price is 0 for " + id + "; set a price before selling it.");
       if (!Number.isInteger(p.boxes_per_carton) || p.boxes_per_carton < 1)
         throw Error("Invalid pack size for " + id);
       if (
@@ -347,7 +359,7 @@ export function importWorkbook(wb, XLSX, current = {}) {
         throw Error("Missing base price/cost for " + id);
       data.products.push(p);
       [r.wh1, r.wh6, r.wh25, r.wh50].forEach((v, i) => {
-        if (missing(v)) {
+        if (missing(v) && /^Rani Candy/i.test(p.name)) {
           warnings.push(
             "Missing tier " +
               setting.tiers[i].label +
@@ -448,8 +460,18 @@ export function importWorkbook(wb, XLSX, current = {}) {
   for (const [sheet, channel] of [
     ["orderentryform", "wholesale"],
     ["retailaddon", "retail"],
-  ])
-    for (const r of sheets[sheet] || []) {
+  ]) {
+    let rowsForSheet = sheets[sheet] || [];
+    // The workbook's Order Entry Form keeps the invoice ID once in its header block, not on
+    // every line. It is a data-entry form, not a ledger, so it is not imported as sales.
+    if (sheet === "orderentryform" && rowsForSheet.length && !rowsForSheet.some((r) => str(r.invoice))) {
+      warnings.push(
+        "Order Entry Form: skipped " + rowsForSheet.length +
+          " line(s). It is a single-invoice entry form (invoice ID in the header, not on each line), so it is not imported. Record sales in the app, or use a sheet with an Invoice ID on every line.",
+      );
+      rowsForSheet = [];
+    }
+    for (const r of rowsForSheet) {
       if (!str(r.invoice) || !str(r.product_id)) {
         if (
           str(r.customer) ||
@@ -473,6 +495,7 @@ export function importWorkbook(wb, XLSX, current = {}) {
         );
       grouped.get(key).rows.push(r);
     }
+  }
   for (const [number, g] of grouped) {
     try {
       const first = g.rows[0];
