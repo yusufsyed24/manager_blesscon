@@ -33,9 +33,6 @@ export const TABLES = [
   "user_roles",
   "user_permissions",
   "attendance_records",
-  "manager_attendance_records",
-  "manager_payroll_settings",
-  "salesman_compensation_settings",
   "employee_documents",
   "customer_visits",
 ];
@@ -1216,47 +1213,7 @@ export class Store extends EventTarget {
       settings: { ...DEFAULTS, ...data.settings },
       cashbook_loaded: false,
       cashbook_error: "",
-      payroll_data_error: "",
     };
-    // The older business_snapshot RPC may omit payroll/attendance tables or return stale
-    // projections. Admin payroll must use the authoritative Supabase rows, not zero-filled
-    // snapshot defaults. Load each table independently so one optional table does not blank
-    // the rest of the payroll view.
-    if (String(this.user?.role || "").toLowerCase() === "admin") {
-      const payrollTables = [
-        "salesmen", "profiles", "user_roles", "orders", "order_items",
-        "attendance_records", "manager_attendance_records", "manager_payroll_settings",
-        "employee_salary_advances", "expenses",
-      ];
-      const payrollErrors = [];
-      await Promise.all(payrollTables.map(async (table) => {
-        try {
-          this.base[table] = await this.all(table);
-        } catch (e) {
-          payrollErrors.push(`${table}: ${e?.message || String(e)}`);
-        }
-      }));
-      if (payrollErrors.length) this.base.payroll_data_error = payrollErrors.join("; ");
-    }
-    // Salary basis (fixed / commission) is used to hide targets for commission salesmen.
-    // Optional: if the current role cannot read it, targets simply display as before.
-    const compRole = String(this.user?.role || "").toLowerCase();
-    // Salesmen can read only their own rows (read_self policy), so this is safe for them too.
-    if (["admin", "manager", "salesman"].includes(compRole)) {
-      try {
-        this.base.salesman_compensation_settings = await this.all("salesman_compensation_settings");
-      } catch (e) {
-        this.base.salesman_compensation_settings = [];
-      }
-    }
-    // Per-product commission rates: Admin (all) and the salesman himself (own rows). Managers cannot read rates.
-    if (["admin", "salesman"].includes(compRole)) {
-      try {
-        this.base.salesman_product_commissions = await this.all("salesman_product_commissions");
-      } catch (e) {
-        this.base.salesman_product_commissions = [];
-      }
-    }
     try {
       const [accounts, entries, closings] = await Promise.all([
         this.all("cashbook_accounts"),
